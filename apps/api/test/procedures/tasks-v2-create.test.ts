@@ -418,6 +418,67 @@ describe('tasks v2 create', () => {
 		])
 	})
 
+	test.each([
+		['todo', 'todo'],
+		[undefined, 'in_progress'],
+	] as const)('creates the task in board status %s (stored as %s)', async (status, stored) => {
+		const actor = await setupActor()
+		const taskId = uuidv7()
+		await call(
+			createTaskV2,
+			{
+				taskId,
+				workspaceId: uuidv7(),
+				projectId: actor.projectId,
+				name: 'Board task',
+				slug: 'board-task',
+				repositories: [repository],
+				firstSession: { ...firstSession, hostId: actor.hostId },
+				...(status ? { status } : {}),
+			},
+			{ context: actor.context },
+		)
+
+		const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+		expect(task!.status).toBe(stored)
+	})
+
+	test.each([
+		[undefined, 'on_hold'],
+		['todo', 'todo'],
+	] as const)('promotes a draft in board status on_hold with status %s to %s', async (status, stored) => {
+		const actor = await setupActor()
+		const taskId = uuidv7()
+		await db.insert(tasks).values({
+			id: taskId,
+			organization_id: actor.organizationId,
+			name: 'Saved draft',
+			slug: 'saved-draft',
+			created_by: actor.userId,
+			resource_owner_user_id: actor.userId,
+			is_draft: true,
+			status: 'on_hold',
+		})
+
+		await call(
+			createTaskV2,
+			{
+				taskId,
+				workspaceId: taskId,
+				projectId: actor.projectId,
+				name: 'Launched draft',
+				slug: 'launched-draft',
+				repositories: [repository],
+				firstSession: { ...firstSession, hostId: actor.hostId },
+				...(status ? { status } : {}),
+			},
+			{ context: actor.context },
+		)
+
+		const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+		expect(task).toMatchObject({ is_draft: false, status: stored })
+	})
+
 	test('keeps the draft unchanged when project workspace creation fails', async () => {
 		const actor = await setupActor()
 		const taskId = uuidv7()

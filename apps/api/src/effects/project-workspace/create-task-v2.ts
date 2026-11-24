@@ -203,11 +203,13 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				}
 			}
 
+			// A new task lands in the column it was created from; a promoted draft keeps its own
+			// unless the launcher names one.
 			const [task] = existingTask
 				? yield* transaction.query(
 						transaction.client
 							.update(tasks)
-							.set(taskValues)
+							.set({ ...taskValues, status: input.status ?? existingTask.status })
 							.where(
 								and(
 									eq(tasks.id, taskId),
@@ -222,10 +224,10 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				: yield* transaction.query(
 						transaction.client
 							.insert(tasks)
-							.values({ id: taskId, ...taskValues })
+							.values({ id: taskId, ...taskValues, status: input.status ?? 'in_progress' })
 							.onConflictDoUpdate({
 								target: tasks.id,
-								set: taskValues,
+								set: input.status ? { ...taskValues, status: input.status } : taskValues,
 								setWhere: and(
 									eq(tasks.organization_id, input.actor.organizationId),
 									eq(tasks.resource_owner_user_id, input.actor.userId),

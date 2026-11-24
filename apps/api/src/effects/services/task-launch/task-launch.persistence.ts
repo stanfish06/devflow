@@ -142,7 +142,12 @@ export const launchTaskDraftPersistence = Effect.fn('task_launch.persistence.lau
 			let outcome: Extract<TaskLaunchOutcome, 'created' | 'promoted'>
 			if (existing) {
 				const [promoted] = yield* tx.query(
-					tx.client.update(tasks).set(values).where(eq(tasks.id, input.draftId)).returning(),
+					tx.client
+						.update(tasks)
+						// A promoted draft keeps its board column unless the launcher names one.
+						.set({ ...values, status: input.status ?? existing.status })
+						.where(eq(tasks.id, input.draftId))
+						.returning(),
 				)
 				if (!promoted) {
 					return yield* Effect.fail(
@@ -155,7 +160,7 @@ export const launchTaskDraftPersistence = Effect.fn('task_launch.persistence.lau
 				const [created] = yield* tx.query(
 					tx.client
 						.insert(tasks)
-						.values({ id: input.draftId, ...values })
+						.values({ id: input.draftId, ...values, status: input.status ?? 'in_progress' })
 						.onConflictDoNothing({ target: tasks.id })
 						.returning(),
 				)
