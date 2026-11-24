@@ -470,6 +470,14 @@
 		color: var(--fg-3);
 		border: 1px solid var(--line);
 	}
+	/* "Host's own gh login" in Settings → GitHub accounts: a house where an account's initials would be. */
+	.avatar.gh-host {
+		width: 24px;
+		height: 24px;
+		background: var(--surface-2);
+		color: var(--fg-3);
+		border: 1px solid var(--line);
+	}
 	/* The working-host switcher under the brand row: a choice, so it looks like a control. */
 	.host-switch {
 		display: flex;

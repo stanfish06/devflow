@@ -36,6 +36,7 @@ Copy `.env.example` to `.env` at the repository root and set what you use:
 | `CLAUDE_CODE_OAUTH_TOKEN` | unset | Claude subscription token for sandboxed agents and helper calls |
 | `DEVFLOW_AGENT_SANDBOX` | `docker` | `none` runs Claude Code on the host |
 | `GITHUB_APP_ID`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET` | placeholders | your own GitHub App, for the GitHub issue picker and PR status in the UI |
+| `GITHUB_ACCOUNT_TOKEN_KEY` | generated into `.env` once | encrypts the GitHub accounts stored in Settings → GitHub accounts; changing it means adding them again |
 | `DEVFLOW_HOME` | `~/.devflow` | config, keys, logs, sandbox Claude config |
 
 ## Artifacts

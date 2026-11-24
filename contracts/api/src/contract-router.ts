@@ -48,6 +48,11 @@ import { replyDiffCommentContract } from './api/diff-comments/reply'
 import { resolveDiffCommentContract } from './api/diff-comments/resolve'
 import { resolveBatchDiffCommentsContract } from './api/diff-comments/resolve-batch'
 import { durableStreamsContract } from './api/durable-streams'
+import { addGithubAccountContract } from './api/github-accounts/add'
+import { listGithubAccountsContract } from './api/github-accounts/list'
+import { removeGithubAccountContract } from './api/github-accounts/remove'
+import { replaceGithubAccountTokenContract } from './api/github-accounts/replace-token'
+import { setDefaultGithubAccountContract } from './api/github-accounts/set-default'
 import { listHostAliasesContract } from './api/hosts/alias-list'
 import { upsertHostAliasContract } from './api/hosts/alias-upsert'
 import { deleteHostContract } from './api/hosts/delete'
@@ -534,6 +539,13 @@ export const ApiContract = {
 		update: {
 			request: requestHostUpdateContract,
 		},
+	},
+	githubAccounts: {
+		list: listGithubAccountsContract,
+		add: addGithubAccountContract,
+		replaceToken: replaceGithubAccountTokenContract,
+		remove: removeGithubAccountContract,
+		setDefault: setDefaultGithubAccountContract,
 	},
 }
 

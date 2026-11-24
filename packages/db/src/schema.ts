@@ -12,6 +12,7 @@ import { commits } from './tables/commits'
 import { contextShards } from './tables/context-shards'
 import { conversationEvents } from './tables/conversation-events'
 import { diffComments } from './tables/diff-comments'
+import { githubAccounts } from './tables/github-accounts'
 import { githubIntegrationInstallStates } from './tables/github-integration-install-states'
 import { githubIntegrationRepositories } from './tables/github-integration-repositories'
 import { githubIntegrations } from './tables/github-integrations'
@@ -58,6 +59,7 @@ export * from './tables/diff-comments'
 export * from './tables/agent-slash-commands'
 export * from './tables/agent-command-discovery-requests'
 export * from './tables/host-aliases'
+export * from './tables/github-accounts'
 export * from './tables/github-integration-install-states'
 export * from './tables/github-integration-repositories'
 export * from './tables/github-integrations'
@@ -123,6 +125,7 @@ export const applicationTables = [
 	githubIntegrations,
 	githubIntegrationInstallStates,
 	githubIntegrationRepositories,
+	githubAccounts,
 	userSettings,
 	queuedMessages,
 	commits,

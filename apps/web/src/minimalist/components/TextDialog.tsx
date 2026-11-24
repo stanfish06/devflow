@@ -9,6 +9,9 @@ export function TextDialog({
 	submitLabel,
 	description,
 	multiline = false,
+	secret = false,
+	placeholder,
+	failure = 'Could not save changes. Your text is still here. Try again.',
 	onSave,
 	onClose,
 }: {
@@ -17,6 +20,11 @@ export function TextDialog({
 	submitLabel: string
 	description?: string
 	multiline?: boolean
+	/** Mask the value and keep it out of autofill and spellcheck, for tokens. */
+	secret?: boolean
+	placeholder?: string
+	/** The copy for a failed save, or picks it from the error. */
+	failure?: string | ((error: unknown) => string)
 	onSave: (value: string) => Promise<unknown>
 	onClose: () => void
 }) {
@@ -32,7 +40,7 @@ export function TextDialog({
 			onSubmit={() => {
 				if (!value.trim()) return
 				void action
-					.run(() => onSave(value.trim()), 'Could not save changes. Your text is still here. Try again.')
+					.run(() => onSave(value.trim()), failure)
 					.then((saved) => {
 						if (saved) onClose()
 					})
@@ -51,6 +59,10 @@ export function TextDialog({
 				<input
 					aria-label={title}
 					autoFocus
+					type={secret ? 'password' : 'text'}
+					autoComplete={secret ? 'off' : undefined}
+					spellCheck={secret ? false : undefined}
+					placeholder={placeholder}
 					value={value}
 					onChange={(event) => setValue(event.target.value)}
 					disabled={action.pending}

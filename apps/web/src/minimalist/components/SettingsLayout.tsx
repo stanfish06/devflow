@@ -13,6 +13,7 @@ import { useMinimalistDark } from '@/minimalist/lib/color-scheme'
 import { selectWithArrows } from '@/minimalist/lib/roving'
 
 import { AddProjectPage } from './AddProjectPage'
+import { GithubAccountsPage } from './GithubAccountsPage'
 import {
 	ArchivedSettingsPage,
 	GeneralSettingsPage,
@@ -29,6 +30,7 @@ type Slug =
 	| 'daemons'
 	| 'projects'
 	| 'agent-sign-in'
+	| 'github-accounts'
 	| 'personal-access-tokens'
 	| 'experiments'
 	| 'sync'
@@ -47,6 +49,7 @@ const NAV: Array<{ label?: string; pages: Page[] }> = [
 			{ slug: 'general', label: 'General', native: GeneralSettingsPage },
 			{ slug: 'agent', label: 'Agent defaults', section: 'agent' },
 			{ slug: 'agent-sign-in', label: 'Agent sign-in', section: 'agent-sign-in' },
+			{ slug: 'github-accounts', label: 'GitHub accounts', native: GithubAccountsPage },
 			{ slug: 'keybindings', label: 'Keyboard shortcuts', native: ShortcutsSettingsPage },
 			{ slug: 'archived', label: 'Archived tasks', native: ArchivedSettingsPage },
 		],

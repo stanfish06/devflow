@@ -49,6 +49,11 @@ import { replyDiffCommentProcedure } from './api/diff-comments/reply.effect'
 import { resolveBatchDiffCommentsProcedure } from './api/diff-comments/resolve-batch.effect'
 import { resolveDiffCommentProcedure } from './api/diff-comments/resolve.effect'
 import { getOrHydrateDurableStreamSessionsProcedure } from './api/durable-streams/sessions'
+import { addGithubAccountProcedure } from './api/github-accounts/add.effect'
+import { listGithubAccountsProcedure } from './api/github-accounts/list.effect'
+import { removeGithubAccountProcedure } from './api/github-accounts/remove.effect'
+import { replaceGithubAccountTokenProcedure } from './api/github-accounts/replace-token.effect'
+import { setDefaultGithubAccountProcedure } from './api/github-accounts/set-default.effect'
 import { listHostAliasesEffectProcedure } from './api/hosts/alias-list.effect'
 import { upsertHostAliasEffectProcedure } from './api/hosts/alias-upsert.effect'
 import { deleteHostEffectProcedure } from './api/hosts/delete.effect'
@@ -535,6 +540,13 @@ export const apiRouter = os.router({
 		update: {
 			request: requestHostUpdateEffectProcedure,
 		},
+	},
+	githubAccounts: {
+		list: listGithubAccountsProcedure,
+		add: addGithubAccountProcedure,
+		replaceToken: replaceGithubAccountTokenProcedure,
+		remove: removeGithubAccountProcedure,
+		setDefault: setDefaultGithubAccountProcedure,
 	},
 })
 
