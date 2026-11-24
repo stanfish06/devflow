@@ -1,6 +1,7 @@
 // Pure logic behind the usage page: the year grid's calendar layout, streaks, shading and the words
 // around them. The server computes every number; this only arranges and describes them.
 import { dayOfWeek, parseDayKey } from '@devflow/api-contract/api/metrics/range'
+import type { UsageDayRow } from '@devflow/api-contract/api/usage/day'
 import type { DayUsage, TokenBreakdown } from '@devflow/api-contract/api/usage/year'
 
 /** What the grid's cells measure: things you did, tokens your sessions used, or what they cost. */
@@ -240,4 +241,36 @@ function formatTotal(total: number, lens: UsageLens): string {
 /** Nothing to show under any lens: no activity, and no recorded usage either. */
 export function isEmptyYear(days: readonly DayUsage[]): boolean {
 	return days.every((day) => lensValue(day, 'activity') === 0 && day.tokens === null)
+}
+
+// ── Day list ─────────────────────────────────────────────────────────────────
+
+/**
+ * The day list's header count: '7 tasks', '2 tasks · 1 session', '1 session'. Nothing on an empty day,
+ * whose card says so instead.
+ */
+export function dayListCount(rows: readonly UsageDayRow[]): string | null {
+	const tasks = rows.filter((row) => row.kind === 'task').length
+	const sessions = rows.length - tasks
+	const parts = [tasks > 0 ? plural(tasks, 'task') : null, sessions > 0 ? plural(sessions, 'session') : null]
+	const text = parts.filter(Boolean).join(' · ')
+	return text || null
+}
+
+/**
+ * What you did on a row that day: 'Created · 3 sessions · 10 messages' for a task, 'Started · 2 messages'
+ * for a session with no task, whose own start is its one session. A row that only spent tokens that day
+ * (a run that carried on from an earlier day) says 'Usage only'.
+ */
+export function dayRowMeta(row: UsageDayRow): string {
+	const parts =
+		row.kind === 'task'
+			? [
+					row.created ? 'Created' : null,
+					row.sessions > 0 ? plural(row.sessions, 'session') : null,
+					row.messages > 0 ? plural(row.messages, 'message') : null,
+				]
+			: [row.created ? 'Started' : null, row.messages > 0 ? plural(row.messages, 'message') : null]
+	const text = parts.filter(Boolean).join(' · ')
+	return text || 'Usage only'
 }

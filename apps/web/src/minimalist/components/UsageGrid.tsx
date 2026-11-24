@@ -45,12 +45,25 @@ function scrollToToday(element: HTMLDivElement | null) {
  * The last 52 weeks as a contribution grid: one cell per local day, Monday-first columns, shaded by
  * the quartiles of your own year. A headline and your streaks sit above it, the scale below it. The
  * Activity / Tokens / Cost switch repaints the same cells from the same days; the layout never moves.
+ * Clicking a day selects it (a ring, never a different fill); clicking it again clears the selection.
  */
-export function UsageGrid({ days }: { days: DayUsage[] }) {
+export function UsageGrid({
+	days,
+	selectedDay,
+	onSelectDay,
+}: {
+	days: DayUsage[]
+	selectedDay: string | null
+	onSelectDay: (day: string | null) => void
+}) {
 	const frame = useRef<HTMLElement>(null)
 	const [lens, setLens] = useState<UsageLens>('activity')
 	const [hover, setHover] = useState<{ day: DayUsage; anchor: TooltipAnchor } | null>(null)
-	const [focusIndex, setFocusIndex] = useState(days.length - 1)
+	// The keyboard enters the grid on the selected day when there is one, else on today.
+	const [focusIndex, setFocusIndex] = useState(() => {
+		const selected = days.findIndex((day) => day.date === selectedDay)
+		return selected >= 0 ? selected : days.length - 1
+	})
 
 	const { weeks, months } = gridLayout(days)
 	const thresholds = intensityThresholds(days.map((day) => lensValue(day, lens)))
@@ -129,16 +142,19 @@ export function UsageGrid({ days }: { days: DayUsage[] }) {
 									// The grid opens on a Monday, so a cell's column and weekday give its day's index.
 									const cellIndex = column * 7 + cell.weekday
 									const level = intensityLevel(lensValue(cell.day, lens), thresholds)
+									const selected = cell.day.date === selectedDay
 									return (
 										<button
 											key={cell.day.date}
 											type="button"
-											className={`usage-cell l${level}`}
+											className={`usage-cell l${level}${selected ? ' sel' : ''}`}
 											style={{ gridColumn: column + 1, gridRow: cell.weekday + 1 }}
 											data-index={cellIndex}
 											data-date={cell.day.date}
 											tabIndex={cellIndex === tabStop ? 0 : -1}
 											aria-label={cellLabel(cell.day, lens)}
+											aria-pressed={selected}
+											onClick={() => onSelectDay(selected ? null : cell.day.date)}
 											onPointerEnter={(event) => show(cell.day, event.currentTarget)}
 											onFocus={(event) => {
 												setFocusIndex(cellIndex)
@@ -154,7 +170,7 @@ export function UsageGrid({ days }: { days: DayUsage[] }) {
 				</div>
 			</div>
 			<div className="usage-foot">
-				<span>Mon–Sun weeks · local time</span>
+				<span>Click a day to see what you worked on</span>
 				<UsageLegend items={LEGEND} before="Less" after="More" />
 			</div>
 			{hover ? (

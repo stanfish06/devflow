@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 import { expectStackUp } from './helpers'
-import { seedUsageFixture, USAGE_TODAY, type UsageFixture } from './usage-fixture'
+import { seedUsageFixture, USAGE_DAY, USAGE_TODAY, type UsageFixture } from './usage-fixture'
 
 // The grid buckets by the browser's calendar, so the clock and the time zone are both pinned.
 test.use({ timezoneId: 'UTC' })
@@ -86,4 +86,72 @@ test('the Tokens and Cost lenses repaint the grid from the usage ledger', async 
 
 	await lenses.getByRole('radio', { name: 'Activity' }).click()
 	await expect(grid.getByText('4 activities', { exact: true })).toBeVisible()
+})
+
+test('clicking a day lists what you worked on, and clicking it again closes the list', async ({ page }) => {
+	await page.goto('/')
+	const usageLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Usage' })
+	await expect(usageLink).toBeVisible({ timeout: 30_000 })
+	await page.clock.setFixedTime(new Date(`${USAGE_TODAY}T12:00:00Z`))
+	await usageLink.click()
+
+	const grid = page.getByRole('region', { name: 'Activity in the last year' })
+	const day = grid.getByRole('button', { name: '3 activities: 1 task, 1 session, 1 message · Wed, Jun 10, 2020' })
+	await day.click({ timeout: 30_000 })
+	await expect(page).toHaveURL(new RegExp(`/usage\\?day=${USAGE_DAY}$`))
+	await expect(day).toHaveClass(/\bsel\b/)
+	await expect(day).toHaveAttribute('aria-pressed', 'true')
+
+	const list = page.getByRole('region', { name: 'Work on Wed, Jun 10, 2020' })
+	await expect(list.getByRole('heading')).toHaveText('Wed, Jun 10, 2020 · 1 task')
+	const row = list.getByRole('row').filter({ hasText: fixture?.taskName ?? 'missing fixture' })
+	await expect(row).toBeVisible()
+	// Archived work keeps its history and its tag; the tokens and cost match the session badge.
+	await expect(row.getByText('Archived', { exact: true })).toBeVisible()
+	await expect(row.getByText('Created · 1 session · 1 message', { exact: true })).toBeVisible()
+	await expect(row.getByRole('cell')).toHaveText([/Usage e2e fixture/, '3', '1,200', '$0.12'])
+	await expect(row.getByRole('link', { name: fixture?.taskName })).toHaveAttribute('href', /\/tasks\//)
+
+	// Clicking the selected cell again closes the list.
+	await day.click()
+	await expect(page).toHaveURL(/\/usage$/)
+	await expect(list).toBeHidden()
+
+	// A Codex session with no task gets its own row, and its usage reads as unrecorded, not free.
+	await grid.getByRole('button', { name: '1 activity: 0 tasks, 1 session, 0 messages · Fri, Jun 12, 2020' }).click()
+	const codexList = page.getByRole('region', { name: 'Work on Fri, Jun 12, 2020' })
+	await expect(codexList.getByRole('heading')).toHaveText('Fri, Jun 12, 2020 · 1 session')
+	const codexRow = codexList.getByRole('row').filter({ hasText: 'Usage e2e Codex fixture' })
+	await expect(codexRow.getByText('Started', { exact: true })).toBeVisible()
+	await expect(codexRow.getByRole('cell')).toHaveText([
+		/Usage e2e Codex fixture/,
+		'1',
+		/No token data recorded/,
+		/No token data recorded/,
+	])
+	await expect(codexRow.getByRole('link')).toHaveAttribute('href', /\/sessions\//)
+
+	// Clear closes it too; a quiet day says so.
+	await codexList.getByRole('button', { name: 'Clear' }).click()
+	await expect(codexList).toBeHidden()
+	await grid.getByRole('button', { name: 'No activity · Thu, Jun 11, 2020' }).click()
+	await expect(page.getByRole('region', { name: 'Work on Thu, Jun 11, 2020' })).toContainText(
+		'No activity on this day.',
+	)
+
+	// Browsing days replaced the history entry, so Back leaves the page.
+	await page.goBack()
+	await expect(page).not.toHaveURL(/\/usage/)
+})
+
+test('a link to a day reopens its list, and survives a reload', async ({ page }) => {
+	// No pinned clock: the list reads its day from the URL, whatever today is.
+	await page.goto(`/usage?day=${USAGE_DAY}`)
+	const list = page.getByRole('region', { name: 'Work on Wed, Jun 10, 2020' })
+	const row = list.getByRole('row').filter({ hasText: fixture?.taskName ?? 'missing fixture' })
+	await expect(row.getByRole('cell').last()).toHaveText('$0.12', { timeout: 30_000 })
+
+	await page.reload()
+	await expect(page).toHaveURL(new RegExp(`/usage\\?day=${USAGE_DAY}$`))
+	await expect(row.getByRole('cell').last()).toHaveText('$0.12', { timeout: 30_000 })
 })

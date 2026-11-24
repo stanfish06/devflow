@@ -4,6 +4,7 @@
  */
 
 import { enumerateBuckets } from '@devflow/api-contract/api/metrics/range'
+import { type UsageDayRow, usageDayRowActivity } from '@devflow/api-contract/api/usage/day'
 import type { DayWindow } from '@devflow/api-contract/api/usage/windows'
 import type { DayUsage, TokenBreakdown } from '@devflow/api-contract/api/usage/year'
 
@@ -74,4 +75,55 @@ export function zeroFillDays(rows: readonly YearDayRow[], window: DayWindow): Da
 			...ledgerUsage(row),
 		}
 	})
+}
+
+/**
+ * One thing the caller worked on during the day query's day: a task, or a session with no task, with
+ * its activity and ledger sums already aggregated. Activity columns are NULL for an item that only
+ * spent tokens that day; the usage columns are NULL, and `ledger_rows` NULL or 0, for one that
+ * recorded none.
+ */
+export type DayItemRow = {
+	kind: string
+	id: string
+	name: string | null
+	archived: boolean | null
+	created: boolean | null
+	sessions: Numeric
+	messages: Numeric
+	ledger_rows: Numeric
+	tokens: Numeric
+	cost_usd: Numeric
+}
+
+/**
+ * The day list: one row per task or task-less session, ranked by the day's activity, highest first,
+ * so the main work sits at the top. Ties, including rows that only spent tokens that day, go by cost,
+ * then tokens, then name. Tokens and cost follow the same null rule as the year grid: no ledger rows
+ * is "No token data recorded", not zero.
+ */
+export function buildDayRows(rows: readonly DayItemRow[]): UsageDayRow[] {
+	const shaped = rows.map((row): UsageDayRow => {
+		const kind = row.kind === 'task' ? 'task' : 'session'
+		const hasLedger = num(row.ledger_rows) > 0
+		return {
+			kind,
+			id: row.id,
+			name: row.name?.trim() || (kind === 'task' ? 'Untitled task' : 'Untitled session'),
+			archived: row.archived === true,
+			created: row.created === true,
+			sessions: num(row.sessions),
+			messages: num(row.messages),
+			tokens: hasLedger ? num(row.tokens) : null,
+			costUsd: hasLedger ? num(row.cost_usd) : null,
+		}
+	})
+	return shaped.sort(
+		(a, b) =>
+			usageDayRowActivity(b) - usageDayRowActivity(a) ||
+			(b.costUsd ?? -1) - (a.costUsd ?? -1) ||
+			(b.tokens ?? -1) - (a.tokens ?? -1) ||
+			a.name.localeCompare(b.name) ||
+			a.id.localeCompare(b.id),
+	)
 }

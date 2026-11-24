@@ -4834,7 +4834,7 @@
 		border: 0;
 		border-radius: 2px;
 		background: var(--usage-l0);
-		cursor: default;
+		cursor: pointer;
 	}
 	.usage-cell.l1 {
 		background: var(--usage-l1);
@@ -4910,6 +4910,96 @@
 	}
 	.usage-tip b {
 		font-weight: 600;
+	}
+	/* The selected day's work, under the grid. About five rows show; a busy day scrolls inside the card
+	   so the rest of the page never moves down. */
+	.usage-day {
+		margin-top: 22px;
+	}
+	.usage-day-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.usage-day-head h2 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-day-count {
+		color: var(--fg-3);
+		font-size: 12px;
+		font-weight: 400;
+	}
+	.usage-day-head .btn:hover {
+		color: var(--fg);
+	}
+	.usage-day-note {
+		margin: 0;
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-day-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 70px 70px 70px;
+		gap: 12px;
+		align-items: center;
+		padding: 7px 0;
+	}
+	.usage-day-row.th {
+		padding: 0 0 4px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+	}
+	.usage-day-scroll {
+		display: block;
+		max-height: 265px;
+		overflow-y: auto;
+		margin-right: -10px;
+		padding-right: 10px;
+	}
+	.usage-day-scroll .usage-day-row {
+		border-top: 1px solid var(--line);
+	}
+	.usage-day-name {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.usage-day-name .t {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.usage-day-name a {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--fg);
+		text-decoration: none;
+	}
+	.usage-day-name a:hover {
+		text-decoration: underline;
+	}
+	.usage-day-name .badge {
+		flex-shrink: 0;
+	}
+	.usage-day-name .meta {
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-day-row .r {
+		text-align: right;
+		font-size: 12px;
+	}
+	.usage-day-row .num {
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-day-row .none {
+		color: var(--fg-3);
 	}
 }
 

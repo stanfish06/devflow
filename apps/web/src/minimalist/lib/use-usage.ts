@@ -17,3 +17,18 @@ export function useUsageYear(today: string, timezoneOffset: number) {
 		refetchOnMount: 'always',
 	})
 }
+
+/**
+ * What the caller worked on during one local day. Mounted only while the day list is open, so closing
+ * the list drops the subscription; scoped and refreshed like {@link useUsageYear}.
+ */
+export function useUsageDay(date: string, timezoneOffset: number) {
+	const { queryClient: api, authScope } = useApi()
+	const options = api.usage.day.queryOptions({ input: { date, timezoneOffset } })
+	return useQuery({
+		...options,
+		queryKey: [...options.queryKey, authScope],
+		enabled: authScope.userId !== null && authScope.organizationId !== null,
+		refetchOnMount: 'always',
+	})
+}

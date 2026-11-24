@@ -1,4 +1,5 @@
 import { addDays, rangeLengthDays } from '@devflow/api-contract/api/metrics/range'
+import type { UsageDayRow } from '@devflow/api-contract/api/usage/day'
 import { yearWindow } from '@devflow/api-contract/api/usage/windows'
 import type { DayUsage } from '@devflow/api-contract/api/usage/year'
 import { describe, expect, it } from 'vitest'
@@ -6,6 +7,8 @@ import { describe, expect, it } from 'vitest'
 import {
 	cellLabel,
 	cellSummary,
+	dayListCount,
+	dayRowMeta,
 	formatCost,
 	formatTokenCount,
 	gridLayout,
@@ -282,5 +285,44 @@ describe('isEmptyYear', () => {
 		expect(isEmptyYear(year('2026-11-24'))).toBe(true)
 		expect(isEmptyYear(year('2026-11-24', { '2026-11-18': 1 }))).toBe(false)
 		expect(isEmptyYear(year('2026-11-24', {}, { '2026-11-18': 0 }))).toBe(false)
+	})
+})
+
+describe('day list', () => {
+	const row = (overrides: Partial<UsageDayRow>): UsageDayRow => ({
+		kind: 'task',
+		id: 'id',
+		name: 'Usage dashboard',
+		archived: false,
+		created: false,
+		sessions: 0,
+		messages: 0,
+		tokens: null,
+		costUsd: null,
+		...overrides,
+	})
+
+	it('counts tasks and task-less sessions in the header', () => {
+		expect(dayListCount([])).toBeNull()
+		expect(dayListCount([row({}), row({})])).toBe('2 tasks')
+		expect(dayListCount([row({}), row({ kind: 'session' })])).toBe('1 task · 1 session')
+		expect(dayListCount([row({ kind: 'session' }), row({ kind: 'session' })])).toBe('2 sessions')
+	})
+
+	it('says what you did on a task', () => {
+		expect(dayRowMeta(row({ created: true, sessions: 3, messages: 10 }))).toBe('Created · 3 sessions · 10 messages')
+		expect(dayRowMeta(row({ sessions: 1, messages: 1 }))).toBe('1 session · 1 message')
+		expect(dayRowMeta(row({ messages: 2 }))).toBe('2 messages')
+	})
+
+	it('says a task-less session was started, without counting itself as a session', () => {
+		expect(dayRowMeta(row({ kind: 'session', created: true, sessions: 1, messages: 2 }))).toBe(
+			'Started · 2 messages',
+		)
+		expect(dayRowMeta(row({ kind: 'session', created: true, sessions: 1 }))).toBe('Started')
+	})
+
+	it('marks a row that only spent tokens that day', () => {
+		expect(dayRowMeta(row({ kind: 'session', tokens: 10, costUsd: 0.01 }))).toBe('Usage only')
 	})
 })
