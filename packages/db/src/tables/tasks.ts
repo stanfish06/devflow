@@ -66,6 +66,14 @@ export const tasks = pgTable(
 
 		// Draft flag - true for saved but not launched tasks
 		is_draft: boolean('is_draft').default(false).notNull(),
+		/**
+		 * A board draft's composer snapshot (prompt, attachments, target, host, settings, size), written
+		 * by `tasks.saveDraft` and cleared when the draft launches. Untyped here: the write contract
+		 * validates it, and readers parse it, so a newer client's snapshot never breaks a sync.
+		 */
+		draft_launch: jsonb('draft_launch'),
+		/** When the task was first saved as a draft; kept when the draft launches. */
+		drafted_at: bigint('drafted_at', { mode: 'bigint' }),
 
 		// Setup state columns for deterministic task bootstrap
 		setup_status: text().$type<SetupStatus>(),
@@ -124,6 +132,8 @@ export const taskSelectSchema = createSelectSchema(tasks, {
 	workspace_state: jsonbParser(WorkspaceStateSchema.nullable()),
 	workspace_spec: jsonbParser(WorkspaceSpecSchema.nullable()),
 	created_with_experiment_flags: jsonbParser(CreatedWithExperimentFlagsSchema.nullable()),
+	// Lenient on sync: readers parse the snapshot themselves.
+	draft_launch: jsonbParser(z.unknown().nullable()),
 })
 export const taskInsertSchema = createInsertSchema(tasks, {
 	workspace_state: WorkspaceStateSchema.nullish(),

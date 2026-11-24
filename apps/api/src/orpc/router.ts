@@ -132,6 +132,7 @@ import {
 } from './api/sessions/queued-messages.effect'
 import { sendNowQueuedMessageEffectProcedure } from './api/sessions/queued-messages.send-now.effect'
 import { updateQueuedMessageEffectProcedure } from './api/sessions/queued-messages.update.effect'
+import { relaunchSessionProcedure } from './api/sessions/relaunch'
 import { updateSessionApiProcedure } from './api/sessions/update'
 import { updateSessionStatusProcedure } from './api/sessions/update-status'
 import { continueSessionV2Procedure } from './api/sessions/v2/continue'
@@ -336,6 +337,7 @@ export const apiRouter = os.router({
 		updateStatus: updateSessionStatusProcedure,
 		continue: continueSessionProcedure,
 		interrupt: interruptSessionProcedure,
+		relaunch: relaunchSessionProcedure,
 		list: listSessionsEffectProcedure,
 		multiplayerPrompting: { update: updateMultiplayerPromptingEffectProcedure },
 		events: {

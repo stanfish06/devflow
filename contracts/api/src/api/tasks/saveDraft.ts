@@ -1,9 +1,10 @@
 import { taskSelectSchema } from '@devflow/db/tables/tasks'
-import { TASK_WORKFLOW_TYPES, WORKTREE_TIMINGS } from '@devflow/schemas/effect/taskconfiguration'
+import { TASK_STATUSES, TASK_WORKFLOW_TYPES, WORKTREE_TIMINGS } from '@devflow/schemas/effect/taskconfiguration'
 import z from 'zod/v4'
 
 import { contractBuilder } from '../../contract-builder'
 import { TicketProviderSchema } from '../../lib/ticket-provider'
+import { DraftLaunchSchema } from './draft-launch'
 
 export const SaveTaskDraftInputSchema = z
 	.object({
@@ -24,6 +25,8 @@ export const SaveTaskDraftInputSchema = z
 		autoAdvancePlanToWorktree: z.boolean(),
 		autoAdvanceWorktreeToImplementation: z.boolean(),
 		autoAdvanceImplementationToPr: z.boolean(),
+		status: z.enum(TASK_STATUSES).describe('The board column the draft sits in'),
+		draftLaunch: DraftLaunchSchema.describe('The composer snapshot Start launches'),
 	})
 	.superRefine((input, context) => {
 		const hasConnectionId = input.githubConnectionId !== null

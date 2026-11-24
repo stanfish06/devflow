@@ -1,5 +1,5 @@
 {
-  "id": "1b54b8ca-dc05-42a5-9d10-f43c98b6389f",
+  "id": "a50a34a3-c869-4636-84ab-3d53efcd48d8",
   "prevId": "3fd4a5e2-da1b-424e-a560-d4143a8afaf4",
   "version": "7",
   "dialect": "postgresql",
@@ -2251,34 +2251,6 @@
           ],
           "isUnique": false,
           "where": "(\"conversation_events\".\"event_type\" = 'tool_call' AND \"conversation_events\".\"tool_call_id\" IS NOT NULL) OR \"conversation_events\".\"tool_result_for_id\" IS NOT NULL",
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "conversation_events_user_messages_idx": {
-          "name": "conversation_events_user_messages_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "created_at",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "where": "\"conversation_events\".\"role\" = 'user' AND \"conversation_events\".\"event_type\" = 'message' AND \"conversation_events\".\"user_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -6500,6 +6472,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "draft_launch": {
+          "name": "draft_launch",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "drafted_at": {
+          "name": "drafted_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
         },
         "setup_status": {
           "name": "setup_status",
