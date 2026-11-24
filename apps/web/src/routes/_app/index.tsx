@@ -1,3 +1,4 @@
+import { TASK_STATUSES } from '@devflow/schemas/effect/taskconfiguration'
 import { createFileRoute } from '@tanstack/react-router'
 import z from 'zod/v4'
 
@@ -11,6 +12,7 @@ const indexSearchSchema = sessionsSearchSchema.extend({
 	project: z.string().optional(),
 	dir: z.string().optional(),
 	host: z.string().optional(),
+	status: z.enum(TASK_STATUSES).optional(),
 })
 
 export const Route = createFileRoute('/_app/')({
@@ -19,7 +21,7 @@ export const Route = createFileRoute('/_app/')({
 })
 
 function AppIndexRoute() {
-	const { tab, task, project, dir, host } = Route.useSearch()
+	const { tab, task, project, dir, host, status } = Route.useSearch()
 	const minimalist = useMinimalistLayout()
 	if (minimalist)
 		return (
@@ -29,6 +31,7 @@ function AppIndexRoute() {
 				projectId={project}
 				directory={dir}
 				hostId={host}
+				status={status}
 			/>
 		)
 	return <SessionsRoutePage tab={tab} routeTo="/" />

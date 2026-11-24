@@ -1,5 +1,7 @@
 import {
+	TASK_STATUSES,
 	TASK_WORKFLOW_TYPES,
+	type TaskStatus,
 	type TaskWorkflowType,
 	WORKTREE_TIMINGS,
 	type WorktreeTiming,
@@ -84,6 +86,8 @@ export const tasks = pgTable(
 
 		// Auto-advance workflow flags
 		workflow_type: text('workflow_type').$type<TaskWorkflowType>().default('rpi').notNull(),
+		/** Board status; a launched task starts in progress. */
+		status: text('status').$type<TaskStatus>().default('in_progress').notNull(),
 		worktree_timing: text('worktree_timing').$type<WorktreeTiming>().default('later').notNull(),
 		/** @deprecated Prefer workspace_spec plus the current host setup row for setup-aware reads. */
 		workspace_state: jsonb().$type<WorkspaceState>(),
@@ -114,6 +118,7 @@ export const taskSelectSchema = createSelectSchema(tasks, {
 	setup_status: z.enum(['pending', 'in_progress', 'completed', 'failed']).nullable(),
 	ticket_provider: z.enum(['linear', 'jira', 'github']).nullable(),
 	workflow_type: z.enum(TASK_WORKFLOW_TYPES),
+	status: z.enum(TASK_STATUSES),
 	worktree_timing: z.enum(WORKTREE_TIMINGS),
 	// Electric ships JSONB as strings over the wire
 	workspace_state: jsonbParser(WorkspaceStateSchema.nullable()),

@@ -1,3 +1,4 @@
+import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
@@ -68,12 +69,15 @@ export function NewTask({
 	projectId,
 	directory,
 	hostId: requestedHostId,
+	status,
 }: {
 	existingTaskId?: string
 	projectId?: string
 	directory?: string
 	/** A host to start on, such as the one the offline notice offers. */
 	hostId?: string
+	/** Board status for the new task, from a board column's +. */
+	status?: TaskStatus
 }) {
 	const { client: api, queryClient: orpc } = useApi()
 	const navigate = useNavigate()
@@ -264,6 +268,7 @@ export function NewTask({
 				settings,
 				workflow: taskSizeWorkflow(taskSize, smallAutoAdvance),
 				directImplementation: taskSize === 'small',
+				status,
 			})
 			rememberSettings(settings)
 			setDraft('')
@@ -299,13 +304,23 @@ export function NewTask({
 							: 'Loading…'}
 				</span>
 			) : (
-				<button type="button" ref={targetAnchor} onClick={() => setMenu('target')}>
+				<button
+					type="button"
+					ref={targetAnchor}
+					aria-label={`Project: ${targetName ?? 'none'}`}
+					onClick={() => setMenu('target')}
+				>
 					<Folder className="i sm" strokeWidth={1.6} />
 					{targetName ?? 'Choose a project'}
 					<ChevronDown className="i sm" />
 				</button>
 			)}
-			<button type="button" ref={hostAnchor} onClick={() => setMenu('host')}>
+			<button
+				type="button"
+				ref={hostAnchor}
+				aria-label={`Host: ${host ? host.name : 'none'}`}
+				onClick={() => setMenu('host')}
+			>
 				<HostIcon host={host} />
 				{host ? host.name : hostsReady ? 'No host' : 'Host'}
 				<ChevronDown className="i sm" />

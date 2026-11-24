@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect, test } from '@playwright/test'
 
 import {
+	API_PORT,
 	archiveTask,
 	devflowCli,
 	ensureE2eRepo,
@@ -43,7 +44,7 @@ test('app opens signed in as the local user, with the minimalist UI and an onlin
 
 test('task runs in the Docker sandbox and a follow-up resumes the same conversation', async ({ page }) => {
 	await openE2eProject(page)
-	await startTask(page, {
+	const taskId = await startTask(page, {
 		prompt: 'Write the word kiwi to fruit-e2e.txt, then run `uname -s` and reply with only its output.',
 	})
 	await waitForTurnEnd(page)
@@ -67,7 +68,7 @@ test('task runs in the Docker sandbox and a follow-up resumes the same conversat
 	await page.reload()
 	// Everything above is stored in Postgres: a reload shows both turns.
 	await expect(page.getByText(/kiwi/i).first()).toBeVisible()
-	await archiveTask(page, /Write .*kiwi|Kiwi/i)
+	await archiveTask(page, taskId)
 })
 
 test('a command in Ask first mode waits for approval, then runs', async ({ page }) => {
@@ -92,13 +93,13 @@ test('the API crashing mid-turn loses no events', async ({ page }) => {
 	})
 	await expect(page.getByText(/sleep 20/).first()).toBeVisible()
 	// Kill the API (devflow restarts it within seconds); the daemon retries its event writes.
-	const api = listeningPid(47100)
+	const api = listeningPid(API_PORT)
 	expect(api).toBeDefined()
 	process.kill(api!, 'SIGKILL')
 	await waitForTurnEnd(page, 300_000)
 	await page.reload()
 	await expect(page.getByText(/first-half.*second-half/).first()).toBeVisible()
-	expect(listeningPid(47100)).not.toBe(api)
+	expect(listeningPid(API_PORT)).not.toBe(api)
 })
 
 test('Medium (RPI) task auto-advances from research questions to research', async ({ page }) => {
@@ -137,3 +138,63 @@ test('Codex runs through codex app-server', async ({ page }) => {
 	).toBeVisible()
 	await expect.poll(() => worktreeFile('create-codex-e2e-txt', 'codex-e2e.txt')?.trim()).toBe('papaya')
 })
+
+// A host started with `bun run devflow remote <ssh-host>`, by the name it shows in the host menu.
+const REMOTE_HOST = process.env.DEVFLOW_E2E_REMOTE_HOST
+
+test('a task runs on a remote host', async ({ page }) => {
+	test.skip(!REMOTE_HOST, 'Set DEVFLOW_E2E_REMOTE_HOST to a host started with bun run devflow remote')
+	const host = REMOTE_HOST ?? ''
+	await page.goto('/')
+	await page.getByRole('button', { name: /^Host: / }).click()
+	await page.getByRole('button', { name: new RegExp(`^${host} Online`) }).click()
+	await expect(page.getByRole('button', { name: `Host: ${host}` })).toBeVisible()
+	// A directory task needs no clone: the agent works in /tmp on that host.
+	await page.getByRole('button', { name: /^Project: / }).click()
+	await page.getByRole('textbox', { name: 'Directory path' }).fill('/tmp')
+	await page.getByRole('button', { name: 'Use directory' }).click()
+	await startTask(page, {
+		prompt: 'Write the word mango to remote-e2e.txt, run `cat remote-e2e.txt`, and reply with only its output.',
+		permission: 'Bypass permissions',
+	})
+	// The reply is the file's content alone; the prompt also says "mango", so match the whole text.
+	await expect(page.getByText('mango', { exact: true }).filter({ visible: true }).last()).toBeVisible({
+		timeout: 240_000,
+	})
+	await waitForTurnEnd(page)
+	await expect(page.getByText(host, { exact: true }).filter({ visible: true }).first()).toBeVisible()
+})
+
+test('the board moves a task to another status by drag, and the list groups it there', async ({ page }) => {
+	await page.goto('/board')
+	const card = page.locator('[data-task-id]').first()
+	await expect(card).toBeVisible({ timeout: 30_000 })
+	const taskId = (await card.getAttribute('data-task-id')) ?? ''
+	const name = (await card.locator('.line-clamp-2').textContent()) ?? ''
+	const from = (await card.locator('xpath=ancestor::section[1]').getAttribute('aria-label')) ?? ''
+	const to = from === 'Done' ? 'Todo' : 'Done'
+	const column = (label: string) => page.getByRole('region', { name: label, exact: true })
+
+	await card.dragTo(column(to))
+	await expect(column(to).locator(`[data-task-id="${taskId}"]`)).toBeVisible()
+	// The status is stored: it survives a reload and shows in the list layout's group.
+	await page.goto('/board?layout=list')
+	await expect(
+		column(to)
+			.getByRole('button', { name: new RegExp(escapeRegExp(name)) })
+			.first(),
+	).toBeVisible()
+
+	// Back with the status menu, the keyboard path besides dragging.
+	await page.goto('/board')
+	await column(to)
+		.locator(`[data-task-id="${taskId}"]`)
+		.getByRole('button', { name: /^Status of / })
+		.click()
+	await page.getByRole('menuitem', { name: new RegExp(`(^| )${from}$`) }).click()
+	await expect(column(from).locator(`[data-task-id="${taskId}"]`)).toBeVisible()
+})
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}

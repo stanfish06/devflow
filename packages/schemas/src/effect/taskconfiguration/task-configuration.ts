@@ -1,5 +1,10 @@
 import * as Schema from 'effect/Schema'
 
+/** Where a task stands on the board, Linear's statuses: set by the owner, not derived from sessions. */
+export const TASK_STATUSES = ['backlog', 'todo', 'in_progress', 'on_hold', 'done', 'canceled'] as const
+export const TaskStatus = Schema.Literals(TASK_STATUSES)
+export type TaskStatus = typeof TaskStatus.Type
+
 export const TASK_WORKFLOW_TYPES = ['rpi', 'outline_only', 'prd_tdd', 'oneshot'] as const
 export const TaskWorkflowType = Schema.Literals(TASK_WORKFLOW_TYPES)
 export type TaskWorkflowType = typeof TaskWorkflowType.Type

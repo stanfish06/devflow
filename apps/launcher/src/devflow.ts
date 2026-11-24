@@ -36,10 +36,6 @@ const CONFIG_PATH = join(DEVFLOW_HOME, 'config.json')
 // this one's offset from 47443 applied to the base ports below, so `--port 48443` moves the whole
 // stack to 48xxx.
 const BASE_HTTPS_PORT = 47443
-const HTTPS_PORT = resolveHttpsPort()
-const PORT_OFFSET = HTTPS_PORT - BASE_HTTPS_PORT
-const HTTP_PORT = Number(process.env.DEVFLOW_HTTP_PORT ?? 47080 + PORT_OFFSET)
-const AGENT_IMAGE = process.env.DEVFLOW_AGENT_IMAGE ?? 'devflow-agent:latest'
 const BASE_PORTS = {
 	ui: 47000,
 	cloud: 47001,
@@ -60,6 +56,18 @@ const BASE_PORTS = {
 	testRivetEngine: 47641,
 	testRivetServices: 47643,
 } as const
+const HTTPS_PORT = (() => {
+	// Resolved while the module loads, before the command's own error handling; report it the same way.
+	try {
+		return resolveHttpsPort()
+	} catch (error) {
+		console.error(`devflow: ${error instanceof Error ? error.message : String(error)}`)
+		process.exit(1)
+	}
+})()
+const PORT_OFFSET = HTTPS_PORT - BASE_HTTPS_PORT
+const HTTP_PORT = Number(process.env.DEVFLOW_HTTP_PORT ?? 47080 + PORT_OFFSET)
+const AGENT_IMAGE = process.env.DEVFLOW_AGENT_IMAGE ?? 'devflow-agent:latest'
 const PORTS = portsFor(HTTPS_PORT)
 const REDIS_PORT = 47379 + PORT_OFFSET
 
@@ -81,7 +89,7 @@ function resolveHttpsPort(): number {
 	if (process.env.DEVFLOW_HTTPS_PORT) return parsePort(process.env.DEVFLOW_HTTPS_PORT)
 	if (existsSync(CONFIG_PATH)) {
 		const saved = (JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as { httpsPort?: number }).httpsPort
-		if (saved) return saved
+		if (saved) return parsePort(saved)
 	}
 	return BASE_HTTPS_PORT
 }
@@ -622,9 +630,19 @@ function option(name: string): string | undefined {
 	return index === -1 ? undefined : process.argv[index + 1]
 }
 
-function parsePort(value: string): number {
+/**
+ * An HTTPS port whose shifted stack (every base port, Redis and the HTTP port) stays within
+ * 1024–65535, so no service lands on a privileged or out-of-range port.
+ */
+function parsePort(value: string | number): number {
 	const port = Number(value)
-	if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Invalid port: ${value}`)
+	const offset = port - BASE_HTTPS_PORT
+	const shifted = [...Object.values(BASE_PORTS), 47379, 47080, BASE_HTTPS_PORT].map((base) => base + offset)
+	if (!Number.isInteger(port) || Math.min(...shifted) < 1024 || Math.max(...shifted) > 65535) {
+		const low = BASE_HTTPS_PORT + 1024 - Math.min(...Object.values(BASE_PORTS), 47080)
+		const high = BASE_HTTPS_PORT + 65535 - Math.max(...Object.values(BASE_PORTS), 47379)
+		throw new Error(`Invalid port: ${value}. Pick ${low}–${high} so every service port stays in range.`)
+	}
 	return port
 }
 
@@ -801,15 +819,17 @@ async function host(): Promise<void> {
 	}
 }
 
-/** Caddy's local CA root, which signs the *.devflow.localhost certificates (Caddy's default data dir). */
-const CADDY_ROOT_CA = join(
-	process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'),
-	'caddy',
-	'pki',
-	'authorities',
-	'local',
-	'root.crt',
-)
+/**
+ * Caddy's local CA root, which signs the *.devflow.localhost certificates. Caddy keeps it in its
+ * data directory: $XDG_DATA_HOME/caddy when set, else the platform default (macOS: Application Support).
+ */
+function caddyDataDir(): string {
+	if (process.env.XDG_DATA_HOME) return join(process.env.XDG_DATA_HOME, 'caddy')
+	if (process.platform === 'darwin') return join(homedir(), 'Library', 'Application Support', 'Caddy')
+	return join(homedir(), '.local', 'share', 'caddy')
+}
+const CADDY_DATA_DIR = caddyDataDir()
+const CADDY_ROOT_CA = join(CADDY_DATA_DIR, 'pki', 'authorities', 'local', 'root.crt')
 
 /** `e2e`: Playwright tests in apps/e2e against the running stack (installed Chrome). */
 function e2e(): void {
@@ -822,6 +842,7 @@ function e2e(): void {
 			NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA,
 			DEVFLOW_APP_URL: ROUTES.ui,
 			DEVFLOW_API_URL: ROUTES.api,
+			DEVFLOW_API_PORT: String(PORTS.api),
 		},
 		stdio: 'inherit',
 	})

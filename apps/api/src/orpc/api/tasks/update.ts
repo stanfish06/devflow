@@ -31,6 +31,7 @@ export const updateTaskProcedure = apiBaseOrgRequired.tasks.update.handler(async
 		ticketRepositoryId,
 		ticketRepositoryFullName,
 		workflowType,
+		status,
 		autoAdvanceQuestionsToResearch,
 		autoAdvanceResearchToDesign,
 		autoAdvancePlanToWorktree,
@@ -59,6 +60,7 @@ export const updateTaskProcedure = apiBaseOrgRequired.tasks.update.handler(async
 		ticketRepositoryId === undefined &&
 		ticketRepositoryFullName === undefined &&
 		workflowType === undefined &&
+		status === undefined &&
 		autoAdvanceQuestionsToResearch === undefined &&
 		autoAdvanceResearchToDesign === undefined &&
 		autoAdvancePlanToWorktree === undefined &&
@@ -142,7 +144,8 @@ export const updateTaskProcedure = apiBaseOrgRequired.tasks.update.handler(async
 				githubConnectionId !== undefined ||
 				ticketRepositoryId !== undefined ||
 				ticketRepositoryFullName !== undefined ||
-				workflowType !== undefined
+				workflowType !== undefined ||
+				status !== undefined
 
 			if (!isOwner) {
 				// Non-owners cannot update task-only fields — except a same-org admin
@@ -241,6 +244,7 @@ export const updateTaskProcedure = apiBaseOrgRequired.tasks.update.handler(async
 			if (ticketRepositoryFullName !== undefined) updates.ticket_repository_full_name = ticketRepositoryFullName
 			// Owner-only task-level fields; non-owners were already rejected above via hasTaskOnlyFields.
 			if (workflowType !== undefined) updates.workflow_type = workflowType
+			if (status !== undefined) updates.status = status
 			if (!userSettingsHandledSeparately) {
 				// Only owners reach here with these fields
 				if (defaultWorkingDirectory !== undefined) updates.default_working_directory = defaultWorkingDirectory

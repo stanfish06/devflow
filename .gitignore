@@ -121,3 +121,7 @@ REACT_DOCTOR_ISSUES.json
 # `bun run devflow up` output when started in the background
 .devflow-up.log
 .devflow-e2e.log
+.devflow-remote.log
+.devflow-tunnel.log
+.ocr-review-*.txt
+.board-*.png

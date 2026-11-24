@@ -1,4 +1,4 @@
-import { RESOLVED_TASK_WORKFLOW_TYPES } from '@devflow/schemas/effect/taskconfiguration'
+import { RESOLVED_TASK_WORKFLOW_TYPES, TASK_STATUSES } from '@devflow/schemas/effect/taskconfiguration'
 import z from 'zod/v4'
 
 import { contractBuilder } from '../../contract-builder'
@@ -26,6 +26,7 @@ export const UpdateTaskInputSchema = z.object({
 		.describe('GitHub owner/repository display snapshot'),
 	// Workflow automation
 	workflowType: z.enum(RESOLVED_TASK_WORKFLOW_TYPES).optional().describe('Workflow type for this task (owner-only)'),
+	status: z.enum(TASK_STATUSES).optional().describe('Board status (owner-only)'),
 	autoAdvanceQuestionsToResearch: z.boolean().optional().describe('Auto-advance from research-questions to research'),
 	autoAdvanceResearchToDesign: z.boolean().optional().describe('Auto-advance from research to design-discussion'),
 	autoAdvancePlanToWorktree: z.boolean().optional().describe('Auto-advance from plan to worktree setup'),

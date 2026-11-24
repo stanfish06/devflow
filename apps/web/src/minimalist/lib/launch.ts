@@ -1,6 +1,7 @@
 import { type ClaudeEffortLevel, isEffortSupported } from '@devflow/ai/config'
 import type { Task } from '@devflow/db/tables/tasks'
 import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
+import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import type { ResolvedTaskWorkflow, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
 import { findModelOption } from '@devflow/ui/constants/models'
 import { ORPCError } from '@orpc/client'
@@ -156,6 +157,8 @@ type NewTask = {
 	workflow: ResolvedTaskWorkflow
 	/** A small task: labeled as implementation, and asked to offer describe-pr when it's done. */
 	directImplementation?: boolean
+	/** Board status, when started from a board column; tasks otherwise start in progress. */
+	status?: TaskStatus
 }
 
 /**
@@ -236,6 +239,9 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 			{ context: { silent: true } },
 		)
 	}
+	// The task is already running; if setting the column's status fails it stays in progress and can be moved on the board.
+	if (input.status && input.status !== 'in_progress')
+		await api.tasks.update({ taskId: ids.taskId, status: input.status }).catch(() => null)
 	if (ticket) return
 	void api.ai
 		.generateTitle({ text })

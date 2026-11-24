@@ -56,6 +56,7 @@ const task: Task = {
 	ticket_repository_full_name: null,
 	created_with_experiment_flags: null,
 	workflow_type: 'rpi',
+	status: 'in_progress',
 	worktree_timing: 'later',
 	workspace_state: null,
 	workspace_spec: null,

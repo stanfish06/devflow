@@ -13,8 +13,23 @@
     <meta property="og:description" content="devflow — plan, delegate, and review work with your coding agents." />
     <script>
       try {
+        const choices = ['system', 'light', 'dark']
+        // One-time move of the minimalist UI's old setting into the shared one; a valid shared choice wins.
+        const legacy = localStorage.getItem('hl-min-theme')
+        const readShared = () => {
+          try {
+            return JSON.parse(localStorage.getItem('devflow-theme') ?? 'null')
+          } catch {
+            return null
+          }
+        }
+        if (legacy !== null) {
+          const shared = readShared()
+          if (!choices.includes(shared) && choices.includes(legacy)) localStorage.setItem('devflow-theme', JSON.stringify(legacy))
+          localStorage.removeItem('hl-min-theme')
+        }
         // Apply the stored light/dark/system choice before first paint (ThemeProvider takes over after).
-        const stored = JSON.parse(localStorage.getItem('devflow-theme') ?? 'null')
+        const stored = readShared()
         const dark = stored === 'dark' || (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
         document.documentElement.dataset.theme = dark ? 'dark' : 'light'
         document.documentElement.classList.toggle('dark', dark)

@@ -6,6 +6,8 @@ import { join } from 'node:path'
 import { expect, type Page } from '@playwright/test'
 
 export const API_URL = process.env.DEVFLOW_API_URL ?? 'https://api.devflow.localhost:47443'
+/** The API process's own port, for tests that kill it (`bun run devflow e2e` passes the stack's). */
+export const API_PORT = Number(process.env.DEVFLOW_API_PORT ?? 47100)
 export const DEVFLOW_HOME = process.env.DEVFLOW_HOME ?? join(homedir(), '.devflow')
 export const REPO_ROOT = join(import.meta.dirname, '../../..')
 
@@ -130,9 +132,16 @@ export async function waitForTurnEnd(page: Page, timeout = 240_000): Promise<voi
 	}).toPass({ timeout, intervals: [1_000] })
 }
 
-export async function archiveTask(page: Page, title: RegExp): Promise<void> {
-	const archive = page.getByRole('button', { name: new RegExp(`^Archive ${title.source}`) }).first()
-	if (await archive.isVisible().catch(() => false)) await archive.click()
+/** Archive one task from the sidebar: its Archive button only shows while the row is hovered. */
+export async function archiveTask(page: Page, taskId: string): Promise<void> {
+	const row = page.locator(`a[href="/tasks/${taskId}"]`).first()
+	await row.hover()
+	await row
+		.locator('xpath=..')
+		.getByRole('button', { name: /^Archive / })
+		.first()
+		.click()
+	await expect(row).toHaveCount(0)
 }
 
 /** Run the devflow CLI the way a user does (`bun run devflow ...`). */

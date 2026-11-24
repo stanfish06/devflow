@@ -1,43 +1,137 @@
-import { Link } from '@tanstack/react-router'
+// Linear-style views of tasks grouped by board status, copied from fractal-platform's
+// workspace/status-views.tsx: a board (drag a card to another column to change its status) and a list
+// with collapsible groups. Both open the task on click; + starts a new task in that status.
+import { TASK_STATUSES, type TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from '@devflow/ui/components/dropdown-menu'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { assignColumn, KANBAN_COLUMN_DEFS } from '@/lib/kanban/columnEngine'
-import { WiredUserAvatar } from '@/minimalist/components/Avatar'
+import { cn } from '@/lib/utils'
 import { Segmented } from '@/minimalist/components/SettingsControls'
-import { TaskMark } from '@/minimalist/components/TaskItem'
+import { TASK_STATUS_META, TaskStatusIcon } from '@/minimalist/components/TaskStatusIcon'
 import { type TaskRow, type TaskTreeScope, useTaskTree } from '@/minimalist/lib/data'
-import { statusText } from '@/minimalist/lib/status'
 import { useUi } from '@/minimalist/lib/ui-state'
-import { useTaskUnread } from '@/minimalist/lib/use-unread'
+import { useApi } from '@/orpc/client'
+
+// ── Options ──────────────────────────────────────────────────────────────────
+// Board columns share the width between min-w-[200px] and max-w-[360px] (BoardView); below the
+// minimum the board scrolls sideways.
+const DRAG_TYPE = 'application/x-devflow-task'
+
+export type BoardLayout = 'board' | 'list'
 
 const SCOPES: Array<{ value: TaskTreeScope; label: string }> = [
 	{ value: 'mine', label: 'Mine' },
 	{ value: 'everyone', label: 'Everyone' },
 ]
+const LAYOUTS: Array<{ value: BoardLayout; label: string }> = [
+	{ value: 'board', label: 'Board' },
+	{ value: 'list', label: 'List' },
+]
+const PHASE_TITLES = new Map(KANBAN_COLUMN_DEFS.map((column) => [column.id, column.title]))
 
-/** Tasks as a board, one column per RPI phase, placed the same way as the standard board. */
-export function BoardPage() {
+type ViewProps = {
+	rows: TaskRow[]
+	onOpen: (taskId: string) => void
+	onCreate: (status: TaskStatus) => void
+}
+
+/** The task's status icon as a button: a menu of statuses, the keyboard path besides dragging. */
+function StatusMenu(props: { taskId: string; taskName: string; status: TaskStatus; className?: string }) {
+	const setStatus = useSetTaskStatus()
+	return (
+		<DropdownMenu>
+			<DropdownMenuTrigger
+				aria-label={`Status of ${props.taskName}: ${TASK_STATUS_META[props.status].label}`}
+				className={cn('rounded p-0.5 hover:bg-accent/10', props.className)}
+			>
+				<TaskStatusIcon status={props.status} />
+			</DropdownMenuTrigger>
+			<DropdownMenuContent align="start">
+				{TASK_STATUSES.map((status) => (
+					<DropdownMenuItem
+						key={status}
+						disabled={status === props.status}
+						onSelect={() => void setStatus(props.taskId, status)}
+					>
+						<TaskStatusIcon status={status} />
+						{TASK_STATUS_META[status].label}
+					</DropdownMenuItem>
+				))}
+			</DropdownMenuContent>
+		</DropdownMenu>
+	)
+}
+
+/** Stores a task's board status; a failure shows a toast. */
+function useSetTaskStatus() {
+	const { client: api } = useApi()
+	const { showToast } = useUi()
+	return async (taskId: string, status: TaskStatus) => {
+		try {
+			await api.tasks.update({ taskId, status })
+		} catch (error) {
+			showToast(error instanceof Error ? error.message : 'Could not change the status')
+		}
+	}
+}
+
+/** Tasks grouped by status, in board order. */
+function statusGroups(rows: TaskRow[]) {
+	return TASK_STATUSES.map((status) => ({ status, rows: rows.filter((row) => row.task.status === status) }))
+}
+
+/** The RPI phase a task's sessions have reached, as the old board placed it. */
+function phaseTitle(row: TaskRow): string {
+	const id = assignColumn(
+		row.task,
+		row.sessions.map((session) => ({
+			archived: session.archived,
+			labels: session.labels,
+			last_activity_at: session.last_activity_at,
+		})),
+	)
+	return PHASE_TITLES.get(id) ?? id
+}
+
+function shortDate(ms: number): string {
+	return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function Chip(props: { children: string }) {
+	return (
+		<span className="max-w-full truncate rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
+			{props.children}
+		</span>
+	)
+}
+
+/** Tasks as a Linear-style board or list, grouped by status. */
+export function BoardPage({ layout, onLayout }: { layout: BoardLayout; onLayout: (layout: BoardLayout) => void }) {
 	const [scope, setScope] = useState<TaskTreeScope>('everyone')
 	const { recent: rows, isReady } = useTaskTree(false, scope)
-	const columns = KANBAN_COLUMN_DEFS.map((column) => ({ ...column, rows: [] as TaskRow[] }))
-	const byId = new Map(columns.map((column) => [column.id, column]))
-	for (const row of rows) {
-		const id = assignColumn(
-			row.task,
-			row.sessions.map((session) => ({
-				archived: session.archived,
-				labels: session.labels,
-				last_activity_at: session.last_activity_at,
-			})),
-		)
-		byId.get(id)?.rows.push(row)
+	const navigate = useNavigate()
+	const { closeSidebarOnNarrow } = useUi()
+	const onOpen = (taskId: string) => {
+		closeSidebarOnNarrow()
+		void navigate({ to: '/tasks/$taskId', params: { taskId } })
 	}
+	const onCreate = (status: TaskStatus) => void navigate({ to: '/', search: { status } })
 	return (
 		<main className="main board">
 			<div className="titlebar">
 				<span className="title">Board</span>
+				<span className="meta">{rows.length}</span>
 				<span className="sp" />
 				<Segmented label="Show" value={scope} options={SCOPES} onChange={setScope} />
+				<Segmented label="Layout" value={layout} options={LAYOUTS} onChange={onLayout} />
 			</div>
 			{isReady && rows.length === 0 ? (
 				<div className="hero">
@@ -47,48 +141,166 @@ export function BoardPage() {
 					</Link>
 				</div>
 			) : (
-				<div className="board-columns">
-					{columns.map((column) => (
-						<section key={column.id} className="board-column" aria-label={column.title}>
-							<div className="section">
-								{column.title}
-								<span className="meta">{column.rows.length}</span>
-							</div>
-							<div className="board-cards">
-								{column.rows.map((row) => (
-									<BoardCard key={row.task.id} row={row} />
-								))}
-							</div>
-						</section>
-					))}
+				// The shared components' boundary: Tailwind and the theme tokens, outside the minimalist resets.
+				<div className="minimalist-shared min-h-0 flex-1 bg-background text-foreground">
+					{layout === 'board' ? (
+						<BoardView rows={rows} onOpen={onOpen} onCreate={onCreate} />
+					) : (
+						<StatusListView rows={rows} onOpen={onOpen} onCreate={onCreate} />
+					)}
 				</div>
 			)}
 		</main>
 	)
 }
 
-function BoardCard({ row }: { row: TaskRow }) {
-	const unread = useTaskUnread(row.sessions)
-	const status = statusText(row, unread)
-	const { closeSidebarOnNarrow } = useUi()
+function BoardView(props: ViewProps) {
+	const groups = statusGroups(props.rows)
+	const setStatus = useSetTaskStatus()
+	const [over, setOver] = useState<TaskStatus | null>(null)
 	return (
-		<Link
-			to="/tasks/$taskId"
-			params={{ taskId: row.task.id }}
-			onClick={closeSidebarOnNarrow}
-			className={`board-card${unread ? ' unread' : ''}`}
-			title={row.task.name}
+		<div className="flex h-full min-h-0 gap-3 overflow-x-auto p-3">
+			{groups.map(({ status, rows: column }) => (
+				// biome-ignore lint/a11y/noStaticElementInteractions: drop target for dragged cards
+				<section
+					key={status}
+					data-status={status}
+					aria-label={TASK_STATUS_META[status].label}
+					onDragOver={(event) => {
+						if (!event.dataTransfer.types.includes(DRAG_TYPE)) return
+						event.preventDefault()
+						setOver(status)
+					}}
+					onDragLeave={() => setOver((current) => (current === status ? null : current))}
+					onDrop={(event) => {
+						event.preventDefault()
+						setOver(null)
+						const taskId = event.dataTransfer.getData(DRAG_TYPE)
+						if (taskId && props.rows.find((row) => row.task.id === taskId)?.task.status !== status)
+							void setStatus(taskId, status)
+					}}
+					className={cn(
+						'flex min-w-[200px] max-w-[360px] flex-1 flex-col rounded-lg bg-muted/30',
+						over === status && 'ring-1 ring-foreground/30',
+					)}
+				>
+					<div className="flex h-10 shrink-0 items-center gap-2 px-3 text-sm">
+						<TaskStatusIcon status={status} />
+						<span className="font-medium">{TASK_STATUS_META[status].label}</span>
+						<span className="flex-1 text-muted-foreground">{column.length}</span>
+						<button
+							type="button"
+							aria-label={`New task in ${TASK_STATUS_META[status].label}`}
+							className="rounded p-1 text-muted-foreground hover:bg-accent/10 hover:text-foreground"
+							onClick={() => props.onCreate(status)}
+						>
+							<Plus className="size-4" />
+						</button>
+					</div>
+					<div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
+						{column.map((row) => (
+							<Card key={row.task.id} row={row} onOpen={props.onOpen} />
+						))}
+					</div>
+				</section>
+			))}
+		</div>
+	)
+}
+
+function Card(props: { row: TaskRow; onOpen: (taskId: string) => void }) {
+	const { task } = props.row
+	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: drag source; the buttons inside are the interactive parts
+		<div
+			data-task-id={task.id}
+			draggable
+			onDragStart={(event) => {
+				event.dataTransfer.setData(DRAG_TYPE, task.id)
+				event.dataTransfer.effectAllowed = 'move'
+			}}
+			className="flex w-full items-start gap-2 rounded-lg border bg-card p-3 hover:border-foreground/30"
 		>
-			<span className="board-card-name">{row.task.name}</span>
-			{status ? <span className="sr-only">, {status}</span> : null}
-			<span className="board-card-meta">
-				<span className="ell">{row.projectName}</span>
-				<span className="sp" />
-				<WiredUserAvatar userId={row.task.resource_owner_user_id} size={18} />
-				<span className="rowmeta" aria-hidden="true">
-					<TaskMark row={row} unread={unread} selected={false} />
+			<StatusMenu taskId={task.id} taskName={task.name} status={task.status} className="-m-0.5 mt-0" />
+			<button type="button" onClick={() => props.onOpen(task.id)} className="min-w-0 flex-1 text-left">
+				<span className="line-clamp-2 text-[0.8125rem] font-medium">{task.name}</span>
+				<span className="mt-2 flex flex-wrap gap-1.5">
+					<Chip>{phaseTitle(props.row)}</Chip>
+					<Chip>{props.row.projectName}</Chip>
 				</span>
-			</span>
-		</Link>
+				<span className="mt-2 block text-[0.6875rem] text-muted-foreground">
+					Updated {shortDate(props.row.lastActivity)}
+				</span>
+			</button>
+		</div>
+	)
+}
+
+function StatusListView(props: ViewProps) {
+	const groups = statusGroups(props.rows)
+	const [closed, setClosed] = useState<Set<TaskStatus>>(new Set())
+	const toggle = (status: TaskStatus) =>
+		setClosed((current) => {
+			const next = new Set(current)
+			if (next.has(status)) next.delete(status)
+			else next.add(status)
+			return next
+		})
+	return (
+		<div className="h-full min-h-0 overflow-y-auto p-3">
+			{groups.map(({ status, rows }) => (
+				<section key={status} className="mb-2" aria-label={TASK_STATUS_META[status].label}>
+					<div className="flex h-9 items-center gap-2 rounded-md bg-muted/40 px-2 text-sm">
+						<button
+							type="button"
+							onClick={() => toggle(status)}
+							className="flex flex-1 items-center gap-2 text-left"
+							aria-expanded={!closed.has(status)}
+						>
+							<ChevronRight
+								className={cn(
+									'size-3.5 text-muted-foreground transition-transform',
+									!closed.has(status) && 'rotate-90',
+								)}
+							/>
+							<TaskStatusIcon status={status} />
+							<span className="font-medium">{TASK_STATUS_META[status].label}</span>
+							<span className="text-muted-foreground">{rows.length}</span>
+						</button>
+						<button
+							type="button"
+							aria-label={`New task in ${TASK_STATUS_META[status].label}`}
+							className="rounded p-1 text-muted-foreground hover:bg-accent/10 hover:text-foreground"
+							onClick={() => props.onCreate(status)}
+						>
+							<Plus className="size-4" />
+						</button>
+					</div>
+					{!closed.has(status) &&
+						rows.map((row) => (
+							<div
+								key={row.task.id}
+								className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-[0.8125rem] hover:bg-accent/10"
+							>
+								<StatusMenu taskId={row.task.id} taskName={row.task.name} status={row.task.status} />
+								<button
+									type="button"
+									onClick={() => props.onOpen(row.task.id)}
+									className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
+								>
+									<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
+									<span className="hidden shrink-0 items-center gap-1.5 md:flex">
+										<Chip>{phaseTitle(row)}</Chip>
+										<Chip>{row.projectName}</Chip>
+									</span>
+									<span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
+										{shortDate(row.lastActivity)}
+									</span>
+								</button>
+							</div>
+						))}
+				</section>
+			))}
+		</div>
 	)
 }
