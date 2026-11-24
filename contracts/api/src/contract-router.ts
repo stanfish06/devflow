@@ -100,6 +100,8 @@ import { retryProjectWorkspaceRepositorySetupContract } from './api/project-work
 import { skipProjectWorkspaceRepositorySetupStepContract } from './api/project-workspaces/skip-repository-setup-step'
 import { archiveProjectV2Contract } from './api/projects-v2/archive'
 import { createProjectV2Contract } from './api/projects-v2/create'
+import { deleteProjectV2Contract } from './api/projects-v2/delete'
+import { projectDeletePreviewV2Contract } from './api/projects-v2/delete-preview'
 import { getProjectV2Contract } from './api/projects-v2/get'
 import { listProjectsV2Contract } from './api/projects-v2/list'
 import { upsertProjectV2LocationContract } from './api/projects-v2/location-upsert'
@@ -365,6 +367,8 @@ export const ApiContract = {
 			create: createProjectV2Contract,
 			update: updateProjectV2Contract,
 			archive: archiveProjectV2Contract,
+			deletePreview: projectDeletePreviewV2Contract,
+			delete: deleteProjectV2Contract,
 			locations: { upsert: upsertProjectV2LocationContract },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesContract,

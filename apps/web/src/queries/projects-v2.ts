@@ -14,3 +14,11 @@ export function projectsV2ListQuery(api: ReturnType<typeof useApi>['queryClient'
 		queryKey: PROJECTS_V2_QUERY_KEY,
 	}
 }
+
+/** Archived projects, under the same prefix so `invalidateProjectsV2` refreshes them too. */
+export function archivedProjectsV2ListQuery(api: ReturnType<typeof useApi>['queryClient']) {
+	return {
+		...api.projects.v2.list.queryOptions({ input: { archived: true } }),
+		queryKey: [...PROJECTS_V2_QUERY_KEY, 'archived'],
+	}
+}

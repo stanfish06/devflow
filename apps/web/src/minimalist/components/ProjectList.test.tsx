@@ -82,7 +82,21 @@ vi.mock('@/minimalist/lib/use-working-host', () => ({
 }))
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ closeSidebarOnNarrow: vi.fn(), showToast: vi.fn() }) }))
 vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: {} }) }))
-vi.mock('./Menu', () => ({ Menu: () => null, MenuItem: () => null }))
+vi.mock('./Menu', () => ({
+	Menu: ({ open, children }: { open: boolean; children: ReactNode }) =>
+		open ? <div role="menu">{children}</div> : null,
+	MenuItem: ({ label, danger, onSelect }: { label: string; danger?: boolean; onSelect?: () => void }) => (
+		<button type="button" role="menuitem" data-danger={danger ? '' : undefined} onClick={onSelect}>
+			{label}
+		</button>
+	),
+	MenuSeparator: () => <hr />,
+}))
+vi.mock('./DeleteDialog', () => ({
+	DeleteDialog: ({ target }: { target: { kind: string; projectId: string; name: string } }) => (
+		<div role="dialog" aria-label={`Delete ${target.name}`} data-project={target.projectId} />
+	),
+}))
 vi.mock('./TaskItem', () => ({
 	TaskItem: ({
 		row,
@@ -242,5 +256,34 @@ describe('masking by the working host', () => {
 		expect(screen.getByText(/No projects on this host/)).toBeInTheDocument()
 		fireEvent.click(screen.getByRole('button', { name: 'Show all hosts' }))
 		expect(working.set).toHaveBeenCalledWith('all')
+	})
+})
+
+describe('deleting a project', () => {
+	const menuItems = () => screen.getAllByRole('menuitem').map((item) => item.textContent)
+
+	it('offers Delete project… last, in red, on a project you own, and opens its confirmation', () => {
+		data.emptyProjects = [{ name: 'Mine', mine: true, projectId: 'mine-id' }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for Mine' }))
+		expect(menuItems()).toEqual(['New task in project', 'Edit project', 'Archive project', 'Delete project…'])
+		const remove = screen.getByRole('menuitem', { name: 'Delete project…' })
+		expect(remove).toHaveAttribute('data-danger')
+		fireEvent.click(remove)
+		expect(screen.getByRole('dialog', { name: 'Delete Mine' })).toHaveAttribute('data-project', 'mine-id')
+	})
+
+	it('leaves it out of a project shared with you', () => {
+		data.emptyProjects = [{ name: 'Shared busy', mine: false, tasks: 1 }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for Shared busy' }))
+		expect(menuItems()).toEqual(['New task in project', 'Edit project', 'Archive project'])
+	})
+
+	it('leaves it out of a folder group, which has no project to delete', () => {
+		data.emptyProjects = [{ name: 'some-folder', mine: true, projectId: null, tasks: 1 }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for some-folder' }))
+		expect(menuItems()).toEqual(['New task in project'])
 	})
 })

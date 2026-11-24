@@ -1,4 +1,7 @@
+import { ORPCError } from '@orpc/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { DeleteDialog } from './DeleteDialog'
@@ -11,30 +14,59 @@ HTMLDialogElement.prototype.close ??= function (this: HTMLDialogElement) {
 	this.open = false
 }
 
-const { api, navigate, showToast, open } = vi.hoisted(() => ({
-	api: { tasks: { delete: vi.fn() } },
-	navigate: vi.fn(),
-	showToast: vi.fn(),
-	open: { taskId: undefined as string | undefined },
-}))
+const { api, queries, navigate, showToast, open } = vi.hoisted(() => {
+	const api = {
+		tasks: { delete: vi.fn() },
+		projects: { v2: { delete: vi.fn(), deletePreview: vi.fn() } },
+	}
+	// The oRPC query helpers, down to the one preview the dialog reads.
+	const queries = {
+		projects: {
+			v2: {
+				deletePreview: {
+					queryOptions: ({ input }: { input: { projectId: string } }) => ({
+						queryKey: ['projects', 'v2', 'deletePreview', input.projectId],
+						queryFn: () => api.projects.v2.deletePreview(input),
+					}),
+				},
+			},
+		},
+	}
+	return {
+		api,
+		queries,
+		navigate: vi.fn(),
+		showToast: vi.fn(),
+		open: { taskId: undefined as string | undefined },
+	}
+})
 
-vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: api }) }))
+vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: api, queryClient: queries }) }))
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }))
 vi.mock('@/minimalist/lib/data', () => ({ useOpenTaskId: () => open.taskId }))
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast }) }))
 
 const target = { kind: 'task', taskId: 'task-1', title: 'Fix host chip' } as const
 
+let queryClient: QueryClient
+
+function renderWithQueries(element: ReactElement) {
+	return render(<QueryClientProvider client={queryClient}>{element}</QueryClientProvider>)
+}
+
 function renderDialog() {
 	const onClose = vi.fn()
-	render(<DeleteDialog target={target} onClose={onClose} />)
+	renderWithQueries(<DeleteDialog target={target} onClose={onClose} />)
 	return { onClose }
 }
 
 const pressCommandEnter = () => fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Enter', metaKey: true })
 
 beforeEach(() => {
+	queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 	api.tasks.delete.mockResolvedValue({ taskId: 'task-1' })
+	api.projects.v2.deletePreview.mockResolvedValue({ taskCount: 12, otherPeoplesTaskCount: 3 })
+	api.projects.v2.delete.mockResolvedValue({ deletedTaskCount: 12 })
 	open.taskId = undefined
 })
 
@@ -89,5 +121,114 @@ describe('DeleteDialog for a task', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 		expect(onClose).toHaveBeenCalled()
 		expect(api.tasks.delete).not.toHaveBeenCalled()
+	})
+})
+
+describe('DeleteDialog for a project', () => {
+	const project = { kind: 'project', projectId: 'project-1', name: 'infra-scripts' } as const
+
+	function renderProjectDialog() {
+		const onClose = vi.fn()
+		renderWithQueries(<DeleteDialog target={project} onClose={onClose} />)
+		return { onClose }
+	}
+
+	const deleteButton = () => screen.getByRole('button', { name: 'Delete project' }) as HTMLButtonElement
+	const typeName = (value: string) =>
+		fireEvent.change(screen.getByLabelText('Type to confirm'), { target: { value } })
+	const counted = (text: string) =>
+		screen.findByText((_, element) => element?.tagName === 'P' && element.textContent?.includes(text) === true)
+
+	it('counts the tasks it takes on the server, teammates’ included, and says what stays', async () => {
+		renderProjectDialog()
+		expect(screen.getByRole('heading', { name: 'Delete “infra-scripts”?' })).toBeTruthy()
+		expect(await counted('This also deletes 12 tasks (3 by others)')).toBeTruthy()
+		expect(api.projects.v2.deletePreview).toHaveBeenCalledWith({ projectId: 'project-1' })
+		expect(
+			screen.getByText('Checkouts, worktrees and branches on your hosts are kept. Nothing on GitHub changes.'),
+		).toBeTruthy()
+		expect(screen.getByLabelText('Type to confirm').getAttribute('placeholder')).toBe('infra-scripts')
+	})
+
+	it('stays inert, ⌘↵ included, until the name is typed exactly', async () => {
+		const { onClose } = renderProjectDialog()
+		await counted('12 tasks')
+		expect(deleteButton().disabled).toBe(true)
+		pressCommandEnter()
+		typeName('infra-scr')
+		expect(deleteButton().disabled).toBe(true)
+		pressCommandEnter()
+		typeName('Infra-Scripts')
+		expect(deleteButton().disabled).toBe(true)
+		pressCommandEnter()
+		expect(api.projects.v2.delete).not.toHaveBeenCalled()
+
+		typeName('infra-scripts')
+		expect(deleteButton().disabled).toBe(false)
+		const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+		pressCommandEnter()
+		await waitFor(() => expect(onClose).toHaveBeenCalled())
+		expect(api.projects.v2.delete).toHaveBeenCalledWith(
+			{ projectId: 'project-1', expectedTaskCount: 12 },
+			{ context: { silent: true } },
+		)
+		expect(showToast).toHaveBeenCalledWith('infra-scripts deleted')
+		// Projects aren't synced: the lists refetch so the sidebar drops it.
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', 'v2'] })
+	})
+
+	it('counts again when the server finds a different number, and deletes nothing until reconfirmed', async () => {
+		api.projects.v2.delete.mockRejectedValueOnce(
+			new ORPCError('COUNT_CHANGED', { defined: true, status: 409, data: { expected: 12, actual: 13 } }),
+		)
+		const { onClose } = renderProjectDialog()
+		await counted('12 tasks')
+		api.projects.v2.deletePreview.mockResolvedValue({ taskCount: 13, otherPeoplesTaskCount: 4 })
+		typeName('infra-scripts')
+		pressCommandEnter()
+
+		expect(await counted('This also deletes 13 tasks (4 by others)')).toBeTruthy()
+		expect(screen.getByRole('alert').textContent).toBe(
+			'Its tasks changed since this opened. Check the new count, then delete again.',
+		)
+		expect(api.projects.v2.deletePreview).toHaveBeenCalledTimes(2)
+		expect(onClose).not.toHaveBeenCalled()
+		expect(showToast).not.toHaveBeenCalled()
+
+		fireEvent.click(deleteButton())
+		await waitFor(() => expect(onClose).toHaveBeenCalled())
+		expect(api.projects.v2.delete).toHaveBeenLastCalledWith(
+			{ projectId: 'project-1', expectedTaskCount: 13 },
+			{ context: { silent: true } },
+		)
+	})
+
+	it('says so when the project has no tasks', async () => {
+		api.projects.v2.deletePreview.mockResolvedValue({ taskCount: 0, otherPeoplesTaskCount: 0 })
+		renderProjectDialog()
+		expect(await counted('It has no tasks.')).toBeTruthy()
+	})
+
+	it('shows a failed count inside the dialog and never offers Delete', async () => {
+		api.projects.v2.deletePreview.mockRejectedValue(new Error('FORBIDDEN'))
+		renderProjectDialog()
+		await waitFor(() =>
+			expect(screen.getByRole('alert').textContent).toBe("Could not count infra-scripts's tasks. Try again."),
+		)
+		typeName('infra-scripts')
+		expect(deleteButton().disabled).toBe(true)
+	})
+
+	it('shows a failed delete inside the dialog and stays open', async () => {
+		api.projects.v2.delete.mockRejectedValue(new Error('FORBIDDEN'))
+		const { onClose } = renderProjectDialog()
+		await counted('12 tasks')
+		typeName('infra-scripts')
+		pressCommandEnter()
+		await waitFor(() =>
+			expect(screen.getByRole('alert').textContent).toBe('Could not delete infra-scripts. Try again.'),
+		)
+		expect(onClose).not.toHaveBeenCalled()
+		expect(api.projects.v2.deletePreview).toHaveBeenCalledTimes(1)
 	})
 })

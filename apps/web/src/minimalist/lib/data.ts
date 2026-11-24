@@ -25,7 +25,7 @@ import { type HostClock, hostLiveness, useHostClock } from '@/minimalist/lib/hos
 import { type Attention, rollupAttention } from '@/minimalist/lib/status'
 import { useFailedSetups } from '@/minimalist/lib/workspace-setup'
 import { useApi } from '@/orpc/client'
-import { projectsV2ListQuery } from '@/queries/projects-v2'
+import { archivedProjectsV2ListQuery, projectsV2ListQuery } from '@/queries/projects-v2'
 
 // New tasks can invoke bundled skills, but have no session to compact yet.
 const NEW_TASK_SLASH_COMMANDS: SharedSlashCommand[] = [...DEVFLOW_SLASH_COMMANDS, ...RPI_SLASH_COMMANDS]
@@ -90,10 +90,7 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 	)
 	const sessionsQuery = useLiveQuery((q) => q.from({ sessions }), [sessions])
 	const { queryClient: api } = useApi()
-	const archivedProjects = useQuery({
-		...api.projects.v2.list.queryOptions({ input: { archived: true } }),
-		queryKey: ['projects', 'v2', 'archived'],
-	})
+	const archivedProjects = useQuery(archivedProjectsV2ListQuery(api))
 	const workspaceTasks = (tasksQuery.data ?? []).filter((task) => task.workspace_id)
 	const workspaceQueries = useQueries({
 		queries: workspaceTasks.map((task) =>

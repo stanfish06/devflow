@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate, useParams } from '@tanstack/react-route
 import { Folder, FolderOpen, GitBranch, MoreHorizontal, Plus, SquarePen } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { Menu, MenuItem } from '@/minimalist/components/Menu'
+import { DeleteDialog } from '@/minimalist/components/DeleteDialog'
+import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
 import { TaskItem } from '@/minimalist/components/TaskItem'
 import { type ProjectGroup, repoName, useHosts, useOpenTaskId, useTaskTree } from '@/minimalist/lib/data'
 import { formatAge, toMs } from '@/minimalist/lib/format'
@@ -243,7 +244,10 @@ function newTaskSearch(group: ProjectGroup): { project?: string; dir?: string } 
 	return dir ? { dir } : {}
 }
 
-/** New task, edit, archive. Directory groups have no project to edit or archive. */
+/**
+ * New task, edit, archive, and for its owner, delete. Directory groups have no project to edit,
+ * archive or delete.
+ */
 function ProjectMenu({ group }: { group: ProjectGroup }) {
 	const { client: api } = useApi()
 	const { showToast, closeSidebarOnNarrow } = useUi()
@@ -251,7 +255,10 @@ function ProjectMenu({ group }: { group: ProjectGroup }) {
 	const action = useAction()
 	const anchor = useRef<HTMLButtonElement>(null)
 	const [open, setOpen] = useState(false)
+	const [deleting, setDeleting] = useState(false)
 	const projectId = group.projectId
+	// `mine` on a project group means you own it, the same check the server makes.
+	const owner = projectId !== null && group.mine
 	const archive = async (archived: boolean) => {
 		if (!projectId) return
 		setOpen(false)
@@ -301,7 +308,27 @@ function ProjectMenu({ group }: { group: ProjectGroup }) {
 						/>
 					</>
 				) : null}
+				{owner ? (
+					<>
+						<MenuSeparator />
+						<MenuItem
+							label="Delete project…"
+							detail="Removes its tasks too"
+							danger
+							onSelect={() => {
+								setOpen(false)
+								setDeleting(true)
+							}}
+						/>
+					</>
+				) : null}
 			</Menu>
+			{deleting && projectId ? (
+				<DeleteDialog
+					target={{ kind: 'project', projectId, name: group.name }}
+					onClose={() => setDeleting(false)}
+				/>
+			) : null}
 		</>
 	)
 }

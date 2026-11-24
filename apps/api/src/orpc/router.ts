@@ -99,6 +99,8 @@ import { retryProjectWorkspaceRepositorySetupProcedure } from './api/project-wor
 import { skipProjectWorkspaceRepositorySetupStepProcedure } from './api/project-workspaces/skip-repository-setup-step.effect'
 import { archiveProjectV2Procedure } from './api/projects-v2/archive.effect'
 import { createProjectV2Procedure } from './api/projects-v2/create.effect'
+import { projectDeletePreviewV2Procedure } from './api/projects-v2/delete-preview.effect'
+import { deleteProjectV2Procedure } from './api/projects-v2/delete.effect'
 import { getProjectV2Procedure } from './api/projects-v2/get.effect'
 import { listProjectsV2Procedure } from './api/projects-v2/list.effect'
 import { upsertProjectV2LocationProcedure } from './api/projects-v2/location-upsert.effect'
@@ -362,6 +364,8 @@ export const apiRouter = os.router({
 			create: createProjectV2Procedure,
 			update: updateProjectV2Procedure,
 			archive: archiveProjectV2Procedure,
+			deletePreview: projectDeletePreviewV2Procedure,
+			delete: deleteProjectV2Procedure,
 			locations: { upsert: upsertProjectV2LocationProcedure },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesProcedure,

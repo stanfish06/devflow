@@ -1,17 +1,21 @@
 import type { ProjectV2, ProjectLocationV2, ProjectMutationFields } from '@devflow/api-contract/api/projects-v2/schemas'
 import { onlineHosts } from '@devflow/db/tables/online-hosts'
 import { projects, projectSelectSchema } from '@devflow/db/tables/projects'
+import { tasks } from '@devflow/db/tables/tasks'
 import { userSettings } from '@devflow/db/tables/user-settings'
+import { workspaces } from '@devflow/db/tables/workspaces'
 import type {
 	ProjectRepositories,
 	ProjectRepositoryPaths,
 	RepositorySourceSelections,
 } from '@devflow/schemas/effect/project-workspace'
 import { hasRepositoryUrlCredentials, normalizeRepositoryIdentity } from '@devflow/schemas/effect/project-workspace'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray, or } from 'drizzle-orm'
 import { Clock, Effect } from 'effect'
 
 import { PostgresDb, type PostgresTransaction } from '../services/postgres/postgres-db.service'
+import { deleteTasksInTransaction, deleteTaskStreams } from '../task-deletion/delete-tasks'
+import { CountChanged } from '../task-deletion/errors'
 import {
 	ProjectLocationInvalid,
 	ProjectMutationForbidden,
@@ -207,6 +211,105 @@ export const archiveProject = Effect.fn('project_workspace.archive_project')(fun
 	)
 })
 
+/**
+ * What deleting a project would remove, for its owner's confirmation: every task in it, archived
+ * ones and teammates' private ones included, which the owner's browser can't count itself.
+ */
+export const previewProjectDelete = Effect.fn('project_workspace.preview_project_delete')(function* (input: {
+	readonly actor: ProjectActorContext
+	readonly projectId: string
+}) {
+	const postgres = yield* PostgresDb
+	return yield* observePersistenceFailure(
+		'preview_project_delete',
+		postgres.transaction((transaction) =>
+			Effect.gen(function* () {
+				yield* requireProjectsV2Enabled(transaction, input.actor)
+				yield* requireProjectOwner(transaction, input.actor, input.projectId)
+				const rows = yield* transaction.query(projectTasksQuery(transaction, input.actor, input.projectId))
+				return {
+					taskCount: rows.length,
+					otherPeoplesTaskCount: rows.filter((row) => row.ownerUserId !== input.actor.userId).length,
+				}
+			}),
+		),
+	)
+})
+
+/**
+ * Permanently delete a project the actor owns, with all of its tasks. Follows `hosts.delete`:
+ * the project is locked and its owner checked after the lock, then its workspaces and tasks are
+ * locked and counted. If the count isn't the one the owner confirmed, nothing is deleted.
+ *
+ * The locks keep the count honest until commit. A new task in the project, or in one of its
+ * workspaces, waits on its FK check against the locked row and then fails, and a task can't move
+ * into or out of the project while it's locked.
+ *
+ * The tasks go through the shared task deletion, so their sessions and artifacts don't outlive
+ * them. The project delete then cascades its workspaces, workspace locations and repository
+ * status. Repository locations are keyed by repository, not project, and stay, like everything on
+ * hosts and GitHub.
+ */
+export const deleteProject = Effect.fn('project_workspace.delete_project')(function* (input: {
+	readonly actor: ProjectActorContext
+	readonly projectId: string
+	readonly expectedTaskCount: number
+}) {
+	const postgres = yield* PostgresDb
+	const deleted = yield* observePersistenceFailure(
+		'delete_project',
+		postgres.transaction((transaction) =>
+			Effect.gen(function* () {
+				yield* requireProjectsV2Enabled(transaction, input.actor)
+				yield* lockOwnedProject(transaction, input.actor, input.projectId)
+				yield* transaction.query(
+					transaction.client
+						.select({ id: workspaces.id })
+						.from(workspaces)
+						.where(
+							and(
+								eq(workspaces.organization_id, input.actor.organizationId),
+								eq(workspaces.project_id, input.projectId),
+							),
+						)
+						.for('update'),
+				)
+				const rows = yield* transaction.query(
+					projectTasksQuery(transaction, input.actor, input.projectId).for('update'),
+				)
+				if (rows.length !== input.expectedTaskCount)
+					return yield* new CountChanged({ expected: input.expectedTaskCount, actual: rows.length })
+				const taskIds = rows.map((row) => row.id)
+				const { sessionIds } = yield* deleteTasksInTransaction(transaction, {
+					organizationId: input.actor.organizationId,
+					taskIds,
+				})
+				yield* transaction.query(
+					transaction.client
+						.delete(projects)
+						.where(
+							and(
+								eq(projects.organization_id, input.actor.organizationId),
+								eq(projects.id, input.projectId),
+							),
+						),
+				)
+				return { taskIds, sessionIds }
+			}),
+		),
+	)
+
+	// After commit, and off the request path: the rows are already gone either way.
+	yield* Effect.forkDetach(
+		deleteTaskStreams({
+			organizationId: input.actor.organizationId,
+			taskIds: deleted.taskIds,
+			sessionIds: deleted.sessionIds,
+		}),
+	)
+	return { deletedTaskCount: deleted.taskIds.length }
+})
+
 export const upsertProjectLocation = Effect.fn('project_workspace.upsert_project_location')(function* (input: {
 	readonly actor: ProjectActorContext
 	readonly projectId: string
@@ -383,6 +486,41 @@ function requireProjectOwner(transaction: PostgresTransaction, actor: ProjectAct
 				: new ProjectMutationForbidden({ projectId }),
 		),
 	)
+}
+
+/** `requireProjectOwner`, checked on the project row after locking it for the rest of the transaction. */
+function lockOwnedProject(transaction: PostgresTransaction, actor: ProjectActorContext, projectId: string) {
+	return Effect.gen(function* () {
+		const [project] = yield* transaction.query(
+			transaction.client
+				.select({ ownerUserId: projects.resource_owner_user_id })
+				.from(projects)
+				.where(and(eq(projects.organization_id, actor.organizationId), eq(projects.id, projectId)))
+				.for('update'),
+		)
+		if (project === undefined) return yield* new ProjectNotFound({ projectId })
+		if (project.ownerUserId !== actor.userId) return yield* new ProjectMutationForbidden({ projectId })
+	})
+}
+
+/**
+ * Every task a project delete takes with it, archived ones included: the tasks the FK cascades
+ * would reach, through `tasks.project_id` and through the project's workspaces.
+ */
+function projectTasksQuery(db: PostgresTransaction, actor: ProjectActorContext, projectId: string) {
+	const projectWorkspaces = db.client
+		.select({ id: workspaces.id })
+		.from(workspaces)
+		.where(and(eq(workspaces.organization_id, actor.organizationId), eq(workspaces.project_id, projectId)))
+	return db.client
+		.select({ id: tasks.id, ownerUserId: tasks.resource_owner_user_id })
+		.from(tasks)
+		.where(
+			and(
+				eq(tasks.organization_id, actor.organizationId),
+				or(eq(tasks.project_id, projectId), inArray(tasks.workspace_id, projectWorkspaces)),
+			),
+		)
 }
 
 function validateProjectPaths(project: ProjectMutationFields, paths: ProjectRepositoryPaths) {
