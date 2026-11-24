@@ -22,6 +22,8 @@ import { Effect } from 'effect'
 import { handleInterruptOutcome, subscribeToSessionInterrupt } from '@/agents/claudecode/interrupts'
 import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } from '@/agents/shared/run-session'
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
+import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github-credentials/credential-files'
+import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
 import { normalizePath } from '@/lib/utils'
 import logger from '@/logger'
 
@@ -165,8 +167,47 @@ export class AppServerClient {
  * Docker sandbox: that would need the user's whole CODEX_HOME (auth refresh rewrites auth.json by
  * rename) mounted into the container, including every past Codex session.
  */
-export function startAppServer(cwd: string): ChildProcess {
-	return spawn('codex', ['app-server'], { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+export function startAppServer(cwd: string, env: NodeJS.ProcessEnv = process.env): ChildProcess {
+	return spawn('codex', ['app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+}
+
+/**
+ * The Codex process env for a session: the daemon's own, pointed at the session's GitHub account
+ * when it has one. Codex runs on the host, so the account's gitconfig keeps the user's own global
+ * git config underneath. Null keeps the host's own gh login and the env exactly as before.
+ */
+export function codexEnvironment(githubEnv: GithubEnv | null, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	return withGithubEnvironment(env, githubEnv)
+}
+
+/**
+ * Put the session's GitHub account in place for a Codex run. Returns its env (null: host login) and
+ * a release to call once the app-server has stopped.
+ */
+async function prepareCodexGithubCredentials(
+	session: Pick<SessionForExecution, 'id' | 'task_id'>,
+	services: SessionContext['services'],
+): Promise<{ readonly githubEnv: GithubEnv | null; readonly release: () => Promise<void> }> {
+	const githubEnv = await services.daemonRuntime.runPromise(
+		Effect.gen(function* () {
+			const credentials = yield* GithubCredentials
+			return yield* credentials.prepare({ sessionId: session.id, taskId: session.task_id, scope: 'host' })
+		}),
+	)
+	let released = false
+	return {
+		githubEnv,
+		release: async () => {
+			if (githubEnv === null || released) return
+			released = true
+			await services.daemonRuntime.runPromise(
+				Effect.gen(function* () {
+					const credentials = yield* GithubCredentials
+					yield* credentials.release(session.id)
+				}),
+			)
+		},
+	}
 }
 
 type CreateEvent = Parameters<SessionContext['services']['orpc']['sessions']['events']['create']>[0]
@@ -183,7 +224,15 @@ export async function executeCodexAppServer(
 	const bypass = session.permissions_mode === 'bypass'
 	const prompt = session.prompt ?? ''
 
-	const client = new AppServerClient(startAppServer(cwd))
+	// Fails the session rather than start Codex as some other GitHub identity.
+	const github = await prepareCodexGithubCredentials(session, services)
+	let client: AppServerClient
+	try {
+		client = new AppServerClient(startAppServer(cwd, codexEnvironment(github.githubEnv)))
+	} catch (error) {
+		await github.release()
+		throw error
+	}
 	let threadId = session.coding_agent_session_id ?? ''
 	const emit = (event: Omit<CreateEvent, 'sessionId' | 'codingAgentSessionId'>) =>
 		orpc.sessions.events.create({ ...event, sessionId: session.id, codingAgentSessionId: threadId } as CreateEvent)
@@ -382,6 +431,7 @@ export async function executeCodexAppServer(
 	} finally {
 		unsubscribeInterrupt()
 		client.close()
+		await github.release()
 	}
 
 	await handleInterruptOutcome({

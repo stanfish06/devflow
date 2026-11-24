@@ -9,6 +9,7 @@ import {
 	DaemonConversationEventCreateError,
 	DaemonConversationStreamHydrationError,
 	DaemonContextShardsListError,
+	DaemonGithubTokenResolveError,
 	DaemonSessionUpdateError,
 	DaemonSettingsGetError,
 	DaemonTaskCapabilityError,
@@ -232,6 +233,15 @@ export const DaemonApiLive = (client: ORPCClient) =>
 				Effect.tapErrorTag('DaemonTaskWorkspaceContextError', (error) =>
 					Effect.logError('Daemon task workspace context request failed', error.cause),
 				),
+			),
+		),
+		// The response holds a token: only a failure (which has no body to leak) is ever logged.
+		resolveGithubToken: Effect.fn('daemon.api.github_accounts.resolve_token')((input) =>
+			reportDaemonApiFailure(
+				Effect.tryPromise({
+					try: (signal) => client.githubAccounts.resolveToken(input, { signal }),
+					catch: (cause) => new DaemonGithubTokenResolveError({ sessionId: input.sessionId, cause }),
+				}),
 			),
 		),
 	})

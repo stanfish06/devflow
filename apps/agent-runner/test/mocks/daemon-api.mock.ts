@@ -42,6 +42,7 @@ export function makeMockDaemonApi(overrides: Partial<DaemonApiShape> = {}): Daem
 		syncGitHubArtifactBacklink: unused('syncGitHubArtifactBacklink'),
 		getSessionWorkspaceSetup: unused('getSessionWorkspaceSetup'),
 		getTaskWorkspaceContext: unused('getTaskWorkspaceContext'),
+		resolveGithubToken: unused('resolveGithubToken'),
 		...overrides,
 	}
 }

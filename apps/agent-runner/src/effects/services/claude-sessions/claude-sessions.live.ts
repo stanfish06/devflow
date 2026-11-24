@@ -304,8 +304,13 @@ export const makeClaudeSessionsLive = (
 			const runClaudeSession = (input: ExecuteClaudeSessionInput, onRegistered: Effect.Effect<void>) =>
 				Effect.gen(function* () {
 					const api = yield* DaemonApi
-					yield* prepareClaudeRun(input, configuration).pipe(
-						Effect.flatMap((prepared) => runClaudeProcessToCompletion(prepared, onRegistered)),
+					// One scope per run: resources prepared for it (the GitHub credential directory) are
+					// released once the SDK process has closed, whether the run ended or failed.
+					yield* Effect.scoped(
+						prepareClaudeRun(input, configuration).pipe(
+							Effect.flatMap((prepared) => runClaudeProcessToCompletion(prepared, onRegistered)),
+						),
+					).pipe(
 						Effect.catch((cause) => {
 							const sessionId = input.context.session.id
 							const errorMessage = describeClaudeSdkCause(cause)

@@ -74,6 +74,15 @@ export class DaemonTaskWorkspaceContextError extends Data.TaggedError('DaemonTas
 	readonly cause: unknown
 }> {}
 
+/**
+ * The API didn't say which GitHub account a session acts as. Carries the transport error only: the
+ * token is in the response body, which a failed request never has.
+ */
+export class DaemonGithubTokenResolveError extends Data.TaggedError('DaemonGithubTokenResolveError')<{
+	readonly sessionId: string
+	readonly cause: unknown
+}> {}
+
 export type DaemonApiError =
 	| DaemonSettingsGetError
 	| DaemonContextShardsListError
@@ -91,3 +100,4 @@ export type DaemonApiError =
 	| DaemonTaskCapabilityError
 	| DaemonTaskWorkspaceContextNotFound
 	| DaemonTaskWorkspaceContextError
+	| DaemonGithubTokenResolveError

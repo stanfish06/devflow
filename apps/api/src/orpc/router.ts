@@ -211,6 +211,7 @@ import { daemonListEnabledContextShardsProcedure } from './daemon/context-shards
 import { getDiffCommentsProcedure } from './daemon/diff-comments/get.effect'
 import { replyToDiffCommentProcedure } from './daemon/diff-comments/reply.effect'
 import { updateDiffCommentsProcedure } from './daemon/diff-comments/update.effect'
+import { resolveGithubTokenProcedure } from './daemon/github-accounts/resolve-token.effect'
 import { heartbeatEffectProcedure } from './daemon/hosts/heartbeat.effect'
 import { shutdownEffectProcedure } from './daemon/hosts/shutdown.effect'
 import { syncGitHubArtifactBacklinkProcedure } from './daemon/integrations/github/sync-artifact-backlink.effect'
@@ -605,6 +606,9 @@ export const daemonRouter = daemonBase.router({
 	},
 	users: {
 		setGithubIdentity: setGithubIdentityProcedure,
+	},
+	githubAccounts: {
+		resolveToken: resolveGithubTokenProcedure,
 	},
 	approvals: {
 		create: createApprovalProcedure,

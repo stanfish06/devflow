@@ -19,6 +19,7 @@ import { TaskDiffServiceRegistry } from '@/effects/services/task-diff/task-diff-
 import { HostUsageLimitsLive } from '@/lib/usage-limits/host-usage-limits'
 
 import { makeBasicEffectSession, makeSessionContext } from '../fixtures/effect-claude-runtime'
+import { makeHostLoginGithubCredentials } from '../mocks/github-credentials.mock'
 import { makeMockTaskWorkspaceContextLayer } from '../mocks/task-workspace-context.mock'
 
 interface LifecycleControls {
@@ -89,8 +90,10 @@ function makeClaudeSessionsTestLayer(
 			researchLibrary: () => Effect.die('unused'),
 			syncGitHubArtifactBacklink: () => Effect.die('unused'),
 			updateWorkspaceSetup: () => Effect.die('unused'),
+			resolveGithubToken: () => Effect.die('unused'),
 		}),
 		makeMockTaskWorkspaceContextLayer(),
+		makeHostLoginGithubCredentials(),
 		Layer.succeed(DaemonCollections, {
 			current: Effect.succeed(collections),
 			sessionChanges: Stream.never,

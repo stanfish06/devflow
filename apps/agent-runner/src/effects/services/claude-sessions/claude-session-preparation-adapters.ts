@@ -4,6 +4,8 @@ import { loadConfiguredRepoContext } from '@/lib/configured-repos/service'
 import { commitAttributionEnv } from '@/lib/git/commit-attribution'
 import { ensureRpiPluginOnDisk } from '@/plugins/ensure-plugin'
 
+import { GithubCredentials, type PrepareGithubCredentialsInput } from '../github-credentials/github-credentials.service'
+
 export class ClaudePreparationAdapterError extends Data.TaggedError('ClaudePreparationAdapterError')<{
 	readonly capability:
 		| 'rpi-plugin'
@@ -67,3 +69,17 @@ export const readCommitAttributionEnvironment = (input: {
 	adaptPreparationPromise('commit-attribution', () =>
 		commitAttributionEnv(input.sessionId, { cwd: input.workingDirectory }),
 	)
+
+/**
+ * The env fragment that makes the agent act as the session's GitHub account, or null to keep the
+ * host's own gh login. The credential directory is held for as long as the enclosing scope (the run)
+ * stays open, then released, which removes it once no run of the session holds it. A failure fails
+ * the preparation: the session must not start as some other GitHub identity.
+ */
+export const readGithubCredentialEnvironment = (input: PrepareGithubCredentialsInput) =>
+	Effect.gen(function* () {
+		const credentials = yield* GithubCredentials
+		return yield* Effect.acquireRelease(credentials.prepare(input), (githubEnv) =>
+			githubEnv === null ? Effect.void : credentials.release(input.sessionId),
+		)
+	}).pipe(Effect.withSpan('claude.preparation.github_credentials'))

@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from 'vitest'
 
 import type { SessionContext } from '@/agents/shared/run-session'
 import {
+	codexEnvironment,
 	executeCodelayerSlot,
 	failUnsupportedAgent,
 	isCodexAppServerSession,
@@ -43,5 +44,12 @@ describe('devflow agent executors', () => {
 			status: 'failed',
 			errorMessage: 'devflow runs Claude Code and Codex (codex app-server) only',
 		})
+	})
+
+	test('a Codex run with a GitHub account gets the credential pointers and no host token or identity', () => {
+		const githubEnv = { GH_CONFIG_DIR: '/run/s/github/gh', GIT_CONFIG_GLOBAL: '/run/s/github/gitconfig' }
+		const host = { PATH: '/bin', CODEX_HOME: '/home/me/.codex', GH_TOKEN: 'host', GIT_AUTHOR_EMAIL: 'me@x' }
+		expect(codexEnvironment(githubEnv, host)).toEqual({ PATH: '/bin', CODEX_HOME: '/home/me/.codex', ...githubEnv })
+		expect(codexEnvironment(null, host)).toEqual(host)
 	})
 })

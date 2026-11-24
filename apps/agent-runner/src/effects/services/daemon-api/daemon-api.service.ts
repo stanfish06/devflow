@@ -8,6 +8,7 @@ import type {
 	DaemonConversationStreamHydrationError,
 	DaemonContextShardsListError,
 	DaemonApprovalCreateError,
+	DaemonGithubTokenResolveError,
 	DaemonSessionUpdateError,
 	DaemonSettingsGetError,
 	DaemonTaskCapabilityError,
@@ -44,6 +45,7 @@ type GetWorkspaceRepositoryStatus = ORPCClient['projectWorkspaces']['getReposito
 type ReportWorkspaceRepositoryResult = ORPCClient['projectWorkspaces']['reportRepositoryResult']
 type GetSessionWorkspaceSetup = ORPCClient['projectWorkspaces']['getSessionWorkspaceSetup']
 type GetTaskWorkspaceContext = ORPCClient['projectWorkspaces']['getTaskWorkspaceContext']
+type ResolveGithubToken = ORPCClient['githubAccounts']['resolveToken']
 
 export class DaemonApi extends Context.Service<
 	DaemonApi,
@@ -126,5 +128,9 @@ export class DaemonApi extends Context.Service<
 			Awaited<ReturnType<GetTaskWorkspaceContext>>,
 			DaemonTaskWorkspaceContextNotFound | DaemonTaskWorkspaceContextError
 		>
+		/** The GitHub account one of this daemon's sessions acts as, with its token in plain text. */
+		readonly resolveGithubToken: (
+			input: Parameters<ResolveGithubToken>[0],
+		) => Effect.Effect<Awaited<ReturnType<ResolveGithubToken>>, DaemonGithubTokenResolveError>
 	}
 >()('DaemonApi') {}

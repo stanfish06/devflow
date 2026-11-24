@@ -214,6 +214,7 @@ import { getDiffCommentsContract } from './daemon/diff-comments/get'
 import { replyToDiffCommentContract } from './daemon/diff-comments/reply'
 import { updateDiffCommentsContract } from './daemon/diff-comments/update'
 import { createEventContract } from './daemon/events/create'
+import { resolveGithubTokenContract } from './daemon/github-accounts/resolve-token'
 import { heartbeatContract } from './daemon/heartbeat'
 import { shutdownContract } from './daemon/hosts/shutdown'
 import { syncGitHubArtifactBacklinkContract } from './daemon/integrations/github/sync-artifact-backlink'
@@ -606,6 +607,9 @@ export const DaemonApiContract = {
 	},
 	users: {
 		setGithubIdentity: setGithubIdentityContract,
+	},
+	githubAccounts: {
+		resolveToken: resolveGithubTokenContract,
 	},
 	approvals: {
 		create: createApprovalContract,

@@ -16,6 +16,7 @@ import { createWorkflowRoutingHook } from '@/agents/claudecode/hooks/workflow-ro
 import { createMcpServer } from '@/agents/claudecode/mcp/devflow-server'
 import { renderContextShardsPromptBlock } from '@/agents/shared/context-shards'
 import type { InterruptStateService } from '@/agents/shared/interrupt-state.service'
+import { isDockerSandboxEnabled } from '@/devflow/docker-sandbox'
 import { getArtifactSymlinkPath } from '@/lib/artifact-paths'
 import { createArtifactSyncLedger } from '@/lib/artifact-sync-ledger'
 import { orgTelemetryCache } from '@/lib/org-telemetry-settings'
@@ -42,6 +43,7 @@ import {
 	prepareArtifactPaths,
 	readCommitAttributionEnvironment,
 	readConfiguredRepositoryContext,
+	readGithubCredentialEnvironment,
 } from './claude-session-preparation-adapters'
 import type { ExecuteClaudeSessionInput } from './claude-sessions.service'
 import { MULTIPLAYER_MESSAGE_CONTRACT, sessionHasActiveMultiplayerPrompting } from './multiplayer-message-contract'
@@ -337,6 +339,12 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 		if (workspaceSetupProgress) systemPromptAdditions.push(workspaceSetupProgress)
 
 		const commitEnv = yield* readCommitAttributionEnvironment({ sessionId, workingDirectory: cwd })
+		// Held until the run's scope closes; null keeps the host's own gh login and env untouched.
+		const githubEnv = yield* readGithubCredentialEnvironment({
+			sessionId,
+			taskId: session.task_id,
+			scope: isDockerSandboxEnabled() ? 'sandbox' : 'host',
+		})
 		const appServer = createMcpServer(toolsApi, {
 			taskId: session.task_id,
 			enableLibraryResearcher: effectiveSettings.experimentalSubagentsEnabled,
@@ -387,6 +395,7 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 			forkMeta: input.forkMeta,
 			mcpServers: appServer ? { devflow: appServer } : undefined,
 			commitAttributionEnv: commitEnv,
+			githubEnv,
 			inheritedEnv: configuration.inheritedEnvironment,
 			stderr: (contents) => {
 				logger.warn({ sessionId, stderr: contents }, 'Claude process STDERR')
