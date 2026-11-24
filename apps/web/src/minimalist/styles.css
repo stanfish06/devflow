@@ -366,6 +366,25 @@
 	.child .meta.draft {
 		color: var(--fg-2);
 	}
+	/* A ticket saved as a draft: a dashed pill in the sidebar, the palette and the draft's title bar. */
+	.draft-mark {
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		height: 18px;
+		padding: 0 6px;
+		border: 1px dashed var(--fg-3);
+		border-radius: 999px;
+		color: var(--fg-2);
+		font-size: 11px;
+		font-weight: 500;
+		line-height: 1;
+	}
+	.titlebar .draft-saved {
+		color: var(--fg-3);
+		font-size: 11.5px;
+		white-space: nowrap;
+	}
 	.more {
 		color: var(--fg-3);
 		padding-left: 29px;
@@ -683,6 +702,22 @@
 	}
 	.send.off {
 		opacity: 0.25;
+	}
+	/* Start, with more ways to send behind the caret: one pill split by a hairline. */
+	.split-send {
+		display: inline-flex;
+		flex: none;
+	}
+	.split-send .btn:first-child {
+		border-radius: 8px 0 0 8px;
+	}
+	.split-send .btn.caret {
+		border-radius: 0 8px 8px 0;
+		padding: 0 6px;
+		border-left: 1px solid color-mix(in srgb, var(--accent-fg) 22%, transparent);
+	}
+	.split-send .btn.caret .i {
+		color: inherit;
 	}
 
 	/* transcript */

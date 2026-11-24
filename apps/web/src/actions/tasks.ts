@@ -58,6 +58,7 @@ export function applyOptimisticTaskDraftLaunch({
 			...task,
 			created_at: BigInt(task.created_at),
 			updated_at: BigInt(task.updated_at),
+			drafted_at: task.drafted_at === null ? null : BigInt(task.drafted_at),
 		}
 		if (tasksCollection.state.get(task.id)) {
 			tasksCollection.update(task.id, (draft) => {
@@ -197,6 +198,8 @@ export function createTaskActions(
 				updated_at: BigInt(Date.now()),
 				archived: false,
 				is_draft: false,
+				draft_launch: null,
+				drafted_at: null,
 				setup_status: setupStatus ?? null,
 				workflow_type: workflowType ?? 'rpi',
 				status: 'in_progress',
@@ -415,6 +418,8 @@ export function createTaskActions(
 				updated_at: BigInt(Date.now()),
 				archived: false,
 				is_draft: true,
+				draft_launch: null,
+				drafted_at: null,
 				setup_status: null,
 				setup_details: null,
 				ticket_id: ticketId ?? null,

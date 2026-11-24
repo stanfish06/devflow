@@ -326,6 +326,71 @@ describe('api/tasks/launchDraft', async () => {
 		])
 	})
 
+	test.each([
+		['todo', 'todo'],
+		[undefined, 'in_progress'],
+	] as const)('creates the task in board status %s (stored as %s)', async (status, stored) => {
+		const request = input(status ? { status } : {})
+		const result = await call(launchTaskDraftProcedure, request, { context: context() })
+		const rows = await countLaunchRows(request.draftId)
+
+		expect(result.outcome).toBe('created')
+		expect(result.task.status).toBe(stored)
+		expect(rows.taskRows).toEqual([expect.objectContaining({ status: stored })])
+	})
+
+	test.each([
+		[undefined, 'on_hold'],
+		['todo', 'todo'],
+	] as const)('promotes a draft in board status on_hold with status %s to %s', async (status, stored) => {
+		const request = input(status ? { status } : {})
+		await db.insert(tasks).values({
+			id: request.draftId,
+			organization_id: organizationId,
+			resource_owner_user_id: ownerUserId,
+			created_by: ownerUserId,
+			name: 'Saved task draft',
+			slug: request.slug,
+			is_draft: true,
+			status: 'on_hold',
+		})
+
+		const result = await call(launchTaskDraftProcedure, request, { context: context() })
+		const rows = await countLaunchRows(request.draftId)
+
+		expect(result.outcome).toBe('promoted')
+		expect(rows.taskRows).toEqual([expect.objectContaining({ is_draft: false, status: stored })])
+	})
+
+	test('promoting a board draft spends its snapshot and keeps the date it was drafted', async () => {
+		const request = input()
+		const draftedAt = 1_700_000_000_000n
+		await db.insert(tasks).values({
+			id: request.draftId,
+			organization_id: organizationId,
+			resource_owner_user_id: ownerUserId,
+			created_by: ownerUserId,
+			name: 'Saved board draft',
+			slug: request.slug,
+			is_draft: true,
+			status: 'backlog',
+			draft_launch: { version: 1, prompt: 'Saved prompt' },
+			drafted_at: draftedAt,
+			created_at: draftedAt,
+		})
+		expect((await countLaunchRows(request.draftId)).sessionRows).toEqual([])
+
+		const result = await call(launchTaskDraftProcedure, request, { context: context() })
+		const rows = await countLaunchRows(request.draftId)
+
+		expect(result.outcome).toBe('promoted')
+		expect(rows.taskRows).toEqual([
+			expect.objectContaining({ is_draft: false, status: 'backlog', draft_launch: null, drafted_at: draftedAt }),
+		])
+		// The launch resets the row's own timestamps, but not the draft's date.
+		expect(rows.taskRows[0]?.created_at).not.toBe(draftedAt)
+	})
+
 	test('replays the canonical launch when the client loses a response and proposes another first session', async () => {
 		const request = input()
 		request.firstSession.title = ''

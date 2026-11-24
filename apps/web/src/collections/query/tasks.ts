@@ -12,7 +12,7 @@ const queryTasksCollectionBuilder = createBrowserQueryCollection({
 		const client = apiClient as ApiClient
 		return syncVersion === 2 ? client.sync.v2.tasks : client.sync.tasks
 	},
-	bigIntFields: ['created_at', 'updated_at'],
+	bigIntFields: ['created_at', 'updated_at', 'drafted_at'],
 	indexes: [{ field: (row) => row.updated_at, name: 'updated_at', indexType: BTreeIndex }],
 })
 

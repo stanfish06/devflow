@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 
 import { resolveOrgDefaultTaskShareLevel } from '../../src/db/organization-settings'
 import type { AppRuntime } from '../../src/effects/app-runtime'
+import { archiveTaskProcedure } from '../../src/orpc/api/tasks/archive'
 import { createTaskProcedure } from '../../src/orpc/api/tasks/create'
 import { createTaskDraftEffectProcedure } from '../../src/orpc/api/tasks/createDraft.effect'
 import { saveTaskDraftProcedure as unboundSaveTaskDraftProcedure } from '../../src/orpc/api/tasks/saveDraft'
@@ -164,6 +165,27 @@ describe('api/tasks/create', async () => {
 			autoAdvancePlanToWorktree: false,
 			autoAdvanceWorktreeToImplementation: true,
 			autoAdvanceImplementationToPr: false,
+			status: 'todo' as const,
+			draftLaunch: draftLaunch(),
+		}
+	}
+
+	function draftLaunch(prompt = 'Draft prompt') {
+		return {
+			version: 1 as const,
+			prompt,
+			attachments: [attachment('uploads/notes.txt')],
+			target: { kind: 'directory' as const, path: '/draft' },
+			hostId,
+			settings: {
+				agent: 'claude' as const,
+				model: 'opus',
+				effort: 'high',
+				fastMode: false,
+				permissionsMode: 'default' as const,
+			},
+			taskSize: 'medium' as const,
+			smallAutoAdvance: true,
 		}
 	}
 
@@ -890,6 +912,110 @@ describe('api/tasks/create', async () => {
 			},
 		})
 		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toHaveLength(1)
+	})
+
+	test('saveDraft writes the board column and the launch snapshot, and dates the draft once', async () => {
+		const taskId = uuidv7()
+		const first = await call(saveTaskDraftProcedure, saveDraftInput(taskId), { context: makeContext() })
+		expect(first).toMatchObject({
+			result: 'saved',
+			task: { id: taskId, is_draft: true, status: 'todo', draft_launch: draftLaunch() },
+		})
+		const [saved] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+		expect(saved?.drafted_at).toEqual(expect.any(BigInt))
+
+		await new Promise((resolve) => setTimeout(resolve, 5))
+		const second = await call(
+			saveTaskDraftProcedure,
+			{ ...saveDraftInput(taskId), status: 'backlog', draftLaunch: draftLaunch('Edited prompt') },
+			{ context: makeContext() },
+		)
+		expect(second).toMatchObject({
+			result: 'saved',
+			task: { status: 'backlog', draft_launch: draftLaunch('Edited prompt') },
+		})
+		const [resaved] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+		expect(resaved?.drafted_at).toBe(saved?.drafted_at)
+		expect(resaved?.updated_at).not.toBe(saved?.updated_at)
+		// A draft is a task row and nothing else: no session the daemon could launch.
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, taskId))).toEqual([])
+	})
+
+	test('saveDraft rejects a snapshot it does not understand', async () => {
+		await expect(
+			call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(), draftLaunch: { ...draftLaunch(), version: 2 as unknown as 1 } },
+				{ context: makeContext() },
+			),
+		).rejects.toThrow()
+	})
+
+	test('saveDraft cannot turn a launched draft back into a draft', async () => {
+		const taskId = uuidv7()
+		await call(saveTaskDraftProcedure, saveDraftInput(taskId), { context: makeContext() })
+		await call(createTaskProcedure, { id: taskId, name: 'Launched' }, { context: makeContext() })
+
+		expect(
+			await call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(taskId), name: 'Late autosave' },
+				{ context: makeContext() },
+			),
+		).toEqual({ result: 'draft-id-unavailable' })
+		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
+			expect.objectContaining({ name: 'Launched', is_draft: false }),
+		])
+	})
+
+	test('saveDraft cannot bring back a deleted draft, and Undo restores it as it was', async () => {
+		const taskId = uuidv7()
+		await call(saveTaskDraftProcedure, { ...saveDraftInput(taskId), status: 'backlog' }, { context: makeContext() })
+		// Delete draft archives the row and leaves no sessions to touch.
+		await call(
+			archiveTaskProcedure,
+			{ taskId, archived: true, cascadeToSessions: false },
+			{ context: makeContext() },
+		)
+
+		// A late autosave from the page that deleted it, or another device, is turned away.
+		expect(
+			await call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(taskId), name: 'Late autosave', draftLaunch: draftLaunch('Late edit') },
+				{ context: makeContext() },
+			),
+		).toEqual({ result: 'draft-id-unavailable' })
+		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
+			expect.objectContaining({
+				name: 'Saved draft',
+				archived: true,
+				is_draft: true,
+				draft_launch: draftLaunch(),
+			}),
+		])
+
+		// Undo: back in its column, with its snapshot and attachments, and saving again.
+		await call(
+			archiveTaskProcedure,
+			{ taskId, archived: false, cascadeToSessions: false },
+			{ context: makeContext() },
+		)
+		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
+			expect.objectContaining({
+				archived: false,
+				is_draft: true,
+				status: 'backlog',
+				draft_launch: draftLaunch(),
+			}),
+		])
+		expect(
+			await call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(taskId), status: 'backlog', draftLaunch: draftLaunch('Edited after Undo') },
+				{ context: makeContext() },
+			),
+		).toMatchObject({ result: 'saved', task: { draft_launch: draftLaunch('Edited after Undo') } })
 	})
 
 	test.each([

@@ -1,6 +1,8 @@
 // Linear-style views of tasks grouped by board status, copied from fractal-platform's
 // workspace/status-views.tsx: a board (drag a card to another column to change its status) and a list
-// with collapsible groups. Both open the task on click; + starts a new task in that status.
+// with collapsible groups. Both open the task on click (a draft opens in the composer); + starts a new
+// task in that status. Each card shows its agent's state, with Start, Stop, Resume or Retry on hover.
+// The column and the agent are independent: moving a card never touches its agent, and the reverse.
 import { TASK_STATUSES, type TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import {
 	DropdownMenu,
@@ -12,12 +14,17 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import { ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 
+import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
 import { assignStage, type StageId } from '@/lib/kanban/columnEngine'
 import { cn } from '@/lib/utils'
+import { AgentStateLabel, CardActionButton } from '@/minimalist/components/CardAction'
 import { Segmented } from '@/minimalist/components/SettingsControls'
 import { TASK_STATUS_META, TaskStatusIcon } from '@/minimalist/components/TaskStatusIcon'
-import { type TaskRow, type TaskTreeScope, useTaskTree } from '@/minimalist/lib/data'
+import { type CardAction, cardAgent } from '@/minimalist/lib/card-agent'
+import { type TaskRow, type TaskTreeScope, useHosts, useProjects, useTaskTree } from '@/minimalist/lib/data'
+import { startBlocker } from '@/minimalist/lib/draft-blocker'
 import { useUi } from '@/minimalist/lib/ui-state'
+import { useCardAction } from '@/minimalist/lib/use-card-action'
 import { useApi } from '@/orpc/client'
 
 // ── Options ──────────────────────────────────────────────────────────────────
@@ -45,8 +52,15 @@ const STAGES: Record<StageId, { label: string; color: string }> = {
 
 type ViewProps = {
 	rows: TaskRow[]
-	onOpen: (taskId: string) => void
+	onOpen: (row: TaskRow) => void
 	onCreate: (status: TaskStatus) => void
+	controls: CardControls
+}
+
+/** What a card's action button needs: a way to run the action, and why a Start can't run. */
+type CardControls = {
+	run: (row: TaskRow, action: NonNullable<CardAction>) => Promise<void>
+	startBlocker: (row: TaskRow) => string | null
 }
 
 /** The task's status icon as a button: a menu of statuses, the keyboard path besides dragging. */
@@ -109,6 +123,31 @@ function shortDate(ms: number): string {
 	return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** When the card last changed: a draft was saved, a started ticket updated. */
+function updatedText(row: TaskRow): string {
+	return `${row.task.is_draft ? 'Saved' : 'Updated'} ${shortDate(row.lastActivity)}`
+}
+
+/**
+ * Card actions for the board: one runner, and Start's blockers from one read of hosts and
+ * projects. A draft starts only on the host and project it was saved for, and only its owner can
+ * start it.
+ */
+function useCardControls(): CardControls {
+	const run = useCardAction()
+	const { user } = useAuth()
+	const { hosts, isReady: hostsReady } = useHosts()
+	const projects = useProjects()
+	return {
+		run,
+		startBlocker: (row) => {
+			if (row.task.resource_owner_user_id !== user?.id) return 'Only its owner can start this draft'
+			if (!hostsReady) return 'Loading…'
+			return startBlocker(row, hosts, projects.data)
+		},
+	}
+}
+
 function Chip(props: { children: string }) {
 	return (
 		<span className="max-w-full truncate rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
@@ -143,11 +182,14 @@ export function BoardPage({ layout, onLayout }: { layout: BoardLayout; onLayout:
 	const { recent: rows, isReady } = useTaskTree(false, scope)
 	const navigate = useNavigate()
 	const { closeSidebarOnNarrow } = useUi()
-	const onOpen = (taskId: string) => {
+	const onOpen = ({ task }: TaskRow) => {
 		closeSidebarOnNarrow()
-		void navigate({ to: '/tasks/$taskId', params: { taskId } })
+		// A draft has no thread yet: it opens in the composer it was written in, to edit or Start.
+		if (task.is_draft) void navigate({ to: '/', search: { task: task.id } })
+		else void navigate({ to: '/tasks/$taskId', params: { taskId: task.id } })
 	}
 	const onCreate = (status: TaskStatus) => void navigate({ to: '/', search: { status } })
+	const controls = useCardControls()
 	return (
 		<main className="main board">
 			<div className="titlebar">
@@ -168,9 +210,9 @@ export function BoardPage({ layout, onLayout }: { layout: BoardLayout; onLayout:
 				// The shared components' boundary: Tailwind and the theme tokens, outside the minimalist resets.
 				<div className="minimalist-shared min-h-0 flex-1 bg-background text-foreground">
 					{layout === 'board' ? (
-						<BoardView rows={rows} onOpen={onOpen} onCreate={onCreate} />
+						<BoardView rows={rows} onOpen={onOpen} onCreate={onCreate} controls={controls} />
 					) : (
-						<StatusListView rows={rows} onOpen={onOpen} onCreate={onCreate} />
+						<StatusListView rows={rows} onOpen={onOpen} onCreate={onCreate} controls={controls} />
 					)}
 				</div>
 			)}
@@ -223,7 +265,7 @@ function BoardView(props: ViewProps) {
 					</div>
 					<div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
 						{column.map((row) => (
-							<Card key={row.task.id} row={row} onOpen={props.onOpen} />
+							<Card key={row.task.id} row={row} onOpen={props.onOpen} controls={props.controls} />
 						))}
 					</div>
 				</section>
@@ -232,8 +274,9 @@ function BoardView(props: ViewProps) {
 	)
 }
 
-function Card(props: { row: TaskRow; onOpen: (taskId: string) => void }) {
+function Card(props: { row: TaskRow; onOpen: (row: TaskRow) => void; controls: CardControls }) {
 	const { task } = props.row
+	const agent = cardAgent(props.row)
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag source; the buttons inside are the interactive parts
 		<div
@@ -243,20 +286,40 @@ function Card(props: { row: TaskRow; onOpen: (taskId: string) => void }) {
 				event.dataTransfer.setData(DRAG_TYPE, task.id)
 				event.dataTransfer.effectAllowed = 'move'
 			}}
-			className="flex w-full items-start gap-2 rounded-lg border bg-card p-3 hover:border-foreground/30"
+			className="group relative flex w-full items-start gap-2 rounded-lg border bg-card p-3 focus-within:border-foreground/30 hover:border-foreground/30"
 		>
 			<StatusMenu taskId={task.id} taskName={task.name} status={task.status} className="-m-0.5 mt-0" />
-			<button type="button" onClick={() => props.onOpen(task.id)} className="min-w-0 flex-1 text-left">
+			<button type="button" onClick={() => props.onOpen(props.row)} className="min-w-0 flex-1 text-left">
 				<span className="line-clamp-2 text-[0.8125rem] font-medium">{task.name}</span>
 				<span className="mt-2 flex flex-wrap gap-1.5">
 					<StageTag stage={stageOf(props.row)} />
 					<Chip>{props.row.projectName}</Chip>
 				</span>
-				<span className="mt-2 block text-[0.6875rem] text-muted-foreground">
-					Updated {shortDate(props.row.lastActivity)}
+				<span className="mt-2 flex flex-wrap items-center gap-1 text-[0.6875rem] text-muted-foreground">
+					<AgentStateLabel state={agent.state} />
+					<span>· {updatedText(props.row)}</span>
 				</span>
 			</button>
+			<RowAction
+				row={props.row}
+				action={agent.action}
+				controls={props.controls}
+				className="absolute top-2 right-2"
+			/>
 		</div>
+	)
+}
+
+/** A card's or list row's action button, with Start's blocker when it's a Start. */
+function RowAction(props: { row: TaskRow; action: CardAction; controls: CardControls; className?: string }) {
+	return (
+		<CardActionButton
+			action={props.action}
+			taskName={props.row.task.name}
+			blocker={props.action?.kind === 'start' ? props.controls.startBlocker(props.row) : null}
+			onRun={(action) => props.controls.run(props.row, action)}
+			className={props.className}
+		/>
 	)
 }
 
@@ -302,32 +365,42 @@ function StatusListView(props: ViewProps) {
 					</div>
 					{!closed.has(status) &&
 						rows.map((row) => (
-							<div
-								key={row.task.id}
-								className="flex h-10 w-full items-center gap-3 rounded-md px-3 text-[0.8125rem] hover:bg-accent/10"
-							>
-								<StatusMenu taskId={row.task.id} taskName={row.task.name} status={row.task.status} />
-								<button
-									type="button"
-									onClick={() => props.onOpen(row.task.id)}
-									className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
-								>
-									<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
-									{/* The stage tag stays at every width; below md the project chip makes room for it. */}
-									<span className="flex shrink-0 items-center gap-1.5">
-										<StageTag stage={stageOf(row)} />
-										<span className="hidden md:contents">
-											<Chip>{row.projectName}</Chip>
-										</span>
-									</span>
-									<span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
-										{shortDate(row.lastActivity)}
-									</span>
-								</button>
-							</div>
+							<ListRow key={row.task.id} row={row} onOpen={props.onOpen} controls={props.controls} />
 						))}
 				</section>
 			))}
+		</div>
+	)
+}
+
+function ListRow(props: { row: TaskRow; onOpen: (row: TaskRow) => void; controls: CardControls }) {
+	const { row } = props
+	const agent = cardAgent(row)
+	return (
+		<div className="group flex h-10 w-full items-center gap-3 rounded-md px-3 text-[0.8125rem] hover:bg-accent/10">
+			<StatusMenu taskId={row.task.id} taskName={row.task.name} status={row.task.status} />
+			<button
+				type="button"
+				onClick={() => props.onOpen(row)}
+				className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
+			>
+				<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
+				{/* The stage tag stays at every width; below md the project chip makes room for it. */}
+				<span className="flex shrink-0 items-center gap-1.5">
+					<StageTag stage={stageOf(row)} />
+					<span className="hidden md:contents">
+						<Chip>{row.projectName}</Chip>
+					</span>
+				</span>
+				<AgentStateLabel state={agent.state} className="shrink-0 text-xs" />
+				<span className="min-w-14 shrink-0 text-right text-xs text-muted-foreground">
+					{shortDate(row.lastActivity)}
+				</span>
+			</button>
+			{/* A fixed slot, so dates line up whether or not a row has an action. */}
+			<span className="flex w-20 shrink-0 justify-end">
+				<RowAction row={row} action={agent.action} controls={props.controls} />
+			</span>
 		</div>
 	)
 }

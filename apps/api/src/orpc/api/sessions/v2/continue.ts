@@ -27,9 +27,14 @@ export const continueSessionV2Procedure = effectOrpcBaseOrganizationRequired.ses
 	const postgres = yield* PostgresDb
 	const nowMillis = yield* Clock.currentTimeMillis
 	const { organizationId, userId } = context.auth
-	const { sessionId, messageId, eventId, text, intent } = input
+	const { sessionId, messageId, eventId, text, intent, origin } = input
 	const operation = 'sessions.v2.continue'
-	const observabilityContext = { sessionId, userId, intent }
+	// `origin` tells a board card's Resume / Retry apart from a typed message; it only labels logs and the span.
+	const originAttributes: { origin?: typeof origin } = {}
+	if (origin) originAttributes.origin = origin
+	const observabilityContext = { sessionId, userId, intent, ...originAttributes }
+	// The status the message found, on the span, so typed messages into stopped threads can be counted.
+	let previousStatus: string | null = null
 
 	return yield* postgres
 		.transaction((tx) =>
@@ -56,6 +61,7 @@ export const continueSessionV2Procedure = effectOrpcBaseOrganizationRequired.ses
 					)
 					return { kind: 'rejected' as const, reason: 'not_found' as const }
 				}
+				previousStatus = session.status
 
 				const { accessLevel, multiplayerPromptingActive } = yield* getSessionPromptingAccess(
 					tx,
@@ -281,6 +287,12 @@ export const continueSessionV2Procedure = effectOrpcBaseOrganizationRequired.ses
 			Effect.catchTags({
 				PostgresDbQueryError: (error) => mapPostgresErrorToResponse(error, errors),
 				PostgresDbTransactionError: (error) => mapPostgresErrorToResponse(error, errors),
+			}),
+			Effect.tap(() =>
+				previousStatus ? Effect.annotateCurrentSpan({ previous_status: previousStatus }) : Effect.void,
+			),
+			Effect.withSpan('sessions.v2.continue', {
+				attributes: { session_id: sessionId, intent, ...originAttributes },
 			}),
 		)
 })

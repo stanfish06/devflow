@@ -16,11 +16,14 @@ import {
 import { useEffect, useRef, useState } from 'react'
 import { uuidv7 } from 'uuidv7'
 
+import { useSyncInternal } from '@/components/providers/SyncProvider'
 import { missingRepositorySources } from '@/lib/repository-sources'
 import { Composer } from '@/minimalist/components/Composer'
 import { IssueDialog } from '@/minimalist/components/IssueDialog'
 import { DirectoryMenu, HostIcon, HostMenu, TargetMenu } from '@/minimalist/components/LaunchMenus'
 import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
+import { DraftMark } from '@/minimalist/components/TaskItem'
+import { TASK_STATUS_META } from '@/minimalist/components/TaskStatusIcon'
 import { WiredTaskNavigation } from '@/minimalist/components/WiredTaskNavigation'
 import { withAttachments } from '@/minimalist/lib/attachments'
 import {
@@ -32,8 +35,9 @@ import {
 	useTask,
 	useTaskTree,
 } from '@/minimalist/lib/data'
-import { newTaskDraftKey, useDraft } from '@/minimalist/lib/drafts'
-import { basename } from '@/minimalist/lib/format'
+import { draftStartBlocker } from '@/minimalist/lib/draft-blocker'
+import { newTaskDraftKey } from '@/minimalist/lib/drafts'
+import { basename, formatAgo, toMs } from '@/minimalist/lib/format'
 import {
 	defaultTarget,
 	ensureRepositorySources,
@@ -43,34 +47,29 @@ import {
 	launchHost,
 	type LoadedTarget,
 	rememberSettings,
-	savedSettings,
 	startTask,
 	type Target,
 	targetLabel,
 	workingCopy,
 } from '@/minimalist/lib/launch'
-import { fitSettings, modelCatalog } from '@/minimalist/lib/models'
 import {
-	TASK_SIZES,
-	type TaskSize,
-	taskSizeOption,
-	taskSizeWorkflow,
-	useSmallTaskAutoAdvance,
-	useTaskSize,
-} from '@/minimalist/lib/task-size'
+	draftSaveInput,
+	draftTarget,
+	fromDraftLaunch,
+	isBoardDraft,
+	launchInput,
+	toDraftLaunch,
+	useLaunchForm,
+} from '@/minimalist/lib/launch-form'
+import { fitSettings, modelCatalog } from '@/minimalist/lib/models'
+import { TASK_SIZES, type TaskSize, taskSizeOption } from '@/minimalist/lib/task-size'
 import { githubFullName, type Ticket, ticketLabel } from '@/minimalist/lib/tickets'
 import { useUi } from '@/minimalist/lib/ui-state'
-import { useAttachments } from '@/minimalist/lib/use-attachments'
 import { useCopy } from '@/minimalist/lib/use-copy'
+import { type DraftAutosaveState, useDraftAutosave } from '@/minimalist/lib/use-draft-autosave'
 import { useApi } from '@/orpc/client'
 
-export function NewTask({
-	existingTaskId,
-	projectId,
-	directory,
-	hostId: requestedHostId,
-	status,
-}: {
+type NewTaskProps = {
 	existingTaskId?: string
 	projectId?: string
 	directory?: string
@@ -78,14 +77,64 @@ export function NewTask({
 	hostId?: string
 	/** Board status for the new task, from a board column's +. */
 	status?: TaskStatus
-}) {
+}
+
+/**
+ * What the page launches: a new task, a board draft saved earlier (`?task=` a draft with a
+ * snapshot), or a new session in a task. A task still loading reads as a session until it arrives.
+ */
+type LaunchMode = 'new' | 'draft' | 'session'
+
+/**
+ * The new-task page. A new task Starts, or saves as a draft for later; a draft reopens here with
+ * everything it saved, and Starts in place; a task gets a new session.
+ */
+export function NewTask(props: NewTaskProps) {
+	const existing = useTask(props.existingTaskId)
+	// An open draft stays one while it starts, though its row turns into a launched task first.
+	const [openedDraft, setOpenedDraft] = useState(false)
+	if (props.existingTaskId && !openedDraft && isBoardDraft(existing.task)) setOpenedDraft(true)
+	const mode: LaunchMode = !props.existingTaskId
+		? 'new'
+		: openedDraft || isBoardDraft(existing.task)
+			? 'draft'
+			: 'session'
+	// Each mode seeds its form once, so a task that turns out to be a draft opens fresh.
+	return <LaunchPage key={mode} {...props} mode={mode} existing={existing} />
+}
+
+function LaunchPage({
+	existingTaskId,
+	projectId,
+	directory,
+	hostId: requestedHostId,
+	status,
+	mode,
+	existing,
+}: NewTaskProps & { mode: LaunchMode; existing: ReturnType<typeof useTask> }) {
 	const { client: api, queryClient: orpc } = useApi()
+	const { confirmTx } = useSyncInternal()
 	const navigate = useNavigate()
 	const { showToast, taskSidebarOpen, toggleTaskSidebar } = useUi()
 	const { hosts, isReady: hostsReady } = useHosts()
 	const projects = useProjects()
 	const { recent } = useTaskTree()
-	const existing = useTask(existingTaskId)
+	/** A new session in a task, as opposed to a task that hasn't launched yet. */
+	const inTask = mode === 'session'
+	// A draft opens with what it saved, read once: later syncs of the row never overwrite the editor.
+	const [opened] = useState(() => (mode === 'draft' && existing.task ? fromDraftLaunch(existing.task) : null))
+	const [ids] = useState(() => ({
+		taskId: mode === 'draft' && existing.task ? existing.task.id : uuidv7(),
+		sessionId: uuidv7(),
+		eventId: uuidv7(),
+	}))
+	const form = useLaunchForm({
+		seed: opened?.seed ?? null,
+		textKey: newTaskDraftKey(existingTaskId),
+		hostId: requestedHostId,
+		uploads: { taskId: inTask && existingTaskId ? existingTaskId : ids.taskId, existing: inTask },
+	})
+	const { attachments, ticket } = form
 	const latestExisting = existing.sessions.at(-1) ?? null
 	const existingWorkspace = useQuery({
 		...orpc.projectWorkspaces.getStatus.queryOptions({
@@ -97,18 +146,19 @@ export function NewTask({
 	const existingProjectId = existing.task?.workspace_id
 		? existingWorkspace.data?.workspace.projectId
 		: existing.task?.project_id
-	const [hostId, setHostId] = useState<string | null>(requestedHostId ?? null)
 	const taskHost = hosts.find((entry) => entry.host.host_id === latestExisting?.host_id) ?? null
-	const host = launchHost(hosts, {
-		picked: hostId,
-		task: existingTaskId && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
-	})
+	// A draft runs on the host it was saved for, or one picked for it here; never on another by default.
+	const host =
+		mode === 'draft'
+			? (hosts.find((entry) => entry.host.host_id === form.hostId) ?? null)
+			: launchHost(hosts, {
+					picked: form.hostId,
+					task: inTask && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
+				})
 	const directories = useRecentDirectories(host?.host.host_id ?? null)
 	const taskDirectory = latestExisting?.working_directory ?? existing.task?.default_working_directory ?? null
-	const moved = Boolean(
-		existingTaskId && host && latestExisting?.host_id && host.host.host_id !== latestExisting.host_id,
-	)
-	const directoryTask = Boolean(existingTaskId && existing.task && !existing.task.workspace_id)
+	const moved = Boolean(inTask && host && latestExisting?.host_id && host.host.host_id !== latestExisting.host_id)
+	const directoryTask = Boolean(inTask && existing.task && !existing.task.workspace_id)
 	// A directory chosen for a moved directory task belongs to the host it was chosen on.
 	const [pickedDirectory, setPickedDirectory] = useState<{ hostId: string; path: string } | null>(null)
 	const sessionDirectory = resolveSessionDirectory({
@@ -118,24 +168,16 @@ export function NewTask({
 		directories,
 		picked: pickedDirectory && pickedDirectory.hostId === host?.host.host_id ? pickedDirectory.path : null,
 	})
-	const [target, setTarget] = useState<Target | null>(null)
-	const [draft, setDraft] = useDraft(newTaskDraftKey(existingTaskId))
-	const [ticket, setTicket] = useState<Ticket | null>(null)
 	const [issueDialog, setIssueDialog] = useState(false)
 	const [launching, setLaunching] = useState(false)
 	const launchLock = useRef(false)
-	const [ids] = useState(() => ({ taskId: uuidv7(), sessionId: uuidv7(), eventId: uuidv7() }))
-	const attachments = useAttachments(existingTaskId ?? ids.taskId, Boolean(existingTaskId))
 	const catalog = modelCatalog(host?.host)
-	const [picked, setSettings] = useState(savedSettings)
-	const settings = fitSettings(picked, catalog)
+	const settings = fitSettings(form.settings, catalog)
 	const [menu, setMenu] = useState<'target' | 'host' | 'directory' | null>(null)
-	const [taskSize, setTaskSize] = useTaskSize()
-	const [smallAutoAdvance] = useSmallTaskAutoAdvance()
 	const targetAnchor = useRef<HTMLButtonElement>(null)
 	const directoryAnchor = useRef<HTMLButtonElement>(null)
 	useEffect(() => {
-		if (!existingTaskId || !taskSidebarOpen || !matchMedia('(max-width: 1050px)').matches) return
+		if (!inTask || !taskSidebarOpen || !matchMedia('(max-width: 1050px)').matches) return
 		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
 		const frame = requestAnimationFrame(() =>
 			document.querySelector<HTMLElement>('.task-nav button, .task-nav a')?.focus(),
@@ -149,21 +191,28 @@ export function NewTask({
 			window.removeEventListener('keydown', escape)
 			opener?.focus()
 		}
-	}, [existingTaskId, taskSidebarOpen, toggleTaskSidebar])
+	}, [inTask, taskSidebarOpen, toggleTaskSidebar])
 	const hostAnchor = useRef<HTMLButtonElement>(null)
 
-	const requestedProject = projectId ? projects.data?.find((project) => project.id === projectId) : undefined
-	const requested: Target | null = requestedProject
-		? { kind: 'project', projectId: requestedProject.id, name: requestedProject.name }
+	const namedProject = (id: string): Target | null => {
+		const project = projects.data?.find((entry) => entry.id === id)
+		return project ? { kind: 'project', projectId: project.id, name: project.name } : null
+	}
+	const picked: Target | null =
+		form.target?.kind === 'project' ? namedProject(form.target.projectId) : (form.target ?? null)
+	const requested: Target | null = projectId
+		? namedProject(projectId)
 		: directory
 			? { kind: 'directory', path: directory }
 			: null
-	// A project named in the address is where the task goes, so wait for it rather than guess another.
-	const awaitingProject = Boolean(projectId) && projects.isPending
+	// A project named in the address, or saved with a draft, is where the task goes, so wait for it
+	// rather than guess another.
+	const awaitingProject = Boolean(projectId || form.target?.kind === 'project') && projects.isPending
+	// A draft runs where it was saved for; if that project is gone, it asks rather than defaulting.
 	const effectiveTarget =
-		target ??
+		picked ??
 		requested ??
-		(awaitingProject
+		(awaitingProject || mode === 'draft'
 			? null
 			: defaultTarget({ latest: recent[0], directory: directories[0], project: projects.data?.[0] }))
 	const targetProject =
@@ -176,7 +225,7 @@ export function NewTask({
 			: targetProject
 				? { kind: 'project', project: targetProject }
 				: null
-	const composerDirectory = existingTaskId
+	const composerDirectory = inTask
 		? sessionDirectory
 		: effectiveTarget?.kind === 'directory'
 			? effectiveTarget.path
@@ -187,7 +236,7 @@ export function NewTask({
 		agent: settings.agent,
 	})
 	const sourceInput = {
-		projectId: existingTaskId
+		projectId: inTask
 			? (existingProjectId ?? '')
 			: effectiveTarget?.kind === 'project'
 				? effectiveTarget.projectId
@@ -200,23 +249,26 @@ export function NewTask({
 	})
 	// A project repository with no checkout on this host is cloned by the host on first launch.
 	const copy = workingCopy({
-		inTask: Boolean(existingTaskId),
-		project: existingTaskId ? Boolean(existing.task?.workspace_id) : effectiveTarget?.kind === 'project',
+		inTask,
+		project: inTask ? Boolean(existing.task?.workspace_id) : effectiveTarget?.kind === 'project',
 		clonesFirst: missingRepositorySources(sources.data?.sources).length > 0,
 		hostName: host?.name ?? 'The host',
 		movedFrom: host && taskHost && host !== taskHost ? taskHost.name : null,
 	})
-	const targetName = existingTaskId ? (existing.task?.name ?? null) : targetLabel(effectiveTarget)
-	let blocker = launchBlocker({ host, needsTarget: !existingTaskId, target: effectiveTarget })
-	if (!hostsReady || awaitingProject) blocker = 'Loading…'
+	const targetName = inTask ? (existing.task?.name ?? null) : targetLabel(effectiveTarget)
+	let blocker =
+		mode === 'draft'
+			? draftStartBlocker({ hostId: form.hostId, target: form.target }, hosts, projects.data)
+			: launchBlocker({ host, needsTarget: !inTask, target: effectiveTarget })
+	if (opened?.error) blocker = opened.error
+	else if (!hostsReady || awaitingProject) blocker = 'Loading…'
 	else if (existingTaskId && !existing.isReady) blocker = 'Loading task…'
-	else if (existingTaskId && !existing.task) blocker = "This task doesn't exist"
-	else if (existingTaskId && existing.task?.workspace_id && existingWorkspace.isPending)
-		blocker = 'Loading workspace…'
-	else if (existingTaskId && existing.task?.workspace_id && existingWorkspace.isError)
+	else if (inTask && !existing.task) blocker = "This task doesn't exist"
+	else if (inTask && existing.task?.workspace_id && existingWorkspace.isPending) blocker = 'Loading workspace…'
+	else if (inTask && existing.task?.workspace_id && existingWorkspace.isError)
 		blocker = 'Could not load workspace. Refresh this task and try again.'
 	else if (
-		existingTaskId &&
+		inTask &&
 		!existing.task?.workspace_id &&
 		!latestExisting?.working_directory &&
 		!existing.task?.default_working_directory
@@ -224,32 +276,50 @@ export function NewTask({
 		blocker = 'Choose a task with a workspace or directory'
 	else if (host && moved && directoryTask && !sessionDirectory) blocker = `Choose a directory on ${host.name}`
 
+	// The composer as a draft would save it, and as Start launches it. An open draft keeps its own
+	// target by id, so it still saves while its project loads or after it's gone, and the settings
+	// picked for it, which Start then fits to what the host can run.
+	const snapshotTarget = mode === 'draft' ? form.target : effectiveTarget && draftTarget(effectiveTarget)
+	const snapshot = snapshotTarget
+		? toDraftLaunch({
+				text: form.text,
+				target: snapshotTarget,
+				hostId: host?.host.host_id ?? form.hostId ?? '',
+				settings: mode === 'draft' ? form.settings : settings,
+				taskSize: form.taskSize,
+				smallAutoAdvance: form.smallAutoAdvance,
+				attachments: attachments.metadata,
+			})
+		: null
+	const hasContent = Boolean(form.text.trim() || attachments.metadata.length > 0 || (ticket && !inTask))
+	// A snapshot from a newer version opens blank: saving would overwrite what it can't read.
+	const autosave = useDraftAutosave(
+		mode === 'draft' && existing.task && !opened?.error ? ids.taskId : null,
+		snapshot,
+		{ ticket, status: existing.task?.status ?? 'todo' },
+	)
+
 	const launch = async () => {
-		if (
-			(!draft.trim() && attachments.metadata.length === 0 && !ticket) ||
-			!host ||
-			blocker ||
-			launchLock.current ||
-			attachments.blocked
-		)
-			return
+		if (!hasContent || !host || blocker || launchLock.current || attachments.blocked) return
 		launchLock.current = true
 		setLaunching(true)
 		const hostId = host.host.host_id
 		try {
-			if (existingTaskId && existing.task) {
+			// The row holds exactly what launches, and no save is left to land on a started task.
+			if (mode === 'draft') await autosave.flush()
+			if (inTask && existingTaskId && existing.task) {
 				if (existingProjectId && hostId !== latestExisting?.host_id)
 					await ensureRepositorySources(api, existingProjectId, hostId)
 				await launchInTask(api, existing.task, {
 					sessionId: ids.sessionId,
 					eventId: ids.eventId,
-					text: withAttachments(draft, existing.task.slug ?? '', attachments.metadata),
+					text: withAttachments(form.text, existing.task.slug ?? '', attachments.metadata),
 					hostId,
 					workingDirectory: sessionDirectory ?? taskDirectory ?? '',
 					settings,
 				})
 				rememberSettings(settings)
-				setDraft('')
+				form.setText('')
 				void navigate({
 					to: '/tasks/$taskId',
 					params: { taskId: existingTaskId },
@@ -257,24 +327,90 @@ export function NewTask({
 				})
 				return
 			}
-			if (!workspace) throw new Error('project not loaded')
-			await startTask(api, {
-				ids,
-				target: workspace,
-				hostId,
-				draft,
-				ticket,
-				attachments: attachments.metadata,
-				settings,
-				workflow: taskSizeWorkflow(taskSize, smallAutoAdvance),
-				directImplementation: taskSize === 'small',
-				status,
-			})
-			rememberSettings(settings)
-			setDraft('')
+			if (!workspace || !snapshot) throw new Error('project not loaded')
+			// A draft starts in place, with what's on screen, and keeps its column; a new task takes
+			// the column it was created from.
+			await startTask(
+				api,
+				launchInput({
+					ids,
+					target: workspace,
+					snapshot: { ...snapshot, settings },
+					ticket,
+					status: mode === 'new' ? status : undefined,
+				}),
+			)
+			if (mode === 'new') {
+				rememberSettings(settings)
+				form.setText('')
+			}
 			void navigate({ to: '/tasks/$taskId', params: { taskId: ids.taskId } })
 		} catch (error) {
 			showToast(launchError(error))
+		} finally {
+			launchLock.current = false
+			setLaunching(false)
+		}
+	}
+
+	/** Creates the ticket in its column without starting anything; Start comes later, from the board or here. */
+	const saveAsDraft = async () => {
+		if (!hasContent || launchLock.current || attachments.blocked) return
+		if (!snapshot) {
+			showToast(
+				!hostsReady || awaitingProject
+					? 'Still loading. Save the draft again in a moment.'
+					: 'Choose a project or directory for the draft.',
+			)
+			return
+		}
+		launchLock.current = true
+		setLaunching(true)
+		try {
+			const saved = await api.tasks.saveDraft(
+				// From the plain new-task page a draft is queued work: Todo.
+				draftSaveInput({ taskId: ids.taskId, snapshot, ticket, status: status ?? 'todo' }),
+				{ context: { silent: true } },
+			)
+			if (saved.result !== 'saved') throw new Error('This draft id is already taken')
+			// Wait for the row, so the board shows the card and the draft opens straight away.
+			await confirmTx.tasks(saved.transactionId).catch(() => null)
+			form.setText('')
+			// From a column's +, back to the board; otherwise, to the draft.
+			void navigate(status ? { to: '/board' } : { to: '/', search: { task: ids.taskId } })
+		} catch {
+			showToast('Could not save the draft. Your prompt is still in the composer.')
+		} finally {
+			launchLock.current = false
+			setLaunching(false)
+		}
+	}
+
+	/**
+	 * Deletes an open draft at once, with Undo: a draft has no agent work to lose. It's archived,
+	 * after its last edits save, so Undo brings it back as it was, in its column.
+	 */
+	const deleteDraft = async () => {
+		if (launchLock.current) return
+		launchLock.current = true
+		setLaunching(true)
+		const archive = (archived: boolean) =>
+			api.tasks.archive({ taskId: ids.taskId, archived, cascadeToSessions: false })
+		try {
+			// Undo restores the row, so archive only once the row holds the latest edits.
+			if (!(await autosave.flush())) throw new Error('draft edits not saved')
+			await archive(true)
+			showToast('Draft deleted', {
+				label: 'Undo',
+				run: () =>
+					void archive(false).then(
+						() => showToast('Draft restored'),
+						() => showToast('Could not restore the draft. Try again.'),
+					),
+			})
+			void navigate({ to: '/board' })
+		} catch {
+			showToast('Could not delete the draft. Try again.')
 		} finally {
 			launchLock.current = false
 			setLaunching(false)
@@ -294,7 +430,7 @@ export function NewTask({
 					{sessionDirectory ? basename(sessionDirectory) : 'Choose a directory'}
 					<ChevronDown className="i sm" />
 				</button>
-			) : existingTaskId ? (
+			) : inTask ? (
 				<span>
 					<FolderGit2 className="i sm" strokeWidth={1.6} />
 					{latestExisting
@@ -331,17 +467,44 @@ export function NewTask({
 					{copy.label}
 				</span>
 			) : null}
-			{ticket && !existingTaskId ? <IssueChip ticket={ticket} onRemove={() => setTicket(null)} /> : null}
-			{existingTaskId ? null : <TaskSizePicker size={taskSize} onPick={setTaskSize} />}
+			{ticket && !inTask ? <IssueChip ticket={ticket} onRemove={() => form.setTicket(null)} /> : null}
+			{inTask ? null : (
+				<TaskSizePicker
+					size={form.taskSize}
+					onPick={form.setTaskSize}
+					smallAutoAdvance={form.smallAutoAdvance}
+					onSmallAutoAdvance={form.setSmallAutoAdvance}
+				/>
+			)}
 		</div>
 	)
 
 	const page = (
 		<main className="main" tabIndex={-1}>
 			<div className="titlebar">
-				<span className="sp" />
+				{mode === 'draft' && existing.task ? (
+					<>
+						<span className="title">{existing.task.name || 'Untitled draft'}</span>
+						<DraftMark />
+						<span className="crumb">· {TASK_STATUS_META[existing.task.status].label}</span>
+						<span className="sp" />
+						<span className="draft-saved">
+							{savedLabel(autosave.state, autosave.savedAt ?? toMs(existing.task.updated_at))}
+						</span>
+						<button
+							type="button"
+							className="btn ghost"
+							disabled={launching}
+							onClick={() => void deleteDraft()}
+						>
+							Delete draft
+						</button>
+					</>
+				) : (
+					<span className="sp" />
+				)}
 			</div>
-			{existingTaskId ? (
+			{inTask ? (
 				<div className="hero">
 					<h1>New session in {targetName ?? 'this task'}</h1>
 				</div>
@@ -351,30 +514,31 @@ export function NewTask({
 			<div className="col">
 				{hostsReady && hosts.length === 0 ? <NoHostsNotice /> : null}
 				<Composer
-					value={draft}
-					onChange={setDraft}
+					value={form.text}
+					onChange={form.setText}
 					onSubmit={() => void launch()}
+					onSaveDraft={mode === 'new' ? () => void saveAsDraft() : undefined}
 					placeholder={
 						blocker ??
-						(ticket && !existingTaskId
+						(ticket && !inTask
 							? `Add instructions for ${ticketLabel(ticket)}, or send to start`
 							: 'Ask the agent to do anything')
 					}
 					disabled={launching}
 					submitDisabled={Boolean(blocker)}
 					attachments={attachments}
-					submitLabel={existingTaskId ? 'Start session' : 'Start task'}
+					submitLabel={inTask ? 'Start session' : 'Start'}
 					settings={settings}
-					onSettingsChange={setSettings}
+					onSettingsChange={form.setSettings}
 					catalog={catalog}
 					usage={
 						host ? { hostName: host.name, limits: host.host.coding_agent_usage_limits?.claude } : undefined
 					}
 					autoFocus
 					commands={commands}
-					onAddIssue={existingTaskId ? undefined : () => setIssueDialog(true)}
-					hasIssue={Boolean(ticket) && !existingTaskId}
-					mentionScope={{ taskId: existingTaskId ?? null }}
+					onAddIssue={inTask ? undefined : () => setIssueDialog(true)}
+					hasIssue={Boolean(ticket) && !inTask}
+					mentionScope={{ taskId: inTask ? (existingTaskId ?? null) : null }}
 				>
 					{strip}
 				</Composer>
@@ -385,7 +549,7 @@ export function NewTask({
 				onClose={() => setMenu(null)}
 				host={host}
 				target={effectiveTarget}
-				onPick={setTarget}
+				onPick={(next) => form.setTarget(draftTarget(next))}
 			/>
 			<HostMenu
 				anchor={hostAnchor}
@@ -396,7 +560,7 @@ export function NewTask({
 				// project, and launched a worktree of the wrong repository instead of running in place.
 				// A directory chosen for a session in a task is only good on its host, so it goes.
 				onPick={(id) => {
-					setHostId(id)
+					form.setHostId(id)
 					if (id !== host?.host.host_id) setPickedDirectory(null)
 				}}
 			/>
@@ -415,13 +579,13 @@ export function NewTask({
 					projectRepository={githubFullName(
 						targetProject?.repositories.find((repository) => repository.default)?.repositoryIdentity,
 					)}
-					onAttach={setTicket}
+					onAttach={form.setTicket}
 					onClose={() => setIssueDialog(false)}
 				/>
 			) : null}
 		</main>
 	)
-	return existingTaskId ? (
+	return inTask && existingTaskId ? (
 		<div className="task-layout">
 			<WiredTaskNavigation taskId={existingTaskId} />
 			{taskSidebarOpen ? (
@@ -471,6 +635,13 @@ function resolveSessionDirectory(state: {
 	if (state.picked) return state.picked
 	if (!state.taskDirectory) return null
 	return state.directories.includes(state.taskDirectory) ? state.taskDirectory : null
+}
+
+/** The open draft's quiet save hint: saving, when it last saved, or that the last save didn't land. */
+function savedLabel(state: DraftAutosaveState, savedAt: number): string {
+	if (state === 'saving') return 'Saving…'
+	if (state === 'error') return 'Draft not saved'
+	return savedAt ? `Draft saved · ${formatAgo(savedAt)}` : ''
 }
 
 /** The greeting over the composer, naming the selected project or directory. */
@@ -551,12 +722,21 @@ function NoHostsNotice() {
 
 /**
  * How big the new task is, which picks its workflow; small tasks also choose whether the pull
- * request follows on its own. Both picks stick on this device.
+ * request follows on its own. A new task's picks stick on this device; a draft's stay with it.
  */
-function TaskSizePicker({ size, onPick }: { size: TaskSize; onPick: (size: TaskSize) => void }) {
+function TaskSizePicker({
+	size,
+	onPick,
+	smallAutoAdvance,
+	onSmallAutoAdvance,
+}: {
+	size: TaskSize
+	onPick: (size: TaskSize) => void
+	smallAutoAdvance: boolean
+	onSmallAutoAdvance: (on: boolean) => void
+}) {
 	const anchor = useRef<HTMLButtonElement>(null)
 	const [open, setOpen] = useState(false)
-	const [smallAutoAdvance, setSmallAutoAdvance] = useSmallTaskAutoAdvance()
 	const current = taskSizeOption(size)
 	const autoPr = size === 'small' && smallAutoAdvance
 	return (
@@ -595,7 +775,7 @@ function TaskSizePicker({ size, onPick }: { size: TaskSize; onPick: (size: TaskS
 							label="Auto-advance to pull request"
 							detail="Describe the pull request when implementation is done"
 							checked={smallAutoAdvance}
-							onSelect={() => setSmallAutoAdvance(!smallAutoAdvance)}
+							onSelect={() => onSmallAutoAdvance(!smallAutoAdvance)}
 						/>
 					</>
 				) : null}

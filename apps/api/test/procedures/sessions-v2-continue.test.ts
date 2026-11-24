@@ -269,6 +269,57 @@ describe('continueSessionV2Procedure', async () => {
 		})
 	})
 
+	test('origin from a board card is accepted and continues exactly like a typed message', async () => {
+		const byCard = await createSessionWithStatus('interrupted', userId, 'stopped by the user')
+		const typed = await createSessionWithStatus('interrupted', userId, 'stopped by the user')
+		const text = 'Continue where you left off.'
+
+		const cardResult = await call(
+			continueSessionV2Procedure,
+			{ sessionId: byCard, text, intent: 'send', origin: 'card_resume' },
+			{ context: makeContext() },
+		)
+		const typedResult = await call(
+			continueSessionV2Procedure,
+			{ sessionId: typed, text, intent: 'send' },
+			{ context: makeContext() },
+		)
+
+		expect(cardResult.kind).toBe('continued')
+		expect(typedResult.kind).toBe('continued')
+		const outcome = async (sessionId: string) => {
+			const [session] = await db
+				.select({
+					status: sessions.status,
+					prompt: sessions.prompt,
+					error_message: sessions.error_message,
+					num_events: sessions.num_events,
+				})
+				.from(sessions)
+				.where(eq(sessions.id, sessionId))
+			const events = await db
+				.select({ role: conversationEvents.role, content: conversationEvents.content })
+				.from(conversationEvents)
+				.where(eq(conversationEvents.session_id, sessionId))
+			return { session, events }
+		}
+		const card = await outcome(byCard)
+		expect(card).toEqual(await outcome(typed))
+		expect(card.session).toMatchObject({ status: 'resuming', prompt: text })
+		expect(card.events).toEqual([{ role: 'user', content: text }])
+
+		// Retry on a failed session goes through the same path.
+		const failed = await createSessionWithStatus('failed', userId, 'boom')
+		const retry = await call(
+			continueSessionV2Procedure,
+			{ sessionId: failed, text: 'Try again.', intent: 'send', origin: 'card_retry' },
+			{ context: makeContext() },
+		)
+		expect(retry.kind).toBe('continued')
+		const [retried] = await db.select().from(sessions).where(eq(sessions.id, failed))
+		expect(retried).toMatchObject({ status: 'resuming', prompt: 'Try again.' })
+	})
+
 	test("intent='send' x lost resumes immediately and clears the warning", async () => {
 		const sessionId = await createSessionWithStatus('lost', userId, 'session appears lost')
 		const result = await call(

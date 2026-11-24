@@ -45,6 +45,8 @@ const task: Task = {
 	external_task_id: null,
 	archived: false,
 	is_draft: false,
+	draft_launch: null,
+	drafted_at: null,
 	setup_status: null,
 	setup_details: null,
 	ticket_id: null,

@@ -42,6 +42,12 @@ describe('attentionSections', () => {
 		expect(sections.today.map((entry) => entry.task.id)).toEqual(['midnight'])
 	})
 
+	it('never lists a draft: it waits on its owner to Start it, not on anything running', () => {
+		const draft = { ...row('draft', [], NOON), task: { id: 'draft', is_draft: true } as TaskRow['task'] }
+		const started = row('started', [], NOON)
+		expect(attentionSections([draft, started], NOON)).toEqual({ running: [], today: [started] })
+	})
+
 	it('does not turn workspace failures into task overview rows', () => {
 		const stuck = { ...row('setup', ['waiting_for_workspace']), attention: 'failed' as const }
 		expect(attentionSections([stuck], NOON)).toEqual({ running: [], today: [] })

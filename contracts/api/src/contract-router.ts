@@ -135,6 +135,7 @@ import {
 	sendNowQueuedMessageContract,
 	updateQueuedMessageContract,
 } from './api/sessions/queued-messages'
+import { relaunchSessionContract } from './api/sessions/relaunch'
 import { updateSessionApiContract } from './api/sessions/update'
 import { updateSessionStatusContract } from './api/sessions/update-status'
 import { continueSessionV2Contract } from './api/sessions/v2/continue'
@@ -331,6 +332,7 @@ export const ApiContract = {
 		updateStatus: updateSessionStatusContract,
 		continue: continueSessionContract,
 		interrupt: interruptSessionContract,
+		relaunch: relaunchSessionContract,
 		list: listSessionsContract,
 		multiplayerPrompting: { update: updateMultiplayerPromptingContract },
 		events: {

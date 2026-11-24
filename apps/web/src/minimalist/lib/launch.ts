@@ -145,7 +145,8 @@ export type LoadedTarget =
 	| { kind: 'project'; project: { id: string; repositories: readonly ProjectRepository[] } }
 	| { kind: 'directory'; path: string }
 
-type NewTask = {
+/** What `startTask` launches; `launchInput` builds it from a composer snapshot. */
+export type StartTaskInput = {
 	ids: { taskId: string; sessionId: string; eventId: string }
 	target: LoadedTarget
 	hostId: string
@@ -157,7 +158,10 @@ type NewTask = {
 	workflow: ResolvedTaskWorkflow
 	/** A small task: labeled as implementation, and asked to offer describe-pr when it's done. */
 	directImplementation?: boolean
-	/** Board status, when started from a board column; tasks otherwise start in progress. */
+	/**
+	 * Board status, written in the create transaction: a board column's for a new task. Omitted, a
+	 * new task starts in progress and a promoted draft keeps its column.
+	 */
 	status?: TaskStatus
 }
 
@@ -170,7 +174,7 @@ type NewTask = {
  * offer the describe-pr skill as its next step, with or without auto-advance. Throws if the server refuses; title generation failing
  * keeps the working title.
  */
-export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
+export async function startTask(api: ApiClient, input: StartTaskInput): Promise<void> {
 	const { ids, target, ticket, attachments } = input
 	const name = ticket?.name ?? draftTitle(input.draft)
 	const slug = ticket?.slug ?? slugify(name, ids.taskId.slice(-4))
@@ -208,6 +212,7 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 		autoAdvanceWorktreeToImplementation: flags.autoAdvanceWorktreeToImplementation,
 		autoAdvanceImplementationToPr: flags.autoAdvanceImplementationToPr,
 		...ticketFields(ticket),
+		status: input.status,
 	}
 	if (target.kind === 'project') {
 		const branch = branchName(readGitPrefs().branchPrefix, slug)
@@ -239,9 +244,6 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 			{ context: { silent: true } },
 		)
 	}
-	// The task is already running; if setting the column's status fails it stays in progress and can be moved on the board.
-	if (input.status && input.status !== 'in_progress')
-		await api.tasks.update({ taskId: ids.taskId, status: input.status }).catch(() => null)
 	if (ticket) return
 	void api.ai
 		.generateTitle({ text })
@@ -259,7 +261,8 @@ export function launchError(error: unknown): string {
 		.join(' ')
 }
 
-function launchFailure(error: unknown): string | null {
+/** The reason a launch failed, when the server gives one you can act on. */
+export function launchFailure(error: unknown): string | null {
 	const known = getTaskConflictMessage(error) ?? getTicketLookupError(error)?.message
 	if (known) return known
 	const code = error instanceof ORPCError ? error.code : null

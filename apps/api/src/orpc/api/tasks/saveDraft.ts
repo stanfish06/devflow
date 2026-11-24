@@ -45,6 +45,9 @@ export const saveTaskDraftProcedure = effectOrpcBaseOrganizationRequired.tasks.s
 							auto_advance_plan_to_worktree: input.autoAdvancePlanToWorktree,
 							auto_advance_worktree_to_implementation: input.autoAdvanceWorktreeToImplementation,
 							auto_advance_implementation_to_pr: input.autoAdvanceImplementationToPr,
+							status: input.status,
+							draft_launch: input.draftLaunch,
+							drafted_at: updatedAt,
 							is_draft: true,
 						})
 						.onConflictDoUpdate({
@@ -66,6 +69,9 @@ export const saveTaskDraftProcedure = effectOrpcBaseOrganizationRequired.tasks.s
 								auto_advance_plan_to_worktree: input.autoAdvancePlanToWorktree,
 								auto_advance_worktree_to_implementation: input.autoAdvanceWorktreeToImplementation,
 								auto_advance_implementation_to_pr: input.autoAdvanceImplementationToPr,
+								status: input.status,
+								draft_launch: input.draftLaunch,
+								// drafted_at keeps the first save.
 								updated_at: updatedAt,
 							},
 							setWhere: and(
