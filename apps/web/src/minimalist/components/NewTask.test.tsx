@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,17 +6,29 @@ import { useSettingsStore } from '@/hooks/stores/settingsStore'
 
 import { NewTask } from './NewTask'
 
-const { useHosts, useProjects, useTask, useRecentDirectories, useSlashCommands, launchInTask, startTask, navigate } =
-	vi.hoisted(() => ({
-		startTask: vi.fn(),
-		useHosts: vi.fn(),
-		useProjects: vi.fn(),
-		useTask: vi.fn(),
-		useRecentDirectories: vi.fn(),
-		useSlashCommands: vi.fn(),
-		launchInTask: vi.fn(),
-		navigate: vi.fn(),
-	}))
+const {
+	useHosts,
+	useProjects,
+	useTask,
+	useRecentDirectories,
+	useSlashCommands,
+	launchInTask,
+	startTask,
+	navigate,
+	saveDraft,
+	confirmTasks,
+} = vi.hoisted(() => ({
+	startTask: vi.fn(),
+	useHosts: vi.fn(),
+	useProjects: vi.fn(),
+	useTask: vi.fn(),
+	useRecentDirectories: vi.fn(),
+	useSlashCommands: vi.fn(),
+	launchInTask: vi.fn(),
+	navigate: vi.fn(),
+	saveDraft: vi.fn(),
+	confirmTasks: vi.fn(),
+}))
 
 function hostView(id: string, online = true) {
 	return { host: { host_id: id, supported_models: null }, name: id, online }
@@ -24,9 +36,12 @@ function hostView(id: string, online = true) {
 
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({}) }))
 vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }))
+vi.mock('@/components/providers/SyncProvider', () => ({
+	useSyncInternal: () => ({ confirmTx: { tasks: confirmTasks } }),
+}))
 vi.mock('@/orpc/client', () => ({
 	useApi: () => ({
-		client: {},
+		client: { tasks: { saveDraft } },
 		queryClient: {
 			projectWorkspaces: { getStatus: { queryOptions: () => ({}) } },
 			projects: { v2: { repositorySources: { get: { queryOptions: () => ({}) } } } },
@@ -54,6 +69,7 @@ vi.mock('@/minimalist/components/Composer', () => ({
 		onChange,
 		children,
 		onSubmit,
+		onSaveDraft,
 		submitDisabled,
 		submitLabel,
 		placeholder,
@@ -62,6 +78,7 @@ vi.mock('@/minimalist/components/Composer', () => ({
 		onChange: (value: string) => void
 		children: ReactNode
 		onSubmit: () => void
+		onSaveDraft?: () => void
 		submitDisabled: boolean
 		submitLabel: string
 		placeholder: string
@@ -77,6 +94,11 @@ vi.mock('@/minimalist/components/Composer', () => ({
 			<button type="button" disabled={submitDisabled} onClick={onSubmit}>
 				{submitLabel}
 			</button>
+			{onSaveDraft ? (
+				<button type="button" onClick={onSaveDraft}>
+					Save as draft
+				</button>
+			) : null}
 		</div>
 	),
 }))
@@ -123,6 +145,12 @@ beforeEach(() => {
 	localStorage.clear()
 	launchInTask.mockResolvedValue(undefined)
 	startTask.mockResolvedValue(undefined)
+	saveDraft.mockImplementation(async (input: { id: string }) => ({
+		result: 'saved',
+		transactionId: '42',
+		task: { id: input.id },
+	}))
+	confirmTasks.mockResolvedValue(undefined)
 	useHosts.mockReturnValue({ hosts: [hostView('host')], isReady: true })
 	useProjects.mockReturnValue({ data: [{ id: 'project', name: 'devflow', repositories: [] }], isPending: false })
 	useTask.mockReturnValue({ task: null, sessions: [], isReady: true })
@@ -258,7 +286,7 @@ describe('picking where a new task runs', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Pick host' }))
 		expect(screen.getByText('In this directory')).toBeInTheDocument()
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Prep the weekly update' } })
-		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
 		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
 		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
 			target: { kind: 'directory', path: '/Users/me/repos/self' },
@@ -272,7 +300,7 @@ describe('picking how big a new task is', () => {
 		fireEvent.click(screen.getByRole('button', { name: "Task size: Don't know yet" }))
 		fireEvent.click(screen.getByRole('button', { name: /^Medium/ }))
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Add workflow picking' } })
-		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
 		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
 		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
 			workflow: { workflowType: 'outline_only', autoAdvance: true },
@@ -290,7 +318,7 @@ describe('picking how big a new task is', () => {
 		fireEvent.click(screen.getByRole('button', { name: /^Auto-advance to pull request/ }))
 		expect(screen.getByRole('button', { name: 'Task size: Small' })).toBeInTheDocument()
 		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Fix the typo' } })
-		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
 		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
 		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
 			workflow: { workflowType: 'oneshot', autoAdvance: false },
@@ -419,5 +447,161 @@ describe('a new session in a directory task', () => {
 		startSession()
 		await waitFor(() => expect(launchInTask).toHaveBeenCalledOnce())
 		expect(launchInTask.mock.calls[0]?.[2]).toMatchObject({ hostId: 'mac', workingDirectory: taskDirectory })
+	})
+})
+
+describe('saving a new task as a draft', () => {
+	it('creates the ticket in the column it came from, without starting it, and goes back to the board', async () => {
+		render(<NewTask directory="/code/my-app" status="backlog" />)
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Fix the flaky upload test' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }))
+		await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: '/board' }))
+		expect(saveDraft).toHaveBeenCalledOnce()
+		expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({
+			name: 'Fix the flaky upload test',
+			status: 'backlog',
+			defaultWorkingDirectory: '/code/my-app',
+			worktreeTiming: 'never',
+			workflowType: 'oneshot',
+			ticketProvider: null,
+			draftLaunch: {
+				version: 1,
+				prompt: 'Fix the flaky upload test',
+				attachments: [],
+				target: { kind: 'directory', path: '/code/my-app' },
+				hostId: 'host',
+				taskSize: 'unknown',
+				smallAutoAdvance: true,
+				settings: expect.objectContaining({ agent: 'claude' }),
+			},
+		})
+		expect(confirmTasks).toHaveBeenCalledWith('42')
+		expect(startTask).not.toHaveBeenCalled()
+		expect(screen.getByRole('textbox')).toHaveValue('')
+	})
+
+	it('files a draft from the plain new-task page in Todo and opens it', async () => {
+		render(<NewTask directory="/code/my-app" />)
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Write the release notes' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }))
+		await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+		const input = saveDraft.mock.calls[0]?.[0] as { id: string; status: string }
+		expect(input.status).toBe('todo')
+		await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: '/', search: { task: input.id } }))
+	})
+
+	it('saves for an offline host, which blocks only Start', async () => {
+		useHosts.mockReturnValue({ hosts: [hostView('host', false)], isReady: true })
+		render(<NewTask directory="/code/my-app" status="todo" />)
+		fireEvent.click(screen.getByRole('button', { name: 'Pick host' }))
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Later, on my laptop' } })
+		expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', 'host is offline')
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+		fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }))
+		await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+		expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({ draftLaunch: { hostId: 'host' } })
+	})
+
+	it('keeps the prompt when the draft cannot be saved', async () => {
+		saveDraft.mockResolvedValue({ result: 'draft-id-unavailable' })
+		render(<NewTask directory="/code/my-app" status="todo" />)
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep me' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Save as draft' }))
+		await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+		expect(navigate).not.toHaveBeenCalled()
+		expect(screen.getByRole('textbox')).toHaveValue('Keep me')
+	})
+})
+
+describe('an opened draft', () => {
+	const draftId = '019ab7c2-4f1e-7000-8000-00000000d1a7'
+	const draftTask = {
+		id: draftId,
+		name: 'Retry the webhook',
+		slug: 'retry-the-webhook-d1a7',
+		is_draft: true,
+		status: 'todo',
+		project_id: null,
+		workspace_id: null,
+		default_working_directory: '/code/app',
+		ticket_provider: null,
+		ticket_id: null,
+		ticket_url: null,
+		github_connection_id: null,
+		ticket_repository_id: null,
+		ticket_repository_full_name: null,
+		draft_launch: {
+			version: 1,
+			prompt: 'Retry the webhook with backoff',
+			attachments: [],
+			target: { kind: 'directory', path: '/code/app' },
+			hostId: 'host',
+			settings: { agent: 'claude', model: 'opus', effort: null, fastMode: false, permissionsMode: 'default' },
+			taskSize: 'medium',
+			smallAutoAdvance: true,
+		},
+	}
+
+	beforeEach(() => {
+		useTask.mockReturnValue({ task: draftTask, sessions: [], isReady: true })
+	})
+
+	it('reopens the composer with what it saved, and Start launches it in place, keeping its column', async () => {
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('What should we work on in app?')
+		expect(screen.getByRole('textbox')).toHaveValue('Retry the webhook with backoff')
+		expect(screen.getByRole('button', { name: 'Task size: Medium' })).toBeInTheDocument()
+		// A draft is already saved; there's nothing behind the caret.
+		expect(screen.queryByRole('button', { name: 'Save as draft' })).not.toBeInTheDocument()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Retry the webhook with jitter' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		const input = startTask.mock.calls[0]?.[1]
+		expect(input).toMatchObject({
+			ids: { taskId: draftId },
+			target: { kind: 'directory', path: '/code/app' },
+			hostId: 'host',
+			draft: 'Retry the webhook with jitter',
+			workflow: { workflowType: 'outline_only', autoAdvance: true },
+			directImplementation: false,
+		})
+		expect(input).not.toHaveProperty('status')
+		expect(launchInTask).not.toHaveBeenCalled()
+		expect(navigate).toHaveBeenCalledWith({ to: '/tasks/$taskId', params: { taskId: draftId } })
+	})
+
+	it('keeps its own size pick off this device', () => {
+		render(<NewTask existingTaskId={draftId} />)
+		fireEvent.click(screen.getByRole('button', { name: 'Task size: Medium' }))
+		fireEvent.click(screen.getByRole('button', { name: /^Large/ }))
+		expect(screen.getByRole('button', { name: 'Task size: Large' })).toBeInTheDocument()
+		cleanup()
+		useTask.mockReturnValue({ task: null, sessions: [], isReady: true })
+		render(<NewTask />)
+		expect(screen.getByRole('button', { name: "Task size: Don't know yet" })).toBeInTheDocument()
+	})
+
+	it('says so instead of guessing when a newer version saved it', () => {
+		useTask.mockReturnValue({
+			task: { ...draftTask, draft_launch: { ...draftTask.draft_launch, version: 2 } },
+			sessions: [],
+			isReady: true,
+		})
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('textbox')).toHaveAttribute(
+			'placeholder',
+			'This draft was saved by a newer version of devflow. Reload to open it.',
+		)
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+	})
+
+	it('opens a draft without a snapshot, from the standard launcher, as before', () => {
+		useTask.mockReturnValue({
+			task: { ...draftTask, draft_launch: null },
+			sessions: [],
+			isReady: true,
+		})
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('New session in Retry the webhook')
 	})
 })

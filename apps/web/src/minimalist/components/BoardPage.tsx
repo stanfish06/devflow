@@ -1,6 +1,7 @@
 // Linear-style views of tasks grouped by board status, copied from fractal-platform's
 // workspace/status-views.tsx: a board (drag a card to another column to change its status) and a list
-// with collapsible groups. Both open the task on click; + starts a new task in that status.
+// with collapsible groups. Both open the task on click (a draft opens in the composer); + starts a new
+// task in that status.
 import { TASK_STATUSES, type TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import {
 	DropdownMenu,
@@ -39,7 +40,7 @@ const PHASE_TITLES = new Map(KANBAN_COLUMN_DEFS.map((column) => [column.id, colu
 
 type ViewProps = {
 	rows: TaskRow[]
-	onOpen: (taskId: string) => void
+	onOpen: (row: TaskRow) => void
 	onCreate: (status: TaskStatus) => void
 }
 
@@ -105,6 +106,19 @@ function shortDate(ms: number): string {
 	return new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
+/** When the card last changed; a draft says it's one, since it hasn't started. */
+function Updated(props: { row: TaskRow }) {
+	const date = shortDate(props.row.lastActivity)
+	return props.row.task.is_draft ? (
+		<>
+			<span className="inline-block size-2 rounded-full border border-dashed border-muted-foreground align-middle" />{' '}
+			Draft · {date}
+		</>
+	) : (
+		<>Updated {date}</>
+	)
+}
+
 function Chip(props: { children: string }) {
 	return (
 		<span className="max-w-full truncate rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
@@ -119,9 +133,11 @@ export function BoardPage({ layout, onLayout }: { layout: BoardLayout; onLayout:
 	const { recent: rows, isReady } = useTaskTree(false, scope)
 	const navigate = useNavigate()
 	const { closeSidebarOnNarrow } = useUi()
-	const onOpen = (taskId: string) => {
+	const onOpen = ({ task }: TaskRow) => {
 		closeSidebarOnNarrow()
-		void navigate({ to: '/tasks/$taskId', params: { taskId } })
+		// A draft has no thread yet: it opens in the composer it was written in, to edit or Start.
+		if (task.is_draft) void navigate({ to: '/', search: { task: task.id } })
+		else void navigate({ to: '/tasks/$taskId', params: { taskId: task.id } })
 	}
 	const onCreate = (status: TaskStatus) => void navigate({ to: '/', search: { status } })
 	return (
@@ -208,7 +224,7 @@ function BoardView(props: ViewProps) {
 	)
 }
 
-function Card(props: { row: TaskRow; onOpen: (taskId: string) => void }) {
+function Card(props: { row: TaskRow; onOpen: (row: TaskRow) => void }) {
 	const { task } = props.row
 	return (
 		// biome-ignore lint/a11y/noStaticElementInteractions: drag source; the buttons inside are the interactive parts
@@ -222,14 +238,14 @@ function Card(props: { row: TaskRow; onOpen: (taskId: string) => void }) {
 			className="flex w-full items-start gap-2 rounded-lg border bg-card p-3 hover:border-foreground/30"
 		>
 			<StatusMenu taskId={task.id} taskName={task.name} status={task.status} className="-m-0.5 mt-0" />
-			<button type="button" onClick={() => props.onOpen(task.id)} className="min-w-0 flex-1 text-left">
+			<button type="button" onClick={() => props.onOpen(props.row)} className="min-w-0 flex-1 text-left">
 				<span className="line-clamp-2 text-[0.8125rem] font-medium">{task.name}</span>
 				<span className="mt-2 flex flex-wrap gap-1.5">
 					<Chip>{phaseTitle(props.row)}</Chip>
 					<Chip>{props.row.projectName}</Chip>
 				</span>
 				<span className="mt-2 block text-[0.6875rem] text-muted-foreground">
-					Updated {shortDate(props.row.lastActivity)}
+					<Updated row={props.row} />
 				</span>
 			</button>
 		</div>
@@ -285,7 +301,7 @@ function StatusListView(props: ViewProps) {
 								<StatusMenu taskId={row.task.id} taskName={row.task.name} status={row.task.status} />
 								<button
 									type="button"
-									onClick={() => props.onOpen(row.task.id)}
+									onClick={() => props.onOpen(row)}
 									className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
 								>
 									<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
@@ -293,7 +309,8 @@ function StatusListView(props: ViewProps) {
 										<Chip>{phaseTitle(row)}</Chip>
 										<Chip>{row.projectName}</Chip>
 									</span>
-									<span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
+									<span className="min-w-14 shrink-0 text-right text-xs text-muted-foreground">
+										{row.task.is_draft ? 'Draft · ' : ''}
 										{shortDate(row.lastActivity)}
 									</span>
 								</button>

@@ -362,6 +362,35 @@ describe('api/tasks/launchDraft', async () => {
 		expect(rows.taskRows).toEqual([expect.objectContaining({ is_draft: false, status: stored })])
 	})
 
+	test('promoting a board draft spends its snapshot and keeps the date it was drafted', async () => {
+		const request = input()
+		const draftedAt = 1_700_000_000_000n
+		await db.insert(tasks).values({
+			id: request.draftId,
+			organization_id: organizationId,
+			resource_owner_user_id: ownerUserId,
+			created_by: ownerUserId,
+			name: 'Saved board draft',
+			slug: request.slug,
+			is_draft: true,
+			status: 'backlog',
+			draft_launch: { version: 1, prompt: 'Saved prompt' },
+			drafted_at: draftedAt,
+			created_at: draftedAt,
+		})
+		expect((await countLaunchRows(request.draftId)).sessionRows).toEqual([])
+
+		const result = await call(launchTaskDraftProcedure, request, { context: context() })
+		const rows = await countLaunchRows(request.draftId)
+
+		expect(result.outcome).toBe('promoted')
+		expect(rows.taskRows).toEqual([
+			expect.objectContaining({ is_draft: false, status: 'backlog', draft_launch: null, drafted_at: draftedAt }),
+		])
+		// The launch resets the row's own timestamps, but not the draft's date.
+		expect(rows.taskRows[0]?.created_at).not.toBe(draftedAt)
+	})
+
 	test('replays the canonical launch when the client loses a response and proposes another first session', async () => {
 		const request = input()
 		request.firstSession.title = ''

@@ -672,6 +672,22 @@
 	.send.off {
 		opacity: 0.25;
 	}
+	/* Start, with more ways to send behind the caret: one pill split by a hairline. */
+	.split-send {
+		display: inline-flex;
+		flex: none;
+	}
+	.split-send .btn:first-child {
+		border-radius: 8px 0 0 8px;
+	}
+	.split-send .btn.caret {
+		border-radius: 0 8px 8px 0;
+		padding: 0 6px;
+		border-left: 1px solid color-mix(in srgb, var(--accent-fg) 22%, transparent);
+	}
+	.split-send .btn.caret .i {
+		color: inherit;
+	}
 
 	/* transcript */
 	.turn-user {

@@ -150,6 +150,8 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				auto_advance_worktree_to_implementation: input.autoAdvanceWorktreeToImplementation,
 				auto_advance_implementation_to_pr: input.autoAdvanceImplementationToPr,
 				created_with_experiment_flags: input.createdWithExperimentFlags ?? null,
+				// A promoted draft's snapshot is spent; drafted_at stays to date the draft.
+				draft_launch: null,
 			}
 
 			const [existingTask] = yield* transaction.query(

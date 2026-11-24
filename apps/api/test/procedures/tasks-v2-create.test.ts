@@ -22,6 +22,7 @@ import {
 	type GenerateSessionTitleInput,
 	SessionTitleGeneration,
 } from '../../src/effects/services/session-title-generation/session-title-generation.service'
+import { saveTaskDraftProcedure as liveSaveTaskDraft } from '../../src/orpc/api/tasks/saveDraft'
 import { createTaskV2Procedure as liveCreateTaskV2 } from '../../src/orpc/api/tasks/v2/create.effect'
 import { createMockApiContext, createMockS3Service } from '../mocks'
 import { bindProcedureToRuntime, createRuntimeWithTestPostgresLayer } from '../utils/effect-procedure-test-runtime'
@@ -45,6 +46,7 @@ describe('tasks v2 create', () => {
 	let cleanup: (() => Promise<void>) | undefined
 	let runtime: ReturnType<typeof createRuntimeWithTestPostgresLayer> | undefined
 	let createTaskV2: typeof liveCreateTaskV2
+	let saveTaskDraft: typeof liveSaveTaskDraft
 	const scheduledTitleGenerations: GenerateSessionTitleInput[] = []
 
 	const services = {
@@ -72,6 +74,7 @@ describe('tasks v2 create', () => {
 			}),
 		})
 		createTaskV2 = bindProcedureToRuntime(liveCreateTaskV2, runtime)
+		saveTaskDraft = bindProcedureToRuntime(liveSaveTaskDraft, runtime)
 	}, 60_000)
 
 	afterAll(async () => {
@@ -477,6 +480,74 @@ describe('tasks v2 create', () => {
 
 		const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
 		expect(task).toMatchObject({ is_draft: false, status: stored })
+	})
+
+	test('starts a saved board draft in place: keeps its column and date, spends its snapshot', async () => {
+		const actor = await setupActor()
+		const taskId = uuidv7()
+		const saved = await call(
+			saveTaskDraft,
+			{
+				id: taskId,
+				name: 'Board draft',
+				slug: null,
+				defaultWorkingDirectory: null,
+				ticketId: null,
+				ticketDescription: null,
+				ticketProvider: null,
+				githubConnectionId: null,
+				ticketRepositoryId: null,
+				ticketRepositoryFullName: null,
+				workflowType: 'oneshot',
+				worktreeTiming: 'now',
+				autoAdvanceQuestionsToResearch: false,
+				autoAdvanceResearchToDesign: false,
+				autoAdvancePlanToWorktree: false,
+				autoAdvanceWorktreeToImplementation: false,
+				autoAdvanceImplementationToPr: false,
+				status: 'todo',
+				draftLaunch: {
+					version: 1,
+					prompt: 'Add retries',
+					attachments: [],
+					target: { kind: 'project', projectId: actor.projectId },
+					hostId: actor.hostId,
+					settings: {
+						agent: 'claude',
+						model: 'opus',
+						effort: null,
+						fastMode: false,
+						permissionsMode: 'default',
+					},
+					taskSize: 'unknown',
+					smallAutoAdvance: true,
+				},
+			},
+			{ context: actor.context },
+		)
+		if (saved.result !== 'saved') throw new Error('Expected the draft to save')
+		const draftedAt = saved.task.drafted_at
+		expect(draftedAt).not.toBeNull()
+		// Nothing for the daemon to launch until Start.
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, taskId))).toEqual([])
+
+		await call(
+			createTaskV2,
+			{
+				taskId,
+				workspaceId: taskId,
+				projectId: actor.projectId,
+				name: 'Board draft',
+				slug: 'board-draft',
+				repositories: [repository],
+				firstSession: { ...firstSession, hostId: actor.hostId },
+			},
+			{ context: actor.context },
+		)
+
+		const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+		expect(task).toMatchObject({ is_draft: false, status: 'todo', draft_launch: null, drafted_at: draftedAt })
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, taskId))).toHaveLength(1)
 	})
 
 	test('keeps the draft unchanged when project workspace creation fails', async () => {

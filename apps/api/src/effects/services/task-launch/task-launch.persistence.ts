@@ -53,6 +53,8 @@ function taskValues(input: LaunchTaskDraftInput, createdAt: bigint) {
 		auto_advance_worktree_to_implementation: input.autoAdvanceWorktreeToImplementation,
 		auto_advance_implementation_to_pr: input.autoAdvanceImplementationToPr,
 		created_with_experiment_flags: input.createdWithExperimentFlags ?? null,
+		// A promoted draft's snapshot is spent. drafted_at isn't reset with the timestamps: it dates the draft.
+		draft_launch: null,
 	}
 }
 

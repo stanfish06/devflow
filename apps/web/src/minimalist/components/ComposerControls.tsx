@@ -1,5 +1,5 @@
-import { File, Gauge, Paperclip, Plus, Ticket, Users, X } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { ChevronDown, File, Gauge, Paperclip, Plus, Ticket, Users, X } from 'lucide-react'
+import { type ReactNode, useRef, useState } from 'react'
 
 import { useConnectGitHub } from '@/hooks/useConnectGitHub'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from '@/minimalist/components/Menu'
@@ -203,5 +203,77 @@ export function ContextMeter({
 				) : null}
 			</Menu>
 		</>
+	)
+}
+
+export type SplitSendItem = {
+	label: string
+	detail?: string
+	kbd?: string
+	icon?: ReactNode
+	disabled?: boolean
+	onSelect: () => void
+}
+
+/**
+ * A send button with more ways to send behind its caret, such as Start with Save as draft. The
+ * primary half does what Enter does; the caret's menu names every option with its shortcut.
+ */
+export function SplitSend({
+	label,
+	title,
+	disabled,
+	onPrimary,
+	items,
+}: {
+	label: string
+	/** Why the primary action is off, or what it does. */
+	title?: string
+	disabled: boolean
+	onPrimary: () => void
+	items: SplitSendItem[]
+}) {
+	const anchor = useRef<HTMLButtonElement>(null)
+	const [open, setOpen] = useState(false)
+	return (
+		<span className="split-send">
+			<button
+				type="button"
+				className="btn primary"
+				title={title ?? label}
+				disabled={disabled}
+				onClick={onPrimary}
+			>
+				{label}
+			</button>
+			<button
+				type="button"
+				ref={anchor}
+				className="btn primary caret"
+				title={`More ways to ${label.toLowerCase()}`}
+				aria-label={`More ways to ${label.toLowerCase()}`}
+				aria-haspopup="dialog"
+				disabled={items.every((item) => item.disabled)}
+				onClick={() => setOpen(true)}
+			>
+				<ChevronDown className="i sm" />
+			</button>
+			<Menu anchor={anchor} open={open} onClose={() => setOpen(false)} placement="above-end" width={250}>
+				{items.map((item) => (
+					<MenuItem
+						key={item.label}
+						icon={item.icon}
+						label={item.label}
+						detail={item.detail}
+						kbd={item.kbd}
+						disabled={item.disabled}
+						onSelect={() => {
+							setOpen(false)
+							item.onSelect()
+						}}
+					/>
+				))}
+			</Menu>
+		</span>
 	)
 }

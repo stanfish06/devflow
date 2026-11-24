@@ -1,3 +1,4 @@
+import { DraftLaunchSchema } from '@devflow/api-contract/api/tasks/draft-launch'
 import type { OnlineHost } from '@devflow/db/tables/online-hosts'
 import type { Session } from '@devflow/db/tables/sessions'
 import type { Task } from '@devflow/db/tables/tasks'
@@ -5,7 +6,7 @@ import type { CodingAgent } from '@devflow/schemas/coding-agent'
 import type { SlashCommand as SharedSlashCommand } from '@devflow/ui/components/rich-text-editor'
 import { DEVFLOW_SLASH_COMMANDS } from '@devflow/ui/constants/devflow-skills'
 import { RPI_SLASH_COMMANDS } from '@devflow/ui/constants/rpi-skills'
-import { and, eq, useLiveQuery } from '@tanstack/react-db'
+import { and, eq, isNull, not, or, useLiveQuery } from '@tanstack/react-db'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { useLocation, useParams, useSearch } from '@tanstack/react-router'
 import { useMemo } from 'react'
@@ -70,13 +71,19 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 	const { tasksCollection: tasks, sessionsCollection: sessions } = useSync()
 	const { user } = useAuth()
 	const projects = useProjects()
-	// Drafts wait in the standard launcher, as they do in its sidebar; archived ones still list.
+	// Board drafts, saved from this composer with a snapshot to start from, list with every task.
+	// Drafts without one wait in the standard launcher, as they do in its sidebar; archived ones still list.
 	const tasksQuery = useLiveQuery(
 		(q) =>
 			q
 				.from({ tasks })
 				.where(({ tasks }) =>
-					archived ? eq(tasks.archived, true) : and(eq(tasks.archived, false), eq(tasks.is_draft, false)),
+					archived
+						? eq(tasks.archived, true)
+						: and(
+								eq(tasks.archived, false),
+								or(eq(tasks.is_draft, false), not(isNull(tasks.draft_launch))),
+							),
 				),
 		[tasks, archived],
 	)
@@ -152,10 +159,17 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 			.filter((session) => archived || !session.archived)
 			.sort((a, b) => sessionActivity(b) - sessionActivity(a))
 		const latest = taskSessions[0] ?? null
-		const projectId = task.workspace_id ? (projectByTask.get(task.id) ?? null) : task.project_id
+		// A draft has no workspace yet; it sits with the project or directory it will start in.
+		const planned = task.is_draft ? draftTarget(task.draft_launch) : null
+		const projectId = task.workspace_id
+			? (projectByTask.get(task.id) ?? null)
+			: (task.project_id ?? (planned?.kind === 'project' ? planned.projectId : null))
 		// A directory task in worktrees belongs with the directory it was started from.
 		const directory =
-			task.workspace_spec?.directory || task.default_working_directory || latest?.working_directory || ''
+			task.workspace_spec?.directory ||
+			task.default_working_directory ||
+			latest?.working_directory ||
+			(planned?.kind === 'directory' ? planned.path : '')
 		const key =
 			projectId ??
 			(task.workspace_id ? `workspace:${task.workspace_id}` : directory ? `dir:${repoName(directory)}` : 'other')
@@ -224,6 +238,12 @@ function projectDetail(project: {
 	]
 		.filter(Boolean)
 		.join('\n')
+}
+
+/** Where a draft will start, read leniently from its snapshot; null when it can't be read. */
+function draftTarget(snapshot: unknown) {
+	const target = typeof snapshot === 'object' && snapshot ? (snapshot as { target?: unknown }).target : undefined
+	return DraftLaunchSchema.shape.target.safeParse(target).data ?? null
 }
 
 /** A task whose workspace setup failed isn't running: it waits on a retry. */

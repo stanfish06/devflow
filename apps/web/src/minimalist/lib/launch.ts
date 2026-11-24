@@ -145,7 +145,8 @@ export type LoadedTarget =
 	| { kind: 'project'; project: { id: string; repositories: readonly ProjectRepository[] } }
 	| { kind: 'directory'; path: string }
 
-type NewTask = {
+/** What `startTask` launches; `launchInput` builds it from a composer snapshot. */
+export type StartTaskInput = {
 	ids: { taskId: string; sessionId: string; eventId: string }
 	target: LoadedTarget
 	hostId: string
@@ -173,7 +174,7 @@ type NewTask = {
  * offer the describe-pr skill as its next step, with or without auto-advance. Throws if the server refuses; title generation failing
  * keeps the working title.
  */
-export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
+export async function startTask(api: ApiClient, input: StartTaskInput): Promise<void> {
 	const { ids, target, ticket, attachments } = input
 	const name = ticket?.name ?? draftTitle(input.draft)
 	const slug = ticket?.slug ?? slugify(name, ids.taskId.slice(-4))

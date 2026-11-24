@@ -34,6 +34,8 @@ function makeTask(id: string, name: string): Task {
 		updated_at: BigInt(Date.now()),
 		archived: false,
 		is_draft: false,
+		draft_launch: null,
+		drafted_at: null,
 		setup_status: null,
 		workflow_type: 'rpi',
 		worktree_timing: 'later',
