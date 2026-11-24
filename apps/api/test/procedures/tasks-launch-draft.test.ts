@@ -92,7 +92,7 @@ describe('api/tasks/launchDraft', async () => {
 			slug: `durable-launch-${draftId}`,
 			defaultWorkingDirectory: '/repo/syncopate',
 			taskContent: 'Launch this task',
-			workflowType: 'freeform' as const,
+			workflowType: 'oneshot' as const,
 			worktreeTiming: 'never' as const,
 			autoAdvanceQuestionsToResearch: false,
 			autoAdvanceResearchToDesign: false,

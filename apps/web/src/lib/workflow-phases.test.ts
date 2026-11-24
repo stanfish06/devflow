@@ -48,16 +48,9 @@ describe('getWorkflowPhases', () => {
 		expect(phases.map((phase) => phase.name)).toContain('rpi:design-tdd')
 	})
 
-	test('oneshot returns implement and PR phases', () => {
-		const phases = getWorkflowPhases('oneshot', null)
-
-		expect(phases.map((phase) => phase.name)).toEqual(['rpi:implementation', 'rpi:describe-pr'])
-	})
-
-	test('oneshot timing=later does not add a deferred worktree phase', () => {
-		const phases = getWorkflowPhases('oneshot', 'later')
-
-		expect(phases.map((phase) => phase.name)).toEqual(['rpi:implementation', 'rpi:describe-pr'])
+	test('oneshot has no phases, with or without a deferred worktree', () => {
+		expect(getWorkflowPhases('oneshot', null)).toEqual([])
+		expect(getWorkflowPhases('oneshot', 'later')).toEqual([])
 	})
 
 	test('timing=now prepends synthetic worktree phase', () => {
@@ -96,7 +89,7 @@ describe('getWorkflowPhases', () => {
 	})
 
 	test.each(['now', 'later', 'never'] as const)('freeform has no graph phases for timing=%s', (timing) => {
-		expect(getWorkflowPhases('freeform', timing)).toEqual([])
+		expect(getWorkflowPhases('oneshot', timing)).toEqual([])
 	})
 
 	test('null workflowType returns empty array', () => {

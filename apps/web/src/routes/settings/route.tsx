@@ -6,7 +6,6 @@ import { HotkeyScopeBoundary } from '@/components/HotkeyScopeBoundary'
 import {
 	isSettingsSection,
 	getSettingsSectionTitle,
-	shouldSuppressSettingsSectionTitle,
 } from '@/components/settings/settings-sections'
 import { SettingsSectionNav } from '@/components/settings/SettingsSectionNav'
 import { HOTKEY_SCOPES } from '@/hooks/hotkeys/scopes'
@@ -56,7 +55,6 @@ function StandardSettingsLayout() {
 
 	// Page title mirrors the active section's breadcrumb label.
 	const section = location.pathname.split('/').filter(Boolean)[1]
-	const suppressTitle = shouldSuppressSettingsSectionTitle(section)
 	let title = 'Settings'
 	if (creatingProject) title = 'New project'
 	else if (isSettingsSection(section)) title = getSettingsSectionTitle(section)
@@ -68,7 +66,7 @@ function StandardSettingsLayout() {
 	let maxWidthClass = 'max-w-3xl'
 	if (creatingProject) maxWidthClass = 'w-full max-w-6xl'
 	else if (section === 'general') maxWidthClass = 'max-w-none'
-	else if (section === 'projects' || section === 'access-requests' || section === 'users') maxWidthClass = 'max-w-5xl'
+	else if (section === 'projects') maxWidthClass = 'max-w-5xl'
 
 	return (
 		<HotkeyScopeBoundary
@@ -79,8 +77,7 @@ function StandardSettingsLayout() {
 				<AppShell resizableSidebar={false} sidebar={<SettingsSectionNav />}>
 					<div className="h-full overflow-y-auto">
 						<div className={cn('px-8 pt-6 pb-12', maxWidthClass)}>
-							{!suppressTitle ? (
-								<h1
+							<h1
 									className={cn(
 										'font-mono text-lg font-semibold tracking-tight text-foreground',
 										creatingProject ? 'mb-2' : 'mb-6',
@@ -88,7 +85,6 @@ function StandardSettingsLayout() {
 								>
 									{title}
 								</h1>
-							) : null}
 							<Outlet />
 						</div>
 					</div>

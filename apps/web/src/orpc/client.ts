@@ -4,13 +4,11 @@ import type { ContractRouterClient } from '@orpc/contract'
 import type { JsonifiedClient } from '@orpc/openapi-client'
 import { OpenAPILink } from '@orpc/openapi-client/fetch'
 import { createTanstackQueryUtils } from '@orpc/tanstack-query'
-import { useLocation, useNavigate } from '@tanstack/react-router'
 import { useMemo } from 'react'
 import { toast } from 'sonner'
 
 import { useAuth } from '@/integrations/devflow/local-authkit'
 import { logger } from '@/lib/logger'
-import type { NavigateFn } from '@/lib/settings-navigation'
 
 /** Type alias for the devflow API client */
 export type ApiClient = JsonifiedClient<ContractRouterClient<typeof ApiContract>>
@@ -34,15 +32,9 @@ interface ApiErrorOptions {
 	context?: { silent?: boolean }
 }
 
-interface ApiErrorDependencies {
-	navigate: NavigateFn
-	isOnOrgPages: boolean
-}
-
 export function handleApiError(
 	error: ORPCError<string, unknown>,
 	options: ApiErrorOptions | undefined,
-	{ navigate, isOnOrgPages }: ApiErrorDependencies,
 ): void {
 	if (options?.context?.silent) return
 
@@ -52,13 +44,6 @@ export function handleApiError(
 	switch (error.code) {
 		case 'UNAUTHORIZED':
 			// A 401 also answers requests sent before the local session loads; the auth provider retries.
-			break
-
-		case 'ORGANIZATION_REQUIRED':
-			if (!isOnOrgPages) {
-				toast.info('Please select an organization to continue')
-				navigate({ to: '/auth/organizations/select' })
-			}
 			break
 
 		case 'TASK_SLUG_CONFLICT':
@@ -98,15 +83,13 @@ interface ApiInterceptorOptions extends ApiErrorOptions {
 	next: () => Promise<unknown>
 }
 
-export function createApiErrorInterceptor(
-	dependencies: ApiErrorDependencies,
-): (options: ApiInterceptorOptions) => Promise<unknown> {
+export function createApiErrorInterceptor(): (options: ApiInterceptorOptions) => Promise<unknown> {
 	return async (options) => {
 		try {
 			return await options.next()
 		} catch (error) {
 			if (options.context?.silent || !(error instanceof ORPCError) || !error.defined) throw error
-			handleApiError(error, options, dependencies)
+			handleApiError(error, options)
 			throw error
 		}
 	}
@@ -134,9 +117,6 @@ export function createApiErrorInterceptor(
  */
 export function useApi() {
 	const { getAccessToken, user, organizationId } = useAuth()
-	const navigate = useNavigate()
-	const pathname = useLocation({ select: (loc) => loc.pathname })
-	const isOnOrgPages = pathname.includes('auth/organizations')
 
 	const { client, queryClient } = useMemo(() => {
 		const link = new OpenAPILink(ApiContract, {
@@ -146,7 +126,7 @@ export function useApi() {
 				const accessToken = await getAccessToken()
 				return accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
 			},
-			interceptors: [createApiErrorInterceptor({ navigate, isOnOrgPages })],
+			interceptors: [createApiErrorInterceptor()],
 		})
 
 		// Raw client for direct API calls
@@ -156,7 +136,7 @@ export function useApi() {
 		const queryClient = createTanstackQueryUtils(client)
 
 		return { client, queryClient }
-	}, [getAccessToken, user, user?.id, organizationId, isOnOrgPages])
+	}, [getAccessToken, user, user?.id, organizationId])
 
 	const authScope = { userId: user?.id ?? null, organizationId: organizationId ?? null }
 

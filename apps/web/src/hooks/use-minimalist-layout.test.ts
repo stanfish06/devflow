@@ -19,7 +19,6 @@ describe('minimalist route boundary', () => {
 	})
 	it.each([
 		'/auth/signin',
-		'/auth/organizations/select',
 		'/shared/artifacts/key',
 		'/sessions',
 		'/tasks/new',

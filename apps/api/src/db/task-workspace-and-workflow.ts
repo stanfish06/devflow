@@ -52,7 +52,7 @@ export function buildTaskWorkspaceAndWorkflowValues(input: TaskWorkspaceAndWorkf
 			workspace_state: input.workspaceState ?? null,
 			workspace_spec: workspaceSpec ?? null,
 			setup_status: input.setupStatus ?? null,
-			workflow_type: input.workflowType ?? ('freeform' as const),
+			workflow_type: input.workflowType ?? ('oneshot' as const),
 			worktree_timing: workspaceSpec ? ('now' as const) : (input.worktreeTiming ?? ('later' as const)),
 			auto_advance_questions_to_research: input.autoAdvanceQuestionsToResearch ?? false,
 			auto_advance_research_to_design: input.autoAdvanceResearchToDesign ?? false,

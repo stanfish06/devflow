@@ -9,32 +9,16 @@ import { listArtifactsContract } from './api/artifacts/list'
 import { updateArtifactDeletionStatusContract } from './api/artifacts/update-deletion-status'
 import { upsertApiArtifactContract } from './api/artifacts/upsert'
 import { getArtifactVersionContract, listArtifactVersionsContract } from './api/artifacts/versions'
-import { archiveAccessRequestContract } from './api/auth/admin/access-requests/archive'
-import { listAccessRequestsContract } from './api/auth/admin/access-requests/list'
-import { unreadCountContract } from './api/auth/admin/access-requests/unread-count'
-import { createAdminInvitationContract } from './api/auth/admin/invitations-create'
-import { listAdminInvitationsContract } from './api/auth/admin/invitations-list'
-import { revokeAdminInvitationContract } from './api/auth/admin/invitations-revoke'
-import { addDomainContract } from './api/auth/admin/organizations-add-domain'
-import { generatePortalLinkContract } from './api/auth/admin/organizations-generate-portal-link'
-import { removeDomainContract } from './api/auth/admin/organizations-remove-domain'
 import { getOrgSettingsContract } from './api/auth/admin/organizations-settings-get'
 import { setOrgSettingsContract } from './api/auth/admin/organizations-settings-set'
-import { deactivateAdminUserContract } from './api/auth/admin/users-deactivate'
 import { listAdminUsersContract } from './api/auth/admin/users-list'
-import { reactivateAdminUserContract } from './api/auth/admin/users-reactivate'
-import { removeAdminUserContract } from './api/auth/admin/users-remove'
 import { setAdminUserMetricsAdvancedContract } from './api/auth/admin/users-set-metrics-advanced'
-import { updateAdminUserRoleContract } from './api/auth/admin/users-update-role'
 import { createLaunchTokenContract } from './api/auth/daemon/launch-token-create'
 import { createDaemonTokenProcedureContract } from './api/auth/daemon/token-create'
 import { exchangeDaemonTokenContract } from './api/auth/daemon/token-exchange'
 import { getCurrentOrganizationContract } from './api/auth/organizations/get-current'
 import { refreshTokenContract } from './api/auth/token-refresh'
 import { getUserInfoContract } from './api/auth/user/info'
-import { acceptUserInvitationContract } from './api/auth/user/invitations-accept'
-import { listUserInvitationsContract } from './api/auth/user/invitations-list'
-import { createOrganizationContract } from './api/auth/user/organizations-create'
 import { listUserOrganizationsContract } from './api/auth/user/organizations-list'
 import {
 	createPersonalAccessTokenContract,
@@ -130,7 +114,6 @@ import {
 	listProviderLoginsContract,
 	submitProviderLoginCodeContract,
 } from './api/provider-login'
-import { createAccessRequestContract } from './api/public/access-requests/create'
 import { sharedArtifactCommentAuthorsContract } from './api/public/artifacts/comment-authors'
 import { createPublicArtifactCommentContract } from './api/public/artifacts/create-comment'
 import { sharedArtifactDownloadUrlContract } from './api/public/artifacts/download-url'
@@ -249,9 +232,6 @@ import { updateDaemonWorkspaceSetupContract } from './daemon/workspace-setup/upd
 // Assemble the contract router in hierarchical structure
 export const ApiContract = {
 	public: {
-		accessRequests: {
-			create: createAccessRequestContract,
-		},
 		artifacts: {
 			info: artifactInfoContract,
 			downloadUrl: sharedArtifactDownloadUrlContract,
@@ -306,11 +286,6 @@ export const ApiContract = {
 			},
 			organizations: {
 				list: listUserOrganizationsContract,
-				create: createOrganizationContract,
-			},
-			invitations: {
-				list: listUserInvitationsContract,
-				accept: acceptUserInvitationContract,
 			},
 		},
 		organizations: {
@@ -318,28 +293,11 @@ export const ApiContract = {
 		},
 
 		admin: {
-			accessRequests: {
-				list: listAccessRequestsContract,
-				unreadCount: unreadCountContract,
-				archive: archiveAccessRequestContract,
-			},
-			invitations: {
-				list: listAdminInvitationsContract,
-				create: createAdminInvitationContract,
-				revoke: revokeAdminInvitationContract,
-			},
 			users: {
 				list: listAdminUsersContract,
-				updateRole: updateAdminUserRoleContract,
-				remove: removeAdminUserContract,
-				deactivate: deactivateAdminUserContract,
-				reactivate: reactivateAdminUserContract,
 				setMetricsAdvancedEnabled: setAdminUserMetricsAdvancedContract,
 			},
 			organizations: {
-				addDomain: addDomainContract,
-				removeDomain: removeDomainContract,
-				generatePortalLink: generatePortalLinkContract,
 				settings: {
 					get: getOrgSettingsContract,
 					set: setOrgSettingsContract,

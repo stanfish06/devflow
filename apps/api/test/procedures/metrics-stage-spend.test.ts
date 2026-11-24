@@ -177,7 +177,7 @@ describe('metrics/stageSpendTrend + metrics/modeSpendTrend', async () => {
 		// Only the single-label session sits on the oneshot task.
 		expect(byMode.get('oneshot')).toBeCloseTo(3.0)
 		// Everything else is task-less: 2.0 multi-label + 1.25 unlabeled + 0.5 scalar-labels.
-		expect(byMode.get('freeform')).toBeCloseTo(3.75)
+		expect(byMode.get('oneshot')).toBeCloseTo(3.75)
 		// Modes partition the same total the stage card splits.
 		expect(result.data.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(6.75)
 	})

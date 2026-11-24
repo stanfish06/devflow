@@ -11,7 +11,7 @@ export const ModeSpendTrendInputSchema = StageSpendTrendInputSchema
  * the money bought, modes say WHICH KIND of workflow it ran in.
  *
  * Mode is the session's task's stored `workflow_type`, so this is measured,
- * not inferred. Spend on sessions with no task reports 'freeform' (it is by
+ * not inferred. Spend on sessions with no task reports 'oneshot' (it is by
  * definition outside any structured workflow). Modes come back as stored —
  * clients render whatever exists, including legacy 'rpi'.
  *
@@ -24,7 +24,7 @@ export const ModeSpendTrendOutputSchema = z.object({
 		z.object({
 			/** First day of the bucket, 'YYYY-MM-DD' (a Monday when bucket is 'week'). */
 			bucketStart: z.string(),
-			/** `tasks.workflow_type` ('oneshot', 'outline_only', …) or 'freeform' for task-less spend. */
+			/** `tasks.workflow_type` ('oneshot', 'outline_only', …) or 'oneshot' for task-less spend. */
 			mode: z.string(),
 			costUsd: z.number(),
 		}),

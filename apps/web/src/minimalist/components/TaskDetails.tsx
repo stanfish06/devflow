@@ -9,7 +9,7 @@ import { type OrgMember, useOrgMembers } from '@/hooks/useOrgMembers'
 import { taskBranch, useHost, useProjects, useTask } from '@/minimalist/lib/data'
 import { formatAgo, shortPath, toMs } from '@/minimalist/lib/format'
 import { personName, taskPeople } from '@/minimalist/lib/people'
-import { useTaskWorkflow, workflowOption, workflowOptions } from '@/minimalist/lib/task-workflow'
+import { TASK_WORKFLOWS, useTaskWorkflow, workflowOption } from '@/minimalist/lib/task-workflow'
 import { useCopy } from '@/minimalist/lib/use-copy'
 import { useApi } from '@/orpc/client'
 
@@ -153,7 +153,7 @@ function WorkflowDetail({ taskId }: { taskId: string }) {
 				<ChevronDown className="i sm" />
 			</button>
 			<Menu anchor={anchor} open={open} onClose={() => setOpen(false)} width={300}>
-				{workflowOptions(current).map((entry) => (
+				{TASK_WORKFLOWS.map((entry) => (
 					<MenuItem
 						key={entry.value}
 						label={entry.label}

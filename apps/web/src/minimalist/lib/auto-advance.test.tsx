@@ -47,7 +47,7 @@ describe('autoAdvanceFlags', () => {
 			['autoAdvanceQuestionsToResearch', 'autoAdvanceResearchToDesign', 'autoAdvanceWorktreeToImplementation'],
 		],
 		['oneshot', 'later', ['autoAdvanceImplementationToPr']],
-		['freeform', 'never', ['autoAdvanceImplementationToPr']],
+		['oneshot', 'never', ['autoAdvanceImplementationToPr']],
 	] as const)('%s with worktree %s uses %j', (workflow_type, worktree_timing, expected) => {
 		expect(autoAdvanceFlags({ workflow_type, worktree_timing })).toEqual(expected)
 	})

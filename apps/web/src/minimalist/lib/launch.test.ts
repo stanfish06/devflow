@@ -193,7 +193,7 @@ describe('startTask', () => {
 			ticket: null,
 			attachments: [],
 			settings,
-			workflow: { workflowType: 'freeform', autoAdvance: false },
+			workflow: { workflowType: 'oneshot', autoAdvance: false },
 		})
 		expect(api.projects.v2.repositorySources.get).toHaveBeenCalled()
 		const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
@@ -218,7 +218,7 @@ describe('startTask', () => {
 			ticket,
 			attachments: [],
 			settings,
-			workflow: { workflowType: 'freeform', autoAdvance: false },
+			workflow: { workflowType: 'oneshot', autoAdvance: false },
 		})
 		expect(api.tasks.v2.create).not.toHaveBeenCalled()
 		const [launched] = api.tasks.launchDraft.mock.calls[0] as unknown as [Record<string, unknown>]
@@ -273,13 +273,13 @@ describe('startTask', () => {
 				ticket: null,
 				attachments: [],
 				settings,
-				workflow: { workflowType: 'freeform', autoAdvance },
+				workflow: { workflowType: 'oneshot', autoAdvance },
 				directImplementation: true,
 			})
 			const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
 			const prompt = 'Fix the login bug\n\n' + DESCRIBE_PR_NEXT_STEP_PROMPT
 			expect(created).toMatchObject({
-				workflowType: 'freeform',
+				workflowType: 'oneshot',
 				taskContent: prompt,
 				autoAdvanceQuestionsToResearch: false,
 				autoAdvanceImplementationToPr: autoAdvance,

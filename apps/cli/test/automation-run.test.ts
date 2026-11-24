@@ -53,7 +53,7 @@ describe('automation run options', () => {
 		).toEqual({
 			taskMode: 'ensure',
 			slug: 'effect-migration',
-			task: { name: 'Effect migrations', workflowType: 'freeform', worktreeTiming: 'never' },
+			task: { name: 'Effect migrations', workflowType: 'oneshot', worktreeTiming: 'never' },
 			hostId: 'host-id',
 			sessionName: 'Effect migration',
 			prompt: 'Prompt from checkout',

@@ -10,7 +10,7 @@ import { bucketKey, bucketKeySql, resolveMetricsRange } from './utils'
  * ways.
  *
  * Mode comes from the session's task (`tasks.workflow_type`, a stored
- * column); usage on task-less sessions counts as 'freeform'. The join goes
+ * column); usage on task-less sessions counts as 'oneshot'. The join goes
  * through `sessions` rather than the denormalized `session_usage_events.task_id`
  * so a session reassigned to another task reports its CURRENT task's mode,
  * matching what the task page shows. No label unnest is needed here — this
@@ -37,7 +37,7 @@ export const modeSpendTrendProcedure = apiBaseForAdvancedMetrics.metrics.modeSpe
 			}>(sql`
 				SELECT
 					${bucketKeySql(sql`sue.occurred_at`, bucket, offsetMinutes)} AS bucket_start,
-					COALESCE(t.workflow_type, 'freeform') AS mode,
+					COALESCE(t.workflow_type, 'oneshot') AS mode,
 					SUM(sue.cost_usd) AS cost_usd
 				FROM session_usage_events sue
 				JOIN sessions s ON s.id = sue.session_id

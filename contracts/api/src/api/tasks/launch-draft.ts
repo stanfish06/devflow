@@ -62,7 +62,7 @@ export const LaunchTaskDraftInputSchema = z
 			.regex(/^[0-9]+$/)
 			.optional(),
 		ticketRepositoryFullName: z.string().min(1).optional(),
-		workflowType: z.enum(TASK_WORKFLOW_TYPES).exclude(['rpi']).default('freeform'),
+		workflowType: z.enum(TASK_WORKFLOW_TYPES).exclude(['rpi']).default('oneshot'),
 		worktreeTiming: z.enum(WORKTREE_TIMINGS),
 		autoAdvanceQuestionsToResearch: z.boolean(),
 		autoAdvanceResearchToDesign: z.boolean(),

@@ -31,7 +31,7 @@ export interface SpendByPersonAndStage {
 export interface SpendByPersonAndMode {
 	/** User id that owned the usage. */
 	readonly userId: string
-	/** `tasks.workflow_type`, or 'freeform' for task-less sessions. */
+	/** `tasks.workflow_type`, or 'oneshot' for task-less sessions. */
 	readonly mode: string
 	readonly costUsd: number
 }
@@ -178,7 +178,7 @@ const summarizeSpendByPersonAndMode = Effect.fn('metrics.summarize_spend_by_pers
 			replica.client.execute(sql`
 				SELECT
 					sue.session_creator_user_id AS user_id,
-					COALESCE(t.workflow_type, 'freeform') AS mode,
+					COALESCE(t.workflow_type, 'oneshot') AS mode,
 					SUM(sue.cost_usd) AS cost_usd
 				FROM session_usage_events sue
 				JOIN sessions s ON s.id = sue.session_id

@@ -9,7 +9,6 @@ describe('getWorkflowRoutingContext', () => {
 		'oneshot',
 		'outline_only',
 		'prd_tdd',
-		'freeform',
 		null,
 	]
 

@@ -62,7 +62,7 @@ export const CreateTaskV2InputSchema = z
 			.regex(/^[0-9]+$/)
 			.optional(),
 		ticketRepositoryFullName: z.string().min(1).optional(),
-		workflowType: z.enum(TASK_WORKFLOW_TYPES).exclude(['rpi']).default('freeform'),
+		workflowType: z.enum(TASK_WORKFLOW_TYPES).exclude(['rpi']).default('oneshot'),
 		autoAdvanceQuestionsToResearch: z.boolean().default(false),
 		autoAdvanceResearchToDesign: z.boolean().default(false),
 		autoAdvancePlanToWorktree: z.boolean().default(false),

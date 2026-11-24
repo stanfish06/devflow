@@ -21,7 +21,6 @@ import { Route as AppPullRequestsRouteImport } from './routes/_app/pull-requests
 import { Route as AppSessionsRouteRouteImport } from './routes/_app/sessions/route'
 import { Route as AppTasksRouteRouteImport } from './routes/_app/tasks/route'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
-import { Route as SettingsAccessRequestsRouteImport } from './routes/settings/access-requests'
 import { Route as SettingsAgentRouteImport } from './routes/settings/agent'
 import { Route as SettingsAgentSignInRouteImport } from './routes/settings/agent-sign-in'
 import { Route as SettingsArchivedRouteImport } from './routes/settings/archived'
@@ -36,7 +35,6 @@ import { Route as SettingsPersonalAccessTokensRouteImport } from './routes/setti
 import { Route as SettingsProjectsRouteImport } from './routes/settings/projects'
 import { Route as SettingsSyncRouteImport } from './routes/settings/sync'
 import { Route as SettingsTipsRouteImport } from './routes/settings/tips'
-import { Route as SettingsUsersRouteImport } from './routes/settings/users'
 import { Route as AppArchiveSessionsRouteImport } from './routes/_app/archive/sessions'
 import { Route as AppArchiveTasksRouteImport } from './routes/_app/archive/tasks'
 import { Route as AppAuthSigninRouteImport } from './routes/_app/auth/signin'
@@ -49,8 +47,6 @@ import { Route as AppTasksTaskIdRouteImport } from './routes/_app/tasks/$taskId'
 import { Route as AppTasksNewRouteImport } from './routes/_app/tasks/new'
 import { Route as SettingsProjectsNewRouteImport } from './routes/settings/projects_.new'
 import { Route as SharedArtifactsArtifactIdRouteImport } from './routes/shared/artifacts/$artifactId'
-import { Route as AppAuthOrganizationsCreateRouteImport } from './routes/_app/auth/organizations/create'
-import { Route as AppAuthOrganizationsSelectRouteImport } from './routes/_app/auth/organizations/select'
 
 const AppRouteRoute = AppRouteRouteImport.update({
   id: '/_app',
@@ -109,11 +105,6 @@ const AppTasksRouteRoute = AppTasksRouteRouteImport.update({
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
-const SettingsAccessRequestsRoute = SettingsAccessRequestsRouteImport.update({
-  id: '/access-requests',
-  path: '/access-requests',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
 const SettingsAgentRoute = SettingsAgentRouteImport.update({
@@ -187,11 +178,6 @@ const SettingsTipsRoute = SettingsTipsRouteImport.update({
   path: '/tips',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
-const SettingsUsersRoute = SettingsUsersRouteImport.update({
-  id: '/users',
-  path: '/users',
-  getParentRoute: () => SettingsRouteRoute,
-} as any)
 const AppArchiveSessionsRoute = AppArchiveSessionsRouteImport.update({
   id: '/sessions',
   path: '/sessions',
@@ -253,18 +239,6 @@ const SharedArtifactsArtifactIdRoute =
     path: '/shared/artifacts/$artifactId',
     getParentRoute: () => rootRouteImport,
   } as any)
-const AppAuthOrganizationsCreateRoute =
-  AppAuthOrganizationsCreateRouteImport.update({
-    id: '/auth/organizations/create',
-    path: '/auth/organizations/create',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
-const AppAuthOrganizationsSelectRoute =
-  AppAuthOrganizationsSelectRouteImport.update({
-    id: '/auth/organizations/select',
-    path: '/auth/organizations/select',
-    getParentRoute: () => AppRouteRoute,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -277,7 +251,6 @@ export interface FileRoutesByFullPath {
   '/artifacts': typeof AppArtifactsRoute
   '/board': typeof AppBoardRoute
   '/pull-requests': typeof AppPullRequestsRoute
-  '/settings/access-requests': typeof SettingsAccessRequestsRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -292,7 +265,6 @@ export interface FileRoutesByFullPath {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/sync': typeof SettingsSyncRoute
   '/settings/tips': typeof SettingsTipsRoute
-  '/settings/users': typeof SettingsUsersRoute
   '/settings/': typeof SettingsIndexRoute
   '/archive/sessions': typeof AppArchiveSessionsRoute
   '/archive/tasks': typeof AppArchiveTasksRoute
@@ -306,8 +278,6 @@ export interface FileRoutesByFullPath {
   '/shared/artifacts/$artifactId': typeof SharedArtifactsArtifactIdRoute
   '/context-shards/': typeof AppContextShardsIndexRoute
   '/sessions/': typeof AppSessionsIndexRoute
-  '/auth/organizations/create': typeof AppAuthOrganizationsCreateRoute
-  '/auth/organizations/select': typeof AppAuthOrganizationsSelectRoute
 }
 export interface FileRoutesByTo {
   '/callback': typeof CallbackRoute
@@ -317,7 +287,6 @@ export interface FileRoutesByTo {
   '/artifacts': typeof AppArtifactsRoute
   '/board': typeof AppBoardRoute
   '/pull-requests': typeof AppPullRequestsRoute
-  '/settings/access-requests': typeof SettingsAccessRequestsRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -332,7 +301,6 @@ export interface FileRoutesByTo {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/sync': typeof SettingsSyncRoute
   '/settings/tips': typeof SettingsTipsRoute
-  '/settings/users': typeof SettingsUsersRoute
   '/': typeof AppIndexRoute
   '/settings': typeof SettingsIndexRoute
   '/archive/sessions': typeof AppArchiveSessionsRoute
@@ -347,8 +315,6 @@ export interface FileRoutesByTo {
   '/shared/artifacts/$artifactId': typeof SharedArtifactsArtifactIdRoute
   '/context-shards': typeof AppContextShardsIndexRoute
   '/sessions': typeof AppSessionsIndexRoute
-  '/auth/organizations/create': typeof AppAuthOrganizationsCreateRoute
-  '/auth/organizations/select': typeof AppAuthOrganizationsSelectRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -362,7 +328,6 @@ export interface FileRoutesById {
   '/_app/artifacts': typeof AppArtifactsRoute
   '/_app/board': typeof AppBoardRoute
   '/_app/pull-requests': typeof AppPullRequestsRoute
-  '/settings/access-requests': typeof SettingsAccessRequestsRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -377,7 +342,6 @@ export interface FileRoutesById {
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/sync': typeof SettingsSyncRoute
   '/settings/tips': typeof SettingsTipsRoute
-  '/settings/users': typeof SettingsUsersRoute
   '/_app/': typeof AppIndexRoute
   '/settings/': typeof SettingsIndexRoute
   '/_app/archive/sessions': typeof AppArchiveSessionsRoute
@@ -392,8 +356,6 @@ export interface FileRoutesById {
   '/shared/artifacts/$artifactId': typeof SharedArtifactsArtifactIdRoute
   '/_app/context-shards/': typeof AppContextShardsIndexRoute
   '/_app/sessions/': typeof AppSessionsIndexRoute
-  '/_app/auth/organizations/create': typeof AppAuthOrganizationsCreateRoute
-  '/_app/auth/organizations/select': typeof AppAuthOrganizationsSelectRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -408,7 +370,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/board'
     | '/pull-requests'
-    | '/settings/access-requests'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -423,7 +384,6 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/sync'
     | '/settings/tips'
-    | '/settings/users'
     | '/settings/'
     | '/archive/sessions'
     | '/archive/tasks'
@@ -437,8 +397,6 @@ export interface FileRouteTypes {
     | '/shared/artifacts/$artifactId'
     | '/context-shards/'
     | '/sessions/'
-    | '/auth/organizations/create'
-    | '/auth/organizations/select'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/callback'
@@ -448,7 +406,6 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/board'
     | '/pull-requests'
-    | '/settings/access-requests'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -463,7 +420,6 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/sync'
     | '/settings/tips'
-    | '/settings/users'
     | '/'
     | '/settings'
     | '/archive/sessions'
@@ -478,8 +434,6 @@ export interface FileRouteTypes {
     | '/shared/artifacts/$artifactId'
     | '/context-shards'
     | '/sessions'
-    | '/auth/organizations/create'
-    | '/auth/organizations/select'
   id:
     | '__root__'
     | '/_app'
@@ -492,7 +446,6 @@ export interface FileRouteTypes {
     | '/_app/artifacts'
     | '/_app/board'
     | '/_app/pull-requests'
-    | '/settings/access-requests'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -507,7 +460,6 @@ export interface FileRouteTypes {
     | '/settings/projects'
     | '/settings/sync'
     | '/settings/tips'
-    | '/settings/users'
     | '/_app/'
     | '/settings/'
     | '/_app/archive/sessions'
@@ -522,8 +474,6 @@ export interface FileRouteTypes {
     | '/shared/artifacts/$artifactId'
     | '/_app/context-shards/'
     | '/_app/sessions/'
-    | '/_app/auth/organizations/create'
-    | '/_app/auth/organizations/select'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -618,13 +568,6 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/settings/'
       preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
-    '/settings/access-requests': {
-      id: '/settings/access-requests'
-      path: '/access-requests'
-      fullPath: '/settings/access-requests'
-      preLoaderRoute: typeof SettingsAccessRequestsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/agent': {
@@ -725,13 +668,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsTipsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
-    '/settings/users': {
-      id: '/settings/users'
-      path: '/users'
-      fullPath: '/settings/users'
-      preLoaderRoute: typeof SettingsUsersRouteImport
-      parentRoute: typeof SettingsRouteRoute
-    }
     '/_app/archive/sessions': {
       id: '/_app/archive/sessions'
       path: '/sessions'
@@ -816,20 +752,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SharedArtifactsArtifactIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/auth/organizations/create': {
-      id: '/_app/auth/organizations/create'
-      path: '/auth/organizations/create'
-      fullPath: '/auth/organizations/create'
-      preLoaderRoute: typeof AppAuthOrganizationsCreateRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
-    '/_app/auth/organizations/select': {
-      id: '/_app/auth/organizations/select'
-      path: '/auth/organizations/select'
-      fullPath: '/auth/organizations/select'
-      preLoaderRoute: typeof AppAuthOrganizationsSelectRouteImport
-      parentRoute: typeof AppRouteRoute
-    }
   }
 }
 
@@ -887,8 +809,6 @@ interface AppRouteRouteChildren {
   AppAuthSigninRoute: typeof AppAuthSigninRoute
   AppAuthSignoutRoute: typeof AppAuthSignoutRoute
   AppContextShardsIndexRoute: typeof AppContextShardsIndexRoute
-  AppAuthOrganizationsCreateRoute: typeof AppAuthOrganizationsCreateRoute
-  AppAuthOrganizationsSelectRoute: typeof AppAuthOrganizationsSelectRoute
 }
 
 const AppRouteRouteChildren: AppRouteRouteChildren = {
@@ -902,8 +822,6 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppAuthSigninRoute: AppAuthSigninRoute,
   AppAuthSignoutRoute: AppAuthSignoutRoute,
   AppContextShardsIndexRoute: AppContextShardsIndexRoute,
-  AppAuthOrganizationsCreateRoute: AppAuthOrganizationsCreateRoute,
-  AppAuthOrganizationsSelectRoute: AppAuthOrganizationsSelectRoute,
 }
 
 const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
@@ -911,7 +829,6 @@ const AppRouteRouteWithChildren = AppRouteRoute._addFileChildren(
 )
 
 interface SettingsRouteRouteChildren {
-  SettingsAccessRequestsRoute: typeof SettingsAccessRequestsRoute
   SettingsAgentRoute: typeof SettingsAgentRoute
   SettingsAgentSignInRoute: typeof SettingsAgentSignInRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
@@ -926,13 +843,11 @@ interface SettingsRouteRouteChildren {
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsSyncRoute: typeof SettingsSyncRoute
   SettingsTipsRoute: typeof SettingsTipsRoute
-  SettingsUsersRoute: typeof SettingsUsersRoute
   SettingsIndexRoute: typeof SettingsIndexRoute
   SettingsProjectsNewRoute: typeof SettingsProjectsNewRoute
 }
 
 const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
-  SettingsAccessRequestsRoute: SettingsAccessRequestsRoute,
   SettingsAgentRoute: SettingsAgentRoute,
   SettingsAgentSignInRoute: SettingsAgentSignInRoute,
   SettingsArchivedRoute: SettingsArchivedRoute,
@@ -947,7 +862,6 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsSyncRoute: SettingsSyncRoute,
   SettingsTipsRoute: SettingsTipsRoute,
-  SettingsUsersRoute: SettingsUsersRoute,
   SettingsIndexRoute: SettingsIndexRoute,
   SettingsProjectsNewRoute: SettingsProjectsNewRoute,
 }

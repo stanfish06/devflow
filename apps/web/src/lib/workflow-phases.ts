@@ -28,11 +28,7 @@ const WORKFLOW_PHASE_MAP: Record<TaskWorkflowType, WorkflowPhase[]> = {
 		{ name: 'rpi:implementation', title: 'implement' },
 		{ name: 'rpi:describe-pr', title: 'PR' },
 	],
-	oneshot: [
-		{ name: 'rpi:implementation', title: 'implement' },
-		{ name: 'rpi:describe-pr', title: 'PR' },
-	],
-	freeform: [],
+	oneshot: [],
 }
 
 const WORKTREE_PHASE: WorkflowPhase = { name: 'rpi:worktree-setup', title: 'worktree' }
@@ -56,7 +52,7 @@ export function getWorkflowPhases(
 		return [SYNTHETIC_WORKTREE_PHASE, ...basePhases]
 	}
 
-	if (effectiveWorktreeTiming === 'later' && workflowType !== 'oneshot') {
+	if (effectiveWorktreeTiming === 'later') {
 		const implementationIndex = basePhases.findIndex((phase) => phase.name === 'rpi:implementation')
 		if (implementationIndex === -1) return basePhases
 

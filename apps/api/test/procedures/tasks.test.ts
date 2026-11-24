@@ -94,7 +94,7 @@ describe('tasks.update — defaultWorkingDirectory routing', async () => {
 				resource_owner_user_id: ownerUserId,
 				created_by: ownerUserId,
 				organization_id: organizationId,
-				workflow_type: 'freeform',
+				workflow_type: 'oneshot',
 			})
 			.returning()
 		await db.insert(taskUserAcl).values({

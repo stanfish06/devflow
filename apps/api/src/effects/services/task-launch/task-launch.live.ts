@@ -18,7 +18,7 @@ export const TaskLaunchServiceLive = Layer.succeed(TaskLaunchService, {
 			const taskIntentClassifier = yield* TaskIntentClassifier
 			const intent =
 				input.firstSession.intent ??
-				(input.workflowType === 'freeform'
+				(input.workflowType === 'oneshot'
 					? yield* taskIntentClassifier.classify(input.firstSession.text)
 					: undefined)
 			const result = yield* launchTaskDraftPersistence({ ...input, intent })

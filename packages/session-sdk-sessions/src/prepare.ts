@@ -100,7 +100,7 @@ export function prepareBody(f: PrepareFacts): PrepareBody {
 		session.model = f.model.id
 	}
 	if (f.pick.taskMode === 'use') return { ...session, taskMode: 'use', taskIdOrSlug: f.pick.taskIdOrSlug }
-	const task: TaskConfig = { name: f.title, workflowType: 'freeform', worktreeTiming: 'never' }
+	const task: TaskConfig = { name: f.title, workflowType: 'oneshot', worktreeTiming: 'never' }
 	if (f.git) task.workspaceState = workspaceState(f.git)
 	return { ...session, taskMode: 'ensure', slug: f.pick.slug, task }
 }

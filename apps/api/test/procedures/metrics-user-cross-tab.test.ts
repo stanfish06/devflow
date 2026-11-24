@@ -207,9 +207,9 @@ describe('metrics/userStageSpend + metrics/userModeSpend', async () => {
 		const result = await call(userModeSpendProcedure, metricsRange(), callContext())
 
 		expect(cell(result.data, ALICE, 'mode', 'oneshot')).toBeCloseTo(3.0)
-		expect(cell(result.data, ALICE, 'mode', 'freeform')).toBeCloseTo(1.0)
-		expect(cell(result.data, BOB, 'mode', 'freeform')).toBeCloseTo(2.0)
-		expect(cell(result.data, CARLA, 'mode', 'freeform')).toBeCloseTo(0.25)
+		expect(cell(result.data, ALICE, 'mode', 'oneshot')).toBeCloseTo(1.0)
+		expect(cell(result.data, BOB, 'mode', 'oneshot')).toBeCloseTo(2.0)
+		expect(cell(result.data, CARLA, 'mode', 'oneshot')).toBeCloseTo(0.25)
 	})
 
 	test('every split of the Workflow tab totals the same dollars', async () => {

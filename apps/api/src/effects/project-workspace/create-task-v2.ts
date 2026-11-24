@@ -52,7 +52,7 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 	const taskIntentClassifier = yield* TaskIntentClassifier
 	const intent =
 		input.firstSession.intent ??
-		(input.workflowType === 'freeform' ? yield* taskIntentClassifier.classify(input.firstSession.text) : undefined)
+		(input.workflowType === 'oneshot' ? yield* taskIntentClassifier.classify(input.firstSession.text) : undefined)
 
 	const result = yield* postgres.transaction((transaction) =>
 		Effect.gen(function* () {

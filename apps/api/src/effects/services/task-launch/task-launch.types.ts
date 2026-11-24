@@ -57,7 +57,7 @@ export type LaunchTaskDraftInput = {
 	readonly githubConnectionId?: string
 	readonly ticketRepositoryId?: string
 	readonly ticketRepositoryFullName?: string
-	readonly workflowType: 'outline_only' | 'prd_tdd' | 'oneshot' | 'freeform'
+	readonly workflowType: 'outline_only' | 'prd_tdd' | 'oneshot'
 	readonly worktreeTiming: 'now' | 'later' | 'never'
 	readonly autoAdvanceQuestionsToResearch: boolean
 	readonly autoAdvanceResearchToDesign: boolean

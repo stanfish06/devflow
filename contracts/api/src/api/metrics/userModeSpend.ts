@@ -15,7 +15,7 @@ export const UserModeSpendInputSchema = metricsRangeInput()
  * accepted so the cache key lines up with the rest of the page.
  *
  * Mode comes from the session's task (`tasks.workflow_type`); usage on
- * task-less sessions counts as 'freeform'. The join goes through `sessions`
+ * task-less sessions counts as 'oneshot'. The join goes through `sessions`
  * rather than the denormalized `session_usage_events.task_id`, so a session
  * reassigned to another task reports its CURRENT task's mode — matching
  * modeSpendTrend and the task page.
@@ -25,7 +25,7 @@ export const UserModeSpendOutputSchema = z.object({
 		z.object({
 			/** User id whose daemon ran the session and spent the tokens. */
 			userId: z.string(),
-			/** `tasks.workflow_type`, or 'freeform' for task-less sessions. */
+			/** `tasks.workflow_type`, or 'oneshot' for task-less sessions. */
 			mode: z.string(),
 			costUsd: z.number(),
 		}),

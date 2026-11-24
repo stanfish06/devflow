@@ -144,8 +144,6 @@ function workflowTypeLabel(workflowType: string): string {
 			return 'OUTLINE ONLY'
 		case 'prd_tdd':
 			return 'PRD/TDD'
-		case 'oneshot':
-			return 'ONESHOT'
 		default:
 			return workflowType.toUpperCase()
 	}

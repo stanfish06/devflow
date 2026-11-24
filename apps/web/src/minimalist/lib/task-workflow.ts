@@ -10,31 +10,21 @@ import { useApi } from '@/orpc/client'
 
 type WorkflowOption = { value: ResolvedTaskWorkflowType; label: string; description: string }
 
-/** The workflows a task can switch to. Oneshot is only listed for tasks that already use it. */
+/** The workflows a task can switch to. */
 export const TASK_WORKFLOWS: readonly WorkflowOption[] = [
-	{ value: 'freeform', label: 'Freeform', description: 'Work straight from the prompt' },
+	{ value: 'oneshot', label: 'Oneshot', description: 'Work straight from the prompt' },
 	{ value: 'outline_only', label: 'RPI', description: 'Research and outline the work before implementation' },
 	{ value: 'prd_tdd', label: 'PRD-TDD', description: 'Define product and technical design before implementation' },
 ]
-
-const ONESHOT: WorkflowOption = {
-	value: 'oneshot',
-	label: 'Oneshot',
-	description: 'Implement from the ticket, then prepare a pull request',
-}
 
 /** Older tasks say `rpi`; the launcher now calls the same guided workflow `outline_only`. */
 export function resolvedWorkflowType(type: Task['workflow_type']): ResolvedTaskWorkflowType {
 	return type === 'rpi' ? 'outline_only' : type
 }
 
-export function workflowOptions(current: ResolvedTaskWorkflowType): readonly WorkflowOption[] {
-	return current === 'oneshot' ? [...TASK_WORKFLOWS, ONESHOT] : TASK_WORKFLOWS
-}
-
 export function workflowOption(type: Task['workflow_type']): WorkflowOption {
 	const resolved = resolvedWorkflowType(type)
-	return workflowOptions(resolved).find((option) => option.value === resolved) ?? ONESHOT
+	return TASK_WORKFLOWS.find((option) => option.value === resolved) ?? TASK_WORKFLOWS[0]!
 }
 
 /**
@@ -47,7 +37,7 @@ export function useTaskWorkflow(taskId: string) {
 	const { client: api } = useApi()
 	const { showToast } = useUi()
 	const autoAdvance = useTaskAutoAdvance(taskId)
-	const current = resolvedWorkflowType(task?.workflow_type ?? 'freeform')
+	const current = resolvedWorkflowType(task?.workflow_type ?? 'oneshot')
 	return {
 		current,
 		canChange: Boolean(task && user?.id && task.resource_owner_user_id === user.id),

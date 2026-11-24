@@ -176,13 +176,12 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 	const worktreeTiming: WorktreeTiming = target.kind === 'project' ? 'now' : 'never'
 	const flags = projectTaskAutoAdvanceFlags(input.workflow, worktreeTiming)
 	const phase =
-		input.workflow.workflowType === 'freeform'
+		input.workflow.workflowType === 'oneshot'
 			? null
 			: getFirstSessionParams({
 					slug,
 					name,
 					autoAdvanceQuestionsToResearch: flags.autoAdvanceQuestionsToResearch,
-					workflow: input.workflow.workflowType === 'oneshot' ? 'oneshot' : 'rpi',
 				})
 	const firstSession = {
 		id: ids.sessionId,

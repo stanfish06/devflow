@@ -1,6 +1,6 @@
 import * as Schema from 'effect/Schema'
 
-export const TASK_WORKFLOW_TYPES = ['rpi', 'outline_only', 'prd_tdd', 'oneshot', 'freeform'] as const
+export const TASK_WORKFLOW_TYPES = ['rpi', 'outline_only', 'prd_tdd', 'oneshot'] as const
 export const TaskWorkflowType = Schema.Literals(TASK_WORKFLOW_TYPES)
 export type TaskWorkflowType = typeof TaskWorkflowType.Type
 
@@ -10,7 +10,7 @@ export function isStructuredTaskWorkflow(workflowType: TaskWorkflowType): boolea
 	return STRUCTURED_TASK_WORKFLOW_TYPES.has(workflowType)
 }
 
-export const RESOLVED_TASK_WORKFLOW_TYPES = ['outline_only', 'prd_tdd', 'oneshot', 'freeform'] as const
+export const RESOLVED_TASK_WORKFLOW_TYPES = ['outline_only', 'prd_tdd', 'oneshot'] as const
 export const ResolvedTaskWorkflowType = Schema.Literals(RESOLVED_TASK_WORKFLOW_TYPES)
 export type ResolvedTaskWorkflowType = typeof ResolvedTaskWorkflowType.Type
 

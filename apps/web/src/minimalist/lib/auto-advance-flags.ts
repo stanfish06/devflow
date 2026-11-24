@@ -7,7 +7,7 @@ import type {
 /**
  * The task's auto-advance flags for a workflow. Guided workflows (RPI and PRD / TDD) advance
  * through research and design, and into implementation once a later worktree is set up;
- * oneshot and freeform advance from implementation to the pull request.
+ * oneshot advances from implementation to the pull request.
  */
 export function projectTaskAutoAdvanceFlags(
 	workflow: ResolvedTaskWorkflow,
@@ -20,6 +20,6 @@ export function projectTaskAutoAdvanceFlags(
 		autoAdvancePlanToWorktree: false,
 		autoAdvanceWorktreeToImplementation: workflow.autoAdvance && guided && worktreeTiming === 'later',
 		autoAdvanceImplementationToPr:
-			workflow.autoAdvance && (workflow.workflowType === 'oneshot' || workflow.workflowType === 'freeform'),
+			workflow.autoAdvance && workflow.workflowType === 'oneshot',
 	}
 }

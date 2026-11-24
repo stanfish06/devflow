@@ -1016,6 +1016,13 @@
       "when": 1795494551191,
       "tag": "0144_drop_removed_integration_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1795496968982,
+      "tag": "0145_rename_freeform_workflow_to_oneshot",
+      "breakpoints": true
     }
   ]
 }

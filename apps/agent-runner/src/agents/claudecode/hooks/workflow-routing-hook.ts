@@ -111,7 +111,6 @@ for example:
 		},
 	],
 	oneshot: [],
-	freeform: [],
 }
 
 export function getWorkflowRoutingContext(

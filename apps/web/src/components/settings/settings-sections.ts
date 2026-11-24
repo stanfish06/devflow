@@ -17,8 +17,6 @@ export type SettingsSection =
 	| 'experiments'
 	| 'projects'
 	| 'personal-access-tokens'
-	| 'access-requests'
-	| 'users'
 	| 'daemons'
 	| 'sync'
 	| 'diagnostics'
@@ -35,8 +33,6 @@ export const SETTINGS_SECTION_PATHS = {
 	experiments: '/settings/experiments',
 	projects: '/settings/projects',
 	'personal-access-tokens': '/settings/personal-access-tokens',
-	'access-requests': '/settings/access-requests',
-	users: '/settings/users',
 	daemons: '/settings/daemons',
 	sync: '/settings/sync',
 	diagnostics: '/settings/diagnostics',
@@ -51,8 +47,6 @@ export const SETTINGS_SECTION_LABELS = {
 	experiments: 'Experiments',
 	projects: 'Projects',
 	'personal-access-tokens': 'Personal access tokens',
-	'access-requests': 'Access requests',
-	users: 'Users',
 	daemons: 'Hosts',
 	sync: 'Sync',
 	diagnostics: 'Diagnostics',
@@ -72,10 +66,6 @@ export function isSettingsSection(value: string | undefined): value is SettingsS
 	return value !== undefined && value in SETTINGS_SECTION_LABELS
 }
 
-export function shouldSuppressSettingsSectionTitle(section: string | undefined): boolean {
-	return section === 'access-requests'
-}
-
 /** Context required to evaluate which conditional sections are visible. */
 export interface SettingsVisibilityContext {
 	/** Roles for the current user (from `useBrowserAuth().roles`). */
@@ -88,9 +78,6 @@ export function isSettingsSectionVisible(section: SettingsSection, context: Sett
 	switch (section) {
 		case 'projects':
 			return context.projectsV2Enabled === true
-		case 'access-requests':
-		case 'users':
-			return context.roles?.includes('admin') ?? false
 		default:
 			return true
 	}
@@ -117,14 +104,12 @@ export interface SettingsSectionGroup {
  * top (ungrouped): General, Projects, Keybindings, Tips, Experiments
  * Coding agents: Sign-in, Defaults
  * Account: Personal access tokens
- * Administration: Access requests, Users
  * System: Hosts, Sync, Diagnostics
  */
 export const SETTINGS_SECTION_GROUPS: SettingsSectionGroup[] = [
 	{ sections: ['general', 'projects', 'keybindings', 'tips', 'experiments'] },
 	{ label: 'Coding agents', sections: ['agent-sign-in', 'agent'] },
 	{ label: 'Account', sections: ['personal-access-tokens'] },
-	{ label: 'Administration', sections: ['access-requests', 'users'] },
 	{ label: 'System', sections: ['daemons', 'sync', 'diagnostics'] },
 ]
 

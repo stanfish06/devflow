@@ -42,7 +42,7 @@ export function buildAutomationPrepareInput(
 				slug: options.ensureTask,
 				task: {
 					name: options.taskName,
-					workflowType: 'freeform' as const,
+					workflowType: 'oneshot' as const,
 					worktreeTiming: 'never' as const,
 				},
 				...targetSession,

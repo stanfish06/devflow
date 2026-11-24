@@ -13,10 +13,10 @@ import * as Schema from 'effect/Schema'
 describe('task configuration schemas', () => {
 	it.effect('decodes every persisted and resolved workflow type', () =>
 		Effect.gen(function* () {
-			for (const workflowType of ['rpi', 'outline_only', 'prd_tdd', 'oneshot', 'freeform']) {
+			for (const workflowType of ['rpi', 'outline_only', 'prd_tdd', 'oneshot']) {
 				expect(yield* Schema.decodeUnknownEffect(TaskWorkflowType)(workflowType)).toBe(workflowType)
 			}
-			for (const workflowType of ['outline_only', 'prd_tdd', 'oneshot', 'freeform']) {
+			for (const workflowType of ['outline_only', 'prd_tdd', 'oneshot']) {
 				expect(yield* Schema.decodeUnknownEffect(ResolvedTaskWorkflowType)(workflowType)).toBe(workflowType)
 			}
 		}),
@@ -38,7 +38,6 @@ describe('task configuration schemas', () => {
 		expect(isStructuredTaskWorkflow('outline_only')).toBe(true)
 		expect(isStructuredTaskWorkflow('prd_tdd')).toBe(true)
 		expect(isStructuredTaskWorkflow('oneshot')).toBe(false)
-		expect(isStructuredTaskWorkflow('freeform')).toBe(false)
 	})
 
 	it.effect('decodes worktree timing and rejects unsupported values', () =>

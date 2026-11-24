@@ -18,8 +18,6 @@ const ALL_SECTIONS: SettingsSection[] = [
 	'agent',
 	'tips',
 	'experiments',
-	'access-requests',
-	'users',
 	'daemons',
 	'sync',
 	'diagnostics',

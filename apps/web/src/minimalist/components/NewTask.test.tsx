@@ -293,7 +293,7 @@ describe('picking how big a new task is', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
 		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
 		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
-			workflow: { workflowType: 'freeform', autoAdvance: false },
+			workflow: { workflowType: 'oneshot', autoAdvance: false },
 			directImplementation: true,
 		})
 	})

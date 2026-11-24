@@ -65,7 +65,7 @@ describe('automation.run.prepare', () => {
 		return {
 			taskMode: 'ensure' as const,
 			slug,
-			task: { name, workflowType: 'freeform' as const, worktreeTiming: 'never' as const },
+			task: { name, workflowType: 'oneshot' as const, worktreeTiming: 'never' as const },
 			hostId: randomUUID(),
 			sessionName: `Run ${name}`,
 			prompt: `Implement ${name}`,
@@ -89,7 +89,7 @@ describe('automation.run.prepare', () => {
 		const [task] = await db.select().from(tasks).where(eq(tasks.id, first.taskId))
 		expect(task).toMatchObject({
 			name: 'First name',
-			workflow_type: 'freeform',
+			workflow_type: 'oneshot',
 			worktree_timing: 'never',
 		})
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, first.taskId))).toHaveLength(2)
@@ -175,7 +175,7 @@ describe('automation.run.prepare', () => {
 				...ensureInput(slug, 'Replacement task'),
 				task: {
 					name: 'Replacement task',
-					workflowType: 'freeform',
+					workflowType: 'oneshot',
 					worktreeTiming: 'never',
 					autoAdvanceResearchToDesign: false,
 				},

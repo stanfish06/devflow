@@ -27,8 +27,6 @@ export interface LaunchEffortDefaults {
 	defaultCodelayerCodexEffort?: string
 }
 
-export type FirstSessionWorkflow = 'rpi' | 'oneshot'
-
 /**
  * Added to a small task's prompt and task.md, so the agent ends with the describe-pr skill in a
  * code block. Next-step extraction picks that up, with or without auto-advance. It only reads a
@@ -46,30 +44,17 @@ export function withDescribePrNextStep(text: string): string {
 	return text ? `${text}\n\n${DESCRIBE_PR_NEXT_STEP_PROMPT}` : DESCRIBE_PR_NEXT_STEP_PROMPT
 }
 
-/**
- * Returns the first session parameters for an auto-advance task.
- */
+/** The first session of a guided workflow: research questions on the task's folder. */
 export function getFirstSessionParams(task: {
 	slug: string | null
 	name: string
 	autoAdvanceQuestionsToResearch: boolean
-	workflow?: FirstSessionWorkflow
 }): {
 	title: string
 	prompt: string
 	permissionsMode: 'bypass' | 'default'
 } {
 	const identifier = task.slug || task.name
-	if (task.workflow === 'oneshot') {
-		return {
-			title: `implement-plan: Implement ${identifier}`,
-			prompt:
-				`use the rpi:implement-plan skill (no subagent) for .devflow/tasks/${identifier}; ` +
-				`there's no plan, just implement the ticket.md, and then read the final answer template reference from the implement plan skill's directory, and reproduce the final answer from that reference exactly as indicated.`,
-			permissionsMode: 'bypass',
-		}
-	}
-
 	return {
 		title: `research-questions: Research questions for ${identifier}`,
 		prompt: `use the rpi:create-research-questions skill for .devflow/tasks/${identifier}`,

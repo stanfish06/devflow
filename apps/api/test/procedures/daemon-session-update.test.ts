@@ -520,7 +520,7 @@ describe('daemon/sessions/update first successful session milestone', async () =
 				resource_owner_user_id: freeformUserId,
 				created_by: freeformUserId,
 				name: 'freeform workflow',
-				workflow_type: 'freeform',
+				workflow_type: 'oneshot',
 			})
 			.returning()
 		if (!task) throw new Error('Unable to insert freeform task for setup')

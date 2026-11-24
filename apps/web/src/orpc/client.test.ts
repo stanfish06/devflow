@@ -9,13 +9,10 @@ vi.mock('sonner', () => ({
 }))
 
 describe('handleApiError UNAUTHORIZED', () => {
-	it('shows nothing and stays on the page', () => {
-		const navigate = vi.fn()
-
-		handleApiError(new ORPCError('UNAUTHORIZED'), undefined, { navigate, isOnOrgPages: false })
+	it('shows nothing', () => {
+		handleApiError(new ORPCError('UNAUTHORIZED'), undefined)
 
 		expect(toast.warning).not.toHaveBeenCalled()
 		expect(toast.error).not.toHaveBeenCalled()
-		expect(navigate).not.toHaveBeenCalled()
 	})
 })

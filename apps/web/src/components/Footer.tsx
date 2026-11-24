@@ -30,7 +30,6 @@ import { artifactSidePanelTrace } from '@/lib/artifact-side-panel-trace'
 import { buildConfig, buildDisplayLabel } from '@/lib/config'
 import { navigateToSettings } from '@/lib/settings-navigation'
 
-import { OrganizationSwitcher } from './OrganizationSwitcher'
 
 function getFooterDegradedCount({
 	syncForceMode,
@@ -46,7 +45,6 @@ function getFooterDegradedCount({
 
 export function Footer() {
 	const navigate = useNavigate()
-	const [isOrgSwitcherOpen, setIsOrgSwitcherOpen] = useState(false)
 	const [themeSelectorOpen, setThemeSelectorOpen] = useState(false)
 	const artifactSidePanelTraceEnabled = useDiagnosticStore((state) => state.artifactSidePanelTraceEnabled)
 	const traceStatus = useSyncExternalStore(
@@ -156,8 +154,6 @@ export function Footer() {
 				</button>
 			</div>
 			<div id="right" className="flex flex-row items-center justify-self-end gap-2">
-				<OrganizationSwitcher isOpen={isOrgSwitcherOpen} setIsOpen={setIsOrgSwitcherOpen} />
-
 				{import.meta.env.DEV && <DebugInfoModal />}
 				{artifactSidePanelTraceEnabled ? (
 					<Tooltip>

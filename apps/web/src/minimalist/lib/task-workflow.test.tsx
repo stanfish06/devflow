@@ -1,7 +1,7 @@
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useTaskWorkflow, workflowOption, workflowOptions } from './task-workflow'
+import { TASK_WORKFLOWS, useTaskWorkflow, workflowOption } from './task-workflow'
 
 const { state, update } = vi.hoisted(() => ({
 	state: {
@@ -18,26 +18,21 @@ vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast: vi.fn()
 
 beforeEach(() => {
 	vi.clearAllMocks()
-	state.task = { id: 'task', workflow_type: 'freeform', worktree_timing: 'now', resource_owner_user_id: 'me' }
+	state.task = { id: 'task', workflow_type: 'oneshot', worktree_timing: 'now', resource_owner_user_id: 'me' }
 	state.autoAdvanceOn = true
 })
 
 describe('workflow options', () => {
-	it('names legacy rpi tasks RPI and lists oneshot only for oneshot tasks', () => {
+	it('names legacy rpi tasks RPI and lists oneshot, RPI and PRD-TDD', () => {
 		expect(workflowOption('rpi').label).toBe('RPI')
-		expect(workflowOptions('freeform').map((option) => option.value)).toEqual([
-			'freeform',
-			'outline_only',
-			'prd_tdd',
-		])
-		expect(workflowOptions('oneshot').map((option) => option.value)).toContain('oneshot')
+		expect(TASK_WORKFLOWS.map((option) => option.value)).toEqual(['oneshot', 'outline_only', 'prd_tdd'])
 	})
 })
 
 describe('useTaskWorkflow', () => {
 	it('switches the workflow and keeps auto-advance on for the new hand-offs', async () => {
 		const { result } = renderHook(() => useTaskWorkflow('task'))
-		expect(result.current).toMatchObject({ current: 'freeform', canChange: true })
+		expect(result.current).toMatchObject({ current: 'oneshot', canChange: true })
 		await result.current.change('outline_only')
 		expect(update).toHaveBeenCalledWith({
 			taskId: 'task',

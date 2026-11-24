@@ -33,8 +33,6 @@ type Slug =
 	| 'experiments'
 	| 'sync'
 	| 'diagnostics'
-	| 'users'
-	| 'access-requests'
 	| 'archived'
 
 type Page = { slug: Slug; label: string; section?: SettingsSection; native?: () => ReactNode; also?: Slug[] }

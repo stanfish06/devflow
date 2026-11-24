@@ -150,7 +150,7 @@ const TokenUseTaskSchema = z.object({
 	contributorCount: z.number(),
 	modelCount: z.number(),
 	/**
-	 * `tasks.workflow_type` — 'prd_tdd', 'outline_only', 'oneshot', 'freeform',
+	 * `tasks.workflow_type` — 'prd_tdd', 'outline_only', 'oneshot',
 	 * or the legacy 'rpi'. Passed through unmapped so a future mode shows up
 	 * rather than vanishing.
 	 *

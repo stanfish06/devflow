@@ -9,7 +9,7 @@ const UNKNOWN_SIZE: TaskSizeOption = {
 	value: 'unknown',
 	label: "Don't know yet",
 	description: 'Explore a question, issue, or feature request',
-	workflow: { workflowType: 'freeform', autoAdvance: false },
+	workflow: { workflowType: 'oneshot', autoAdvance: false },
 }
 
 /**
@@ -22,7 +22,7 @@ export const TASK_SIZES: readonly TaskSizeOption[] = [
 		value: 'small',
 		label: 'Small',
 		description: 'Jump to implementation and prepare a pull request',
-		workflow: { workflowType: 'freeform', autoAdvance: true },
+		workflow: { workflowType: 'oneshot', autoAdvance: true },
 	},
 	{
 		value: 'medium',
