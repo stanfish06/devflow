@@ -23,6 +23,8 @@
             pkgs.git
             pkgs.gh
             pkgs.jq
+            pkgs.lsof
+            pkgs.nssTools
             pkgs.openssh
             pkgs.docker-client
             pkgs.docker-compose

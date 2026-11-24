@@ -12,13 +12,14 @@
  *   bun run devflow remote <ssh-host>  run an agent runner on another machine as a host of this server
  *   bun run devflow host     agent runner only (what `remote` starts on the other machine)
  *   bun run devflow e2e      Playwright end-to-end tests against the running stack
+ *   bun run devflow trust    trust Caddy's local CA in the browsers' NSS databases (also run by `up`)
  *   bun run devflow <other>  devflow's CLI against this stack, e.g. `bun run devflow api --help`
  *
  * Config, keys and logs live in DEVFLOW_HOME (default ~/.devflow).
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -454,6 +455,8 @@ function prefixOutput(child: ReturnType<typeof spawn>, name: string): void {
 async function up(): Promise<void> {
 	requireTool('docker')
 	requireTool('caddy')
+	requireTool('lsof')
+	if (process.platform === 'linux') requireTool('certutil')
 	const busy = [PORTS.ui, PORTS.api, PORTS.electricProxy, HTTPS_PORT].filter((port) => listeningPids(port).length > 0)
 	if (busy.length > 0) {
 		throw new Error(
@@ -467,7 +470,8 @@ async function up(): Promise<void> {
 	compose(env, ['up', '-d', '--wait', ...CONTAINER_SERVICES.filter((service) => service !== 'minio-setup')])
 	writeCaddyfile()
 	ensureAgentImage(env)
-	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env }
+	// Bun's fetch trusts only its bundled CAs; the services call each other through Caddy's HTTPS routes.
+	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA }
 	const devUi = process.argv.includes('--dev')
 	if (!devUi && uiBuildIsStale()) {
 		console.log('Building the UI (about 40s; skipped while sources are unchanged)...')
@@ -518,6 +522,11 @@ async function up(): Promise<void> {
 		return child
 	}
 	start('caddy', 'caddy', ['run', '--config', CADDYFILE_PATH, '--adapter', 'caddyfile'], '.')
+	// Caddy creates its root CA on first start, so trust it once the file appears.
+	for (let waited = 0; !existsSync(CADDY_ROOT_CA) && waited < 15_000; waited += 250) {
+		await new Promise((r) => setTimeout(r, 250))
+	}
+	trust()
 	if (devUi) {
 		// Hot-reload mode: the packages' own `dev` scripts through turbo.
 		const packages = [...DEV_PACKAGES, UI_PACKAGE]
@@ -681,6 +690,7 @@ const REMOTE_DIR = 'devflow-host'
  */
 async function remote(): Promise<void> {
 	requireTool('ssh')
+	requireTool('lsof')
 	const target = process.argv[3]
 	if (!target || target.startsWith('-')) throw new Error('Usage: bun run devflow remote <ssh-host>')
 	if (listeningPids(HTTPS_PORT).length === 0) {
@@ -831,6 +841,53 @@ function caddyDataDir(): string {
 const CADDY_DATA_DIR = caddyDataDir()
 const CADDY_ROOT_CA = join(CADDY_DATA_DIR, 'pki', 'authorities', 'local', 'root.crt')
 
+const CA_NICKNAME = 'devflow local CA'
+
+/** PEM body without armor or whitespace, to compare two encodings of one certificate. */
+function pemBody(pem: string): string {
+	return pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, '')
+}
+
+/**
+ * `trust`: add Caddy's local CA to the NSS databases Chromium-family browsers (~/.pki/nssdb) and
+ * Firefox profiles read on Linux. Caddy's own install (`skip_install_trust` is set) targets the
+ * system store, which needs sudo and is read-only on NixOS. Re-runs replace a stale copy, e.g.
+ * after Caddy's data directory was reset. Browsers that are open need a restart to pick it up.
+ */
+function trust(): void {
+	if (process.platform !== 'linux') {
+		console.log(`devflow trust: run \`caddy trust\` to trust ${CADDY_ROOT_CA} on this platform`)
+		return
+	}
+	requireTool('certutil')
+	if (!existsSync(CADDY_ROOT_CA))
+		throw new Error(`${CADDY_ROOT_CA} does not exist yet. Start Caddy once: bun run devflow up`)
+	const root = pemBody(readFileSync(CADDY_ROOT_CA, 'utf8'))
+	const firefoxDir = join(homedir(), '.mozilla', 'firefox')
+	const firefoxProfiles = existsSync(firefoxDir)
+		? readdirSync(firefoxDir)
+				.map((name) => join(firefoxDir, name))
+				.filter((dir) => existsSync(join(dir, 'cert9.db')))
+		: []
+	const chromiumDb = join(homedir(), '.pki', 'nssdb')
+	if (!existsSync(join(chromiumDb, 'cert9.db'))) {
+		mkdirSync(chromiumDb, { recursive: true })
+		spawnSync('certutil', ['-N', '-d', `sql:${chromiumDb}`, '--empty-password'])
+	}
+	for (const dir of [chromiumDb, ...firefoxProfiles]) {
+		const db = `sql:${dir}`
+		const current = spawnSync('certutil', ['-L', '-d', db, '-n', CA_NICKNAME, '-a'], { encoding: 'utf8' })
+		if (current.status === 0 && pemBody(current.stdout) === root) continue
+		// Drop every stale copy under the nickname before adding the current root.
+		while (spawnSync('certutil', ['-D', '-d', db, '-n', CA_NICKNAME]).status === 0) {}
+		const added = spawnSync('certutil', ['-A', '-d', db, '-n', CA_NICKNAME, '-t', 'C,,', '-i', CADDY_ROOT_CA], {
+			encoding: 'utf8',
+		})
+		if (added.status !== 0) throw new Error(`certutil could not add the CA to ${dir}: ${added.stderr.trim()}`)
+		console.log(`Trusted devflow's local CA in ${dir}; restart the browser if it is open.`)
+	}
+}
+
 /** `e2e`: Playwright tests in apps/e2e against the running stack (installed Chrome). */
 function e2e(): void {
 	const result = spawnSync('bun', ['x', 'playwright', 'test', ...process.argv.slice(3)], {
@@ -852,6 +909,7 @@ function e2e(): void {
 const commands: Record<string, () => void | Promise<void>> = {
 	e2e,
 	setup,
+	trust,
 	up,
 	down,
 	status,
@@ -867,7 +925,7 @@ function forwardToCli(args: string[]): void {
 	const env = buildEnv(loadOrCreateConfig())
 	const result = spawnSync('bun', ['--bun', 'src/index.ts', '--local', ...args], {
 		cwd: join(REPO_ROOT, 'apps/cli'),
-		env: { ...process.env, ...env },
+		env: { ...process.env, ...env, NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA },
 		stdio: 'inherit',
 	})
 	process.exit(result.status ?? 1)
