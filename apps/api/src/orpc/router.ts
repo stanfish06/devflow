@@ -111,6 +111,7 @@ import { listProjectsV2Procedure } from './api/projects-v2/list.effect'
 import { upsertProjectV2LocationProcedure } from './api/projects-v2/location-upsert.effect'
 import { getProjectV2RepositorySourcesProcedure } from './api/projects-v2/repository-sources-get.effect'
 import { upsertProjectV2RepositorySourcesProcedure } from './api/projects-v2/repository-sources-upsert.effect'
+import { setProjectGithubAccountProcedure } from './api/projects-v2/set-github-account.effect'
 import { updateProjectV2Procedure } from './api/projects-v2/update.effect'
 import {
 	cancelProviderLoginProcedure,
@@ -185,6 +186,7 @@ import { launchTaskDraftProcedure } from './api/tasks/launch-draft'
 import { listTasksProcedure } from './api/tasks/list.effect'
 import { reassignTaskOwnerProcedure } from './api/tasks/reassign-owner'
 import { saveTaskDraftProcedure } from './api/tasks/saveDraft'
+import { setTaskGithubAccountProcedure } from './api/tasks/set-github-account.effect'
 import { updateTaskProcedure } from './api/tasks/update'
 import { createTaskV2Procedure } from './api/tasks/v2/create.effect'
 import { createUploadProcedure } from './api/uploads/create.effect'
@@ -362,6 +364,7 @@ export const apiRouter = os.router({
 		delete: deleteTaskEffectProcedure,
 		deleteArchivedPreview: deleteArchivedTasksPreviewProcedure,
 		deleteArchived: deleteArchivedTasksProcedure,
+		setGithubAccount: setTaskGithubAccountProcedure,
 		list: listTasksProcedure,
 		v2: {
 			create: createTaskV2Procedure,
@@ -376,6 +379,7 @@ export const apiRouter = os.router({
 			archive: archiveProjectV2Procedure,
 			deletePreview: projectDeletePreviewV2Procedure,
 			delete: deleteProjectV2Procedure,
+			setGithubAccount: setProjectGithubAccountProcedure,
 			locations: { upsert: upsertProjectV2LocationProcedure },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesProcedure,

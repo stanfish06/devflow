@@ -67,6 +67,8 @@ export type LaunchTaskDraftInput = {
 	readonly createdWithExperimentFlags?: CreatedWithExperimentFlags
 	readonly attachments: readonly TaskLaunchAttachment[]
 	readonly importedTicket?: PreparedTicketArtifactBundle
+	/** An explicit account pick: one of the user's accounts, or null for the host's gh login. Omitted: no pick. */
+	readonly githubAccountId?: string | null
 	readonly firstSession: TaskLaunchFirstSession
 	readonly intent?: TaskIntent
 }

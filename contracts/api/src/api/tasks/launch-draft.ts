@@ -8,6 +8,7 @@ import z from 'zod/v4'
 import { contractBuilder } from '../../contract-builder'
 import { safeSubpathSchema } from '../../lib/filename-validation'
 import { TicketProviderSchema } from '../../lib/ticket-provider'
+import { LaunchGithubAccountIdSchema } from '../github-accounts/schemas'
 import { CodingAgentSchema, PermissionsModeSchema } from '../sessions/launch'
 import { CreatedWithExperimentFlagsSchema } from './experiment-flags'
 
@@ -71,6 +72,7 @@ export const LaunchTaskDraftInputSchema = z
 		autoAdvanceImplementationToPr: z.boolean(),
 		createdWithExperimentFlags: CreatedWithExperimentFlagsSchema.optional(),
 		attachments: z.array(LaunchTaskDraftAttachmentInputSchema).max(50).default([]),
+		githubAccountId: LaunchGithubAccountIdSchema,
 		firstSession: LaunchTaskDraftFirstSessionInputSchema,
 	})
 	.superRefine((input, context) => {

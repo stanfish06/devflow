@@ -20,6 +20,7 @@ import { hostAliases } from './tables/host-aliases'
 import { onlineHosts } from './tables/online-hosts'
 import { organizationSettings } from './tables/organization-settings'
 import { organizations } from './tables/organizations'
+import { projectUserSettings } from './tables/project-user-settings'
 import { projects } from './tables/projects'
 import { providerLoginRequests } from './tables/provider-login-requests'
 import { publicCommentUndoAuthorizations } from './tables/public-comment-undo-authorizations'
@@ -66,6 +67,7 @@ export * from './tables/github-integrations'
 export * from './tables/online-hosts'
 export * from './tables/organization-settings'
 export * from './tables/organizations'
+export * from './tables/project-user-settings'
 export * from './tables/projects'
 export * from './tables/pull-request-sessions'
 export * from './tables/repository-locations-for-user-for-host'
@@ -96,6 +98,7 @@ export const applicationTables = [
 	accessRequests,
 	teams,
 	projects,
+	projectUserSettings,
 	repositoryLocationsForUserForHost,
 	workspaces,
 	workspaceLocationsForUserForHost,

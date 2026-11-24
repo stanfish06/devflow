@@ -6,6 +6,7 @@ import {
 	Folder,
 	FolderGit2,
 	GitBranch,
+	House,
 	PanelLeft,
 	Route,
 	Server,
@@ -17,7 +18,9 @@ import { useEffect, useRef, useState } from 'react'
 import { uuidv7 } from 'uuidv7'
 
 import { missingRepositorySources } from '@/lib/repository-sources'
+import { Avatar } from '@/minimalist/components/Avatar'
 import { Composer } from '@/minimalist/components/Composer'
+import { GithubAccountMenu } from '@/minimalist/components/GithubAccountMenu'
 import { IssueDialog } from '@/minimalist/components/IssueDialog'
 import { DirectoryMenu, HostIcon, HostMenu, TargetMenu } from '@/minimalist/components/LaunchMenus'
 import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
@@ -34,6 +37,14 @@ import {
 } from '@/minimalist/lib/data'
 import { newTaskDraftKey, useDraft } from '@/minimalist/lib/drafts'
 import { basename } from '@/minimalist/lib/format'
+import {
+	type GithubAccountPick,
+	githubAccountLabel,
+	pickOf,
+	type ResolvedGithubAccount,
+	resolveGithubAccount,
+	useGithubAccounts,
+} from '@/minimalist/lib/github-accounts'
 import {
 	defaultTarget,
 	ensureRepositorySources,
@@ -135,7 +146,7 @@ export function NewTask({
 	const catalog = modelCatalog(host?.host)
 	const [picked, setSettings] = useState(savedSettings)
 	const settings = fitSettings(picked, catalog)
-	const [menu, setMenu] = useState<'target' | 'host' | 'directory' | null>(null)
+	const [menu, setMenu] = useState<'target' | 'host' | 'directory' | 'account' | null>(null)
 	const [taskSize, setTaskSize] = useTaskSize()
 	const [smallAutoAdvance] = useSmallTaskAutoAdvance()
 	const targetAnchor = useRef<HTMLButtonElement>(null)
@@ -157,6 +168,7 @@ export function NewTask({
 		}
 	}, [existingTaskId, taskSidebarOpen, toggleTaskSidebar])
 	const hostAnchor = useRef<HTMLButtonElement>(null)
+	const accountAnchor = useRef<HTMLButtonElement>(null)
 
 	const requestedProject = projectId ? projects.data?.find((project) => project.id === projectId) : undefined
 	const requested: Target | null = requestedProject
@@ -176,6 +188,20 @@ export function NewTask({
 		effectiveTarget?.kind === 'project'
 			? projects.data?.find((project) => project.id === effectiveTarget.projectId)
 			: undefined
+	// The account a new task pushes as: the one you pick here, else the project's default, else yours.
+	// Only a pick is sent, so an untouched task keeps following the defaults if they change later.
+	const githubAccounts = useGithubAccounts()
+	const [accountPick, setAccountPick] = useState<{ pick: GithubAccountPick } | null>(null)
+	const projectDefaultId =
+		effectiveTarget?.kind === 'project' ? githubAccounts.projectDefaults[effectiveTarget.projectId] : undefined
+	const account = resolveGithubAccount({
+		accounts: githubAccounts.accounts,
+		task: accountPick ? accountPick.pick : undefined,
+		project: projectDefaultId,
+		defaultAccountId: githubAccounts.defaultAccountId,
+	})
+	// Without any accounts there is nothing to choose but each host's own login, as before.
+	const showAccount = !existingTaskId && (githubAccounts.accounts.length > 0 || accountPick !== null)
 	const workspace: LoadedTarget | null =
 		effectiveTarget?.kind === 'directory'
 			? effectiveTarget
@@ -275,6 +301,7 @@ export function NewTask({
 				workflow: taskSizeWorkflow(taskSize, smallAutoAdvance),
 				directImplementation: taskSize === 'small',
 				status,
+				githubAccount: { id: pickOf(account), explicit: accountPick !== null },
 			})
 			rememberSettings(settings)
 			setDraft('')
@@ -332,6 +359,23 @@ export function NewTask({
 				{host ? host.name : hostsReady ? 'No host' : 'Host'}
 				<ChevronDown className="i sm" />
 			</button>
+			{showAccount ? (
+				<button
+					type="button"
+					ref={accountAnchor}
+					aria-label={`GitHub account: ${githubAccountLabel(account)}`}
+					title={accountTitle(account)}
+					onClick={() => setMenu('account')}
+				>
+					{account.account === 'host' ? (
+						<House className="i sm" strokeWidth={1.6} />
+					) : (
+						<Avatar name={account.account.login} size={14} />
+					)}
+					{githubAccountLabel(account)}
+					<ChevronDown className="i sm" />
+				</button>
+			) : null}
 			{copy ? (
 				<span className="muted wc" title={copy.title}>
 					<WorkingCopyIcon branch={copy.branch} />
@@ -409,6 +453,15 @@ export function NewTask({
 					setHostId(id)
 					if (id !== host?.host.host_id) setPickedDirectory(null)
 				}}
+			/>
+			<GithubAccountMenu
+				anchor={accountAnchor}
+				open={menu === 'account'}
+				onClose={() => setMenu(null)}
+				value={pickOf(account)}
+				projectDefaultId={projectDefaultId}
+				hostName={host?.name}
+				onPick={(pick) => setAccountPick({ pick })}
 			/>
 			<DirectoryMenu
 				anchor={directoryAnchor}
@@ -557,6 +610,21 @@ function NoHostsNotice() {
 			</div>
 		</div>
 	)
+}
+
+/** Where the composer's account comes from, for its tooltip. */
+function accountTitle(account: ResolvedGithubAccount): string {
+	const who = account.account === 'host' ? "each host's own gh login" : account.account.login
+	switch (account.source) {
+		case 'task':
+			return `Pushes and opens PRs as ${who}`
+		case 'project':
+			return `Pushes and opens PRs as ${who}, the project's default`
+		case 'default':
+			return `Pushes and opens PRs as ${who}, your default`
+		case 'host':
+			return "Pushes and opens PRs as each host's own gh login"
+	}
 }
 
 function offlineSeedCopy(name: string) {

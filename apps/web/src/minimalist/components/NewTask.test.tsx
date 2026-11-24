@@ -13,10 +13,12 @@ const {
 	useRecentDirectories,
 	useSlashCommands,
 	useWorkingHost,
+	useGithubAccounts,
 	launchInTask,
 	startTask,
 	navigate,
 } = vi.hoisted(() => ({
+	useGithubAccounts: vi.fn(),
 	startTask: vi.fn(),
 	useHosts: vi.fn(),
 	useProjects: vi.fn(),
@@ -57,6 +59,10 @@ vi.mock('@/minimalist/lib/data', () => ({
 	useSlashCommands,
 }))
 vi.mock('@/minimalist/lib/use-working-host', () => ({ useWorkingHost }))
+vi.mock('@/minimalist/lib/github-accounts', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/minimalist/lib/github-accounts')>()),
+	useGithubAccounts,
+}))
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast: vi.fn() }) }))
 vi.mock('@/minimalist/lib/use-attachments', () => ({ useAttachments: () => ({ metadata: [], blocked: false }) }))
 vi.mock('@/minimalist/components/Composer', () => ({
@@ -140,6 +146,13 @@ beforeEach(() => {
 	useRecentDirectories.mockReturnValue([])
 	useSlashCommands.mockReturnValue([])
 	useWorkingHost.mockReturnValue({ id: 'all', host: null, state: 'all', isReady: true, set: vi.fn() })
+	useGithubAccounts.mockReturnValue({
+		accounts: [],
+		defaultAccountId: null,
+		projectDefaults: {},
+		isReady: true,
+		isError: false,
+	})
 })
 
 function expectPlainLanding(container: HTMLElement, heading: string) {
@@ -502,5 +515,94 @@ describe('starting on the working host', () => {
 		fireEvent.click(screen.getByRole('button', { name: 'Pick mac' }))
 		expect(screen.queryByRole('status')).not.toBeInTheDocument()
 		expect(await startNewTask()).toMatchObject({ hostId: 'mac' })
+	})
+})
+
+describe('picking the GitHub account a new task pushes as', () => {
+	const account = (id: string, login: string, status: 'ok' | 'needs_token' = 'ok') => ({
+		id,
+		login,
+		name: null,
+		noreplyEmail: `1+${login}@users.noreply.github.com`,
+		status,
+		createdAt: 0,
+	})
+
+	beforeEach(() => {
+		useGithubAccounts.mockReturnValue({
+			accounts: [
+				account('work', 'stan-work'),
+				account('personal', 'stan-personal'),
+				account('bot', 'stan-bot', 'needs_token'),
+			],
+			defaultAccountId: 'personal',
+			projectDefaults: { project: 'work' },
+			isReady: true,
+			isError: false,
+		})
+	})
+
+	async function startNewTask() {
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Open the pull request' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		return startTask.mock.calls[0]?.[1]
+	}
+
+	it('shows no account chip without any accounts, and sends no pick', async () => {
+		useGithubAccounts.mockReturnValue({
+			accounts: [],
+			defaultAccountId: null,
+			projectDefaults: {},
+			isReady: true,
+			isError: false,
+		})
+		render(<NewTask projectId="project" />)
+		expect(screen.queryByRole('button', { name: /^GitHub account/ })).not.toBeInTheDocument()
+		expect(await startNewTask()).toMatchObject({ githubAccount: { id: null, explicit: false } })
+	})
+
+	it("starts on the project's default and sends it as inherited, not picked", async () => {
+		render(<NewTask projectId="project" />)
+		const chip = screen.getByRole('button', { name: 'GitHub account: stan-work' })
+		expect(chip).toHaveAttribute('title', "Pushes and opens PRs as stan-work, the project's default")
+		expect(await startNewTask()).toMatchObject({ githubAccount: { id: 'work', explicit: false } })
+	})
+
+	it('falls back to your default outside a project with one', () => {
+		render(<NewTask directory="/code/my-app" />)
+		expect(screen.getByRole('button', { name: 'GitHub account: stan-personal' })).toHaveAttribute(
+			'title',
+			'Pushes and opens PRs as stan-personal, your default',
+		)
+	})
+
+	it('marks the defaults, greys out an account that needs a new token, and sends a pick as explicit', async () => {
+		render(<NewTask projectId="project" />)
+		fireEvent.click(screen.getByRole('button', { name: 'GitHub account: stan-work' }))
+		expect(screen.getByRole('button', { name: /^stan-work/ })).toHaveTextContent('Project default')
+		expect(screen.getByRole('button', { name: /^stan-personal/ })).toHaveTextContent('Your default')
+		expect(screen.getByRole('button', { name: /^stan-bot/ })).toBeDisabled()
+		fireEvent.click(screen.getByRole('button', { name: /^stan-personal/ }))
+		expect(screen.getByRole('button', { name: 'GitHub account: stan-personal' })).toBeInTheDocument()
+		expect(await startNewTask()).toMatchObject({ githubAccount: { id: 'personal', explicit: true } })
+	})
+
+	it("sends the host's own gh login as an explicit pick", async () => {
+		render(<NewTask projectId="project" />)
+		fireEvent.click(screen.getByRole('button', { name: 'GitHub account: stan-work' }))
+		fireEvent.click(screen.getByRole('button', { name: /^Host's own gh login/ }))
+		expect(screen.getByRole('button', { name: 'GitHub account: Host gh login' })).toBeInTheDocument()
+		expect(await startNewTask()).toMatchObject({ githubAccount: { id: null, explicit: true } })
+	})
+
+	it('offers no account chip for a new session in a task', () => {
+		useTask.mockReturnValue({
+			task: { id: 'task', name: 'Fix tab shortcuts', project_id: 'project', workspace_id: 'workspace' },
+			sessions: [{ id: 'session', host_id: 'host', working_directory: '/code/checkout' }],
+			isReady: true,
+		})
+		render(<NewTask existingTaskId="task" />)
+		expect(screen.queryByRole('button', { name: /^GitHub account/ })).not.toBeInTheDocument()
 	})
 })

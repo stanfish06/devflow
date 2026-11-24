@@ -5,6 +5,7 @@ import { createTaskV2 } from '../../../../effects/project-workspace/create-task-
 import { GitHubService } from '../../../../effects/services/github/github.service'
 import type { PreparedTicketArtifactBundle } from '../../../../effects/services/task-launch/task-launch.types'
 import { effectOrpcBaseOrganizationRequired } from '../../../effect-base'
+import { GITHUB_ACCOUNT_NOT_FOUND } from '../task-conflict-messages'
 
 function sanitizeArtifactFileStem(stem: string): string {
 	return stem.replaceAll(/[^A-Za-z0-9._-]+/g, '-')
@@ -57,6 +58,7 @@ export const createTaskV2Procedure = effectOrpcBaseOrganizationRequired.tasks.v2
 			UnsupportedRecipeProfile: (error) =>
 				Effect.fail(errors.UNSUPPORTED_RECIPE({ data: { message: error.message } })),
 			ProjectPersistenceUnavailable: () => Effect.fail(errors.SERVICE_UNAVAILABLE()),
+			GithubAccountNotFound: () => Effect.fail(errors.NOT_FOUND({ data: { message: GITHUB_ACCOUNT_NOT_FOUND } })),
 			RepositorySourcesRequired: (error) =>
 				Effect.fail(
 					errors.REPOSITORY_SOURCES_REQUIRED({

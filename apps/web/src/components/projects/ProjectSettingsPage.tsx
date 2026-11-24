@@ -19,6 +19,7 @@ import { invalidateProjectsV2, projectsV2ListQuery } from '@/queries/projects-v2
 import { RepositorySourceSetupDialogWired } from '../RepositorySourceSetupDialog'
 import { ProjectArchiveConfirmDialog } from './ProjectArchiveConfirmDialog'
 import { ProjectEditDialog } from './ProjectEditDialog'
+import { ProjectGithubAccountSelect } from './ProjectGithubAccountSelect'
 import { RepositorySetupDialog } from './RepositorySetupDialog'
 
 type Project = ApiOutputs['projects']['v2']['list']['projects'][number]
@@ -266,6 +267,7 @@ function ProjectRow({
 
 			{expanded && (
 				<div className="px-3 pb-2.5 pl-9">
+					<ProjectGithubAccountSelect projectId={project.id} projectName={project.name} />
 					{project.repositories.map((repo, index) => (
 						<div
 							key={repo.repositoryIdentity}

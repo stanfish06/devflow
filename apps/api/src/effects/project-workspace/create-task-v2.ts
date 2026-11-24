@@ -16,6 +16,7 @@ import { and, eq } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { hash } from 'ohash'
 
+import { writeTaskGithubAccountChoice } from '../github-accounts/account-choice'
 import { getTransactionId } from '../services/postgres/helpers'
 import { PostgresDb, type PostgresTransaction } from '../services/postgres/postgres-db.service'
 import { SessionTitleGeneration } from '../services/session-title-generation/session-title-generation.service'
@@ -359,6 +360,15 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 						})),
 					),
 				)
+			}
+
+			// An explicit account pick lands before the session does, so the daemon's first resolve sees it.
+			if (input.githubAccountId !== undefined) {
+				yield* writeTaskGithubAccountChoice(transaction, {
+					actor: input.actor,
+					taskId,
+					accountId: input.githubAccountId,
+				})
 			}
 
 			const [session] = yield* transaction.query(

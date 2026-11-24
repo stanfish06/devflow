@@ -10,7 +10,7 @@ import {
 import { TaskLaunchService } from '../../../effects/services/task-launch/task-launch.service'
 import type { PreparedTicketArtifactBundle } from '../../../effects/services/task-launch/task-launch.types'
 import { effectOrpcBaseOrganizationRequired } from '../../effect-base'
-import { TASK_ID_IN_USE_MESSAGE, slugInTaskUsedMessage } from './task-conflict-messages'
+import { GITHUB_ACCOUNT_NOT_FOUND, TASK_ID_IN_USE_MESSAGE, slugInTaskUsedMessage } from './task-conflict-messages'
 
 function sanitizeArtifactFileStem(stem: string): string {
 	return stem.replaceAll(/[^A-Za-z0-9._-]+/g, '-')
@@ -75,6 +75,8 @@ export const launchTaskDraftProcedure = effectOrpcBaseOrganizationRequired.tasks
 					),
 				TaskLaunchForbidden: (_error: TaskLaunchForbidden) => Effect.fail(errors.FORBIDDEN()),
 				TaskLaunchUnavailable: (_error: TaskLaunchUnavailable) => Effect.fail(errors.SERVICE_UNAVAILABLE()),
+				GithubAccountNotFound: () =>
+					Effect.fail(errors.NOT_FOUND({ data: { message: GITHUB_ACCOUNT_NOT_FOUND } })),
 			}),
 		)
 })

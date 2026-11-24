@@ -1,7 +1,8 @@
 import type { GithubAccount } from '@devflow/api-contract/api/github-accounts/schemas'
 import { githubAccounts, type GithubAccountRow } from '@devflow/db/tables/github-accounts'
+import { projectUserSettings } from '@devflow/db/tables/project-user-settings'
 import { userSettings } from '@devflow/db/tables/user-settings'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, isNotNull, sql } from 'drizzle-orm'
 import { Config, Effect, Redacted } from 'effect'
 import * as HttpClient from 'effect/http/HttpClient'
 import * as HttpClientRequest from 'effect/http/HttpClientRequest'
@@ -98,10 +99,13 @@ export const toGithubAccount = (row: AccountRow): GithubAccount => ({
 	createdAt: Number(row.created_at),
 })
 
-/** The caller's accounts, oldest first, and which one is their default (null: the host's gh login). */
+/**
+ * The caller's accounts, oldest first, which one is their default (null: the host's gh login), and
+ * which account each of their projects defaults to.
+ */
 export const listGithubAccounts = Effect.fn('github_accounts.list')(function* (actor: GithubAccountActor) {
 	const postgres = yield* PostgresDb
-	const [rows, settings] = yield* Effect.all(
+	const [rows, settings, projectChoices] = yield* Effect.all(
 		[
 			postgres.query(
 				postgres.client
@@ -121,15 +125,34 @@ export const listGithubAccounts = Effect.fn('github_accounts.list')(function* (a
 						),
 					),
 			),
+			postgres.query(
+				postgres.client
+					.select({
+						projectId: projectUserSettings.project_id,
+						accountId: projectUserSettings.github_account_id,
+					})
+					.from(projectUserSettings)
+					.where(
+						and(
+							eq(projectUserSettings.organization_id, actor.organizationId),
+							eq(projectUserSettings.user_id, actor.userId),
+							isNotNull(projectUserSettings.github_account_id),
+						),
+					),
+			),
 		],
 		{ concurrency: 'unbounded' },
 	)
 	const accounts = rows.map(toGithubAccount)
+	// Every choice is only ever one of the caller's own (the writes check), but never point at anything else.
+	const own = (accountId: string | null): accountId is string => accounts.some((account) => account.id === accountId)
 	const defaultAccountId = settings[0]?.defaultAccountId ?? null
 	return {
 		accounts,
-		// Only ever one of the caller's own (setDefault checks), but never point at anything else.
-		defaultAccountId: accounts.some((account) => account.id === defaultAccountId) ? defaultAccountId : null,
+		defaultAccountId: own(defaultAccountId) ? defaultAccountId : null,
+		projectDefaults: Object.fromEntries(
+			projectChoices.flatMap(({ projectId, accountId }) => (own(accountId) ? [[projectId, accountId]] : [])),
+		),
 	}
 })
 

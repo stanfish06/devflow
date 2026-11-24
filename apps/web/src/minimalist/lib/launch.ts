@@ -16,6 +16,7 @@ import { projectTaskAutoAdvanceFlags } from '@/minimalist/lib/auto-advance-flags
 import type { HostView } from '@/minimalist/lib/data'
 import { basename } from '@/minimalist/lib/format'
 import { branchName, readGitPrefs } from '@/minimalist/lib/git-prefs'
+import type { GithubAccountPick } from '@/minimalist/lib/github-accounts'
 import { AGENT_PROVIDERS, type ComposerSettings } from '@/minimalist/lib/models'
 import { type Ticket, ticketFields, withTicket } from '@/minimalist/lib/tickets'
 import type { ApiClient } from '@/orpc/client'
@@ -159,6 +160,11 @@ type NewTask = {
 	directImplementation?: boolean
 	/** Board status, when started from a board column; tasks otherwise start in progress. */
 	status?: TaskStatus
+	/**
+	 * The GitHub account the composer shows. Sent only when you picked it (`explicit`); otherwise the
+	 * task stores nothing and keeps following the project's default and yours, even if they change.
+	 */
+	githubAccount?: { id: GithubAccountPick; explicit: boolean }
 }
 
 /**
@@ -208,6 +214,7 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 		autoAdvanceWorktreeToImplementation: flags.autoAdvanceWorktreeToImplementation,
 		autoAdvanceImplementationToPr: flags.autoAdvanceImplementationToPr,
 		...ticketFields(ticket),
+		...githubAccountField(input.githubAccount),
 	}
 	if (target.kind === 'project') {
 		const branch = branchName(readGitPrefs().branchPrefix, slug)
@@ -249,6 +256,11 @@ export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
 		.catch(() => null)
 }
 
+/** The launch field for the GitHub account: present only for an explicit pick. */
+export function githubAccountField(account: NewTask['githubAccount']): { githubAccountId?: GithubAccountPick } {
+	return account?.explicit ? { githubAccountId: account.id } : {}
+}
+
 /**
  * What a failed launch tells you: the reason when the server gives one you can act on, and
  * that the prompt is kept. The launch calls are silent, so this is the only message.
@@ -264,6 +276,9 @@ function launchFailure(error: unknown): string | null {
 	if (known) return known
 	const code = error instanceof ORPCError ? error.code : null
 	if (code === 'FORBIDDEN') return "Your account can't start tasks here."
+	// The only launch NOT_FOUND that names itself: a picked GitHub account that's gone.
+	const message = (error as { data?: { message?: unknown } } | null)?.data?.message
+	if (code === 'NOT_FOUND' && typeof message === 'string' && message.includes('GitHub account')) return message
 	if (code === 'INPUT_VALIDATION_FAILED') {
 		const data = (error as { data?: unknown }).data as { fieldErrors?: Record<string, string[]> } | undefined
 		const fieldErrors = data?.fieldErrors

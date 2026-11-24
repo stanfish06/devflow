@@ -231,6 +231,7 @@ describe('githubAccounts', () => {
 		await expect(call(keyless.list, {}, asUser(me, keylessRuntime))).resolves.toEqual({
 			accounts: [],
 			defaultAccountId: null,
+			projectDefaults: {},
 		})
 	})
 
@@ -334,7 +335,11 @@ describe('githubAccounts', () => {
 
 		expect(await storedRows(me)).toHaveLength(0)
 		expect(await storedDefault(me)).toBeNull()
-		expect(await call(api.list, {}, asUser(me))).toEqual({ accounts: [], defaultAccountId: null })
+		expect(await call(api.list, {}, asUser(me))).toEqual({
+			accounts: [],
+			defaultAccountId: null,
+			projectDefaults: {},
+		})
 		await expect(call(api.remove, { accountId: account.id }, asUser(me))).rejects.toMatchObject({
 			code: 'NOT_FOUND',
 		})

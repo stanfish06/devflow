@@ -11,6 +11,7 @@ import { createSessionForLaunch } from '../../../db/create-session-for-launch'
 import { resolveOrgDefaultTaskShareLevel } from '../../../db/organization-settings'
 import { activeTaskSlugIsAllocated, lockActiveTaskSlugAllocation } from '../../../db/task-slug-allocation'
 import { upsertWorkspaceSetupRowForTaskSession } from '../../../db/upsert-workspace-setup-row-for-task-session'
+import { writeTaskGithubAccountChoice } from '../../github-accounts/account-choice'
 import { getTransactionId } from '../postgres/helpers'
 import { PostgresDb } from '../postgres/postgres-db.service'
 import { taskIntentLabels } from '../task-intent-classifier/task-intent-labels'
@@ -314,6 +315,15 @@ export const launchTaskDraftPersistence = Effect.fn('task_launch.persistence.lau
 						})),
 					),
 				)
+			}
+
+			// An explicit account pick lands before the session does, so the daemon's first resolve sees it.
+			if (input.githubAccountId !== undefined) {
+				yield* writeTaskGithubAccountChoice(tx, {
+					actor: { organizationId: input.organizationId, userId: input.userId },
+					taskId: task.id,
+					accountId: input.githubAccountId,
+				})
 			}
 
 			yield* tx.run(() =>

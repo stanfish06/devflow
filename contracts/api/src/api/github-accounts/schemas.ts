@@ -38,3 +38,10 @@ export const githubTokenErrors = {
 		data: z.object({ message: z.string() }),
 	},
 } as const
+
+/**
+ * The account picked for a new task at launch: one of the caller's accounts, or null for each host's
+ * own gh login. Omitted when nothing was picked, so the task keeps following the project's default
+ * and the caller's own, even if those change later.
+ */
+export const LaunchGithubAccountIdSchema = z.uuid().nullable().optional()

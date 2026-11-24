@@ -115,6 +115,8 @@ export function useTaskSettings({
 						auto_advance_plan_to_worktree: task.auto_advance_plan_to_worktree,
 						auto_advance_worktree_to_implementation: task.auto_advance_worktree_to_implementation,
 						auto_advance_implementation_to_pr: task.auto_advance_implementation_to_pr,
+						github_account_id: null,
+						github_use_host_login: false,
 						created_at: now,
 						updated_at: now,
 					})
@@ -236,6 +238,8 @@ export function useTaskSettings({
 						host_id: null,
 						workspace_base_directory: null,
 						workspace_materialized_at: null,
+						github_account_id: null,
+						github_use_host_login: false,
 						created_at: now,
 						updated_at: now,
 					})

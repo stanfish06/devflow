@@ -114,6 +114,7 @@ import {
 	getProjectV2RepositorySourcesContract,
 	upsertProjectV2RepositorySourcesContract,
 } from './api/projects-v2/repository-sources'
+import { setProjectGithubAccountContract } from './api/projects-v2/set-github-account'
 import { updateProjectV2Contract } from './api/projects-v2/update'
 import {
 	cancelProviderLoginContract,
@@ -188,6 +189,7 @@ import { launchTaskDraftContract } from './api/tasks/launch-draft'
 import { listTasksContract } from './api/tasks/list'
 import { reassignTaskOwnerContract } from './api/tasks/reassign-owner'
 import { saveTaskDraftContract } from './api/tasks/saveDraft'
+import { setTaskGithubAccountContract } from './api/tasks/set-github-account'
 import { updateTaskContract } from './api/tasks/update'
 import { createTaskV2Contract } from './api/tasks/v2/create'
 import { createUploadContract } from './api/uploads/create'
@@ -365,6 +367,7 @@ export const ApiContract = {
 		delete: deleteTaskContract,
 		deleteArchivedPreview: deleteArchivedTasksPreviewContract,
 		deleteArchived: deleteArchivedTasksContract,
+		setGithubAccount: setTaskGithubAccountContract,
 		list: listTasksContract,
 		v2: {
 			create: createTaskV2Contract,
@@ -379,6 +382,7 @@ export const ApiContract = {
 			archive: archiveProjectV2Contract,
 			deletePreview: projectDeletePreviewV2Contract,
 			delete: deleteProjectV2Contract,
+			setGithubAccount: setProjectGithubAccountContract,
 			locations: { upsert: upsertProjectV2LocationContract },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesContract,
