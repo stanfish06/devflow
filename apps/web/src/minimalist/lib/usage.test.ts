@@ -32,10 +32,13 @@ import {
 	isEmptyYear,
 	lensValue,
 	localDayKey,
+	msUntilLocalMidnight,
 	periodActivities,
 	periodActivityDetail,
 	periodDelta,
 	periodTitle,
+	readLocalClock,
+	sameLocalClock,
 	streaks,
 	tokenBreakdown,
 	topWeekdayLabel,
@@ -87,6 +90,33 @@ describe('localDayKey', () => {
 	it('reads the local calendar day', () => {
 		expect(localDayKey(new Date(2026, 10, 4, 23, 59))).toBe('2026-11-04')
 		expect(localDayKey(new Date(2027, 0, 1, 0, 0))).toBe('2027-01-01')
+	})
+})
+
+describe('local clock', () => {
+	it('reads the local day and offset together', () => {
+		const now = new Date(2026, 10, 24, 9, 30)
+		expect(readLocalClock(now)).toEqual({ today: '2026-11-24', timezoneOffset: now.getTimezoneOffset() })
+	})
+
+	it('treats a re-read on the same day and offset as unchanged', () => {
+		const morning = readLocalClock(new Date(2026, 10, 24, 9, 30))
+		expect(sameLocalClock(morning, readLocalClock(new Date(2026, 10, 24, 23, 59)))).toBe(true)
+		expect(sameLocalClock(morning, readLocalClock(new Date(2026, 10, 25, 0, 0)))).toBe(false)
+		expect(sameLocalClock(morning, { ...morning, timezoneOffset: morning.timezoneOffset + 60 })).toBe(false)
+	})
+
+	it('counts down to the next local midnight, across a month and a year end', () => {
+		expect(msUntilLocalMidnight(new Date(2026, 10, 24, 23, 59, 0))).toBe(60_000)
+		expect(msUntilLocalMidnight(new Date(2026, 10, 30, 12, 0, 0))).toBe(
+			new Date(2026, 11, 1).getTime() - new Date(2026, 10, 30, 12).getTime(),
+		)
+		expect(msUntilLocalMidnight(new Date(2026, 11, 31, 23, 0, 0))).toBe(
+			new Date(2027, 0, 1).getTime() - new Date(2026, 11, 31, 23).getTime(),
+		)
+		// Exactly midnight is the start of a day: the next rollover is a whole day away.
+		const start = new Date(2026, 10, 24)
+		expect(msUntilLocalMidnight(start)).toBe(new Date(2026, 10, 25).getTime() - start.getTime())
 	})
 })
 

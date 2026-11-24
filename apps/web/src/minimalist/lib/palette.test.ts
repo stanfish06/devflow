@@ -18,6 +18,16 @@ describe('matchActions', () => {
 		expect(ids(matchActions(ITEMS, '', 72))).toEqual(['new', 'compact', 'fork'])
 	})
 
+	it('offers the top-level pages before you type, usage next to pull requests', () => {
+		const pages = [
+			{ id: 'prs', label: 'Go to pull requests' },
+			{ id: 'artifacts', label: 'Go to artifacts' },
+			{ id: 'usage', label: 'Go to usage' },
+		]
+		expect(ids(matchActions(pages, '', null))).toEqual(['prs', 'usage'])
+		expect(ids(matchActions(pages, 'usage', null))).toEqual(['usage'])
+	})
+
 	it('matches any action by label once you type', () => {
 		expect(ids(matchActions(ITEMS, 'DARK', null))).toEqual(['dark'])
 		expect(ids(matchActions(ITEMS, 'task', null))).toEqual(['new'])

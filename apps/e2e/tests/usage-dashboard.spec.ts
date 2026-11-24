@@ -1,7 +1,16 @@
 import { expect, test } from '@playwright/test'
 
 import { expectStackUp } from './helpers'
-import { seedUsageFixture, USAGE_DAY, USAGE_TODAY, type UsageFixture } from './usage-fixture'
+import {
+	seedUsageFixture,
+	seedYear,
+	USAGE_DAY,
+	USAGE_TODAY,
+	type UsageFixture,
+	YEAR_ACTIVITIES,
+	YEAR_DAYS,
+	YEAR_TODAY,
+} from './usage-fixture'
 
 // The grid buckets by the browser's calendar, so the clock and the time zone are both pinned.
 test.use({ timezoneId: 'UTC' })
@@ -270,4 +279,59 @@ test('a link to a period and a day opens both, independently', async ({ page }) 
 	await list.getByRole('button', { name: 'Clear' }).click()
 	await expect(page).toHaveURL(/\/usage\?period=week$/)
 	await expect(week).toBeVisible()
+})
+
+test('the account menu and the command palette open Usage too', async ({ page }) => {
+	await page.goto('/')
+	const sidebar = page.getByRole('complementary', { name: 'Projects and tasks' })
+	await expect(sidebar).toBeVisible({ timeout: 30_000 })
+	await page.clock.setFixedTime(new Date(`${USAGE_TODAY}T12:00:00Z`))
+	const grid = page.getByRole('region', { name: 'Activity in the last year' })
+
+	// "Usage history" sits right under the host's plan-limit bars.
+	await sidebar.locator('button.me').click()
+	await page.getByRole('button', { name: 'Usage history' }).click()
+	await expect(page).toHaveURL(/\/usage$/)
+	await expect(grid.getByText('4 activities', { exact: true })).toBeVisible({ timeout: 30_000 })
+
+	// Leave, then come back through the palette, where Usage is offered before you type.
+	await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Board' }).click()
+	await expect(page).toHaveURL(/\/board/)
+	await sidebar.getByRole('button', { name: 'Search' }).click()
+	const palette = page.getByRole('dialog', { name: 'Search' })
+	await palette.getByRole('option', { name: 'Go to usage' }).click()
+	await expect(page).toHaveURL(/\/usage$/)
+	await expect(grid.getByText('4 activities', { exact: true })).toBeVisible({ timeout: 30_000 })
+})
+
+test('a full year of history renders in about a second, and the message count uses its index', async ({ page }) => {
+	const year = await seedYear()
+	try {
+		// The server's message query over the seeded year reads the partial index, not the whole table.
+		const plan = await year.explainMessages()
+		expect(plan, plan).toContain('conversation_events_user_messages_idx')
+
+		await page.goto('/')
+		const usageLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Usage' })
+		await expect(usageLink).toBeVisible({ timeout: 30_000 })
+		await page.clock.setFixedTime(new Date(`${YEAR_TODAY}T12:00:00Z`))
+		const grid = page.getByRole('region', { name: 'Activity in the last year' })
+		const total = grid.getByText(`${YEAR_ACTIVITIES.toLocaleString('en-US')} activities`, { exact: true })
+
+		// From the click to the year's headline and every cell on screen. Timed here, in the test runner,
+		// because the page's own clock is pinned.
+		const started = performance.now()
+		await usageLink.click()
+		await expect(total).toBeVisible({ timeout: 30_000 })
+		await expect(grid.locator('.usage-cell.l0')).toHaveCount(0)
+		const elapsed = performance.now() - started
+		test.info().annotations.push({ type: 'usage year render', description: `${Math.round(elapsed)} ms` })
+		expect(elapsed).toBeLessThan(1_000)
+		// Every day of the year was active, so the streak runs the whole grid.
+		await expect(grid.locator('.usage-sub')).toHaveText(
+			`in the last year · ${YEAR_DAYS}-day streak · longest ${YEAR_DAYS}`,
+		)
+	} finally {
+		await year.cleanup()
+	}
 })

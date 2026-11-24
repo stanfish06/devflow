@@ -40,6 +40,13 @@ function stackDatabaseUrl(config: LauncherConfig): string {
 
 export type UsageFixture = { taskName: string; cleanup: () => Promise<void> }
 
+async function connectToStack(): Promise<{ config: LauncherConfig; client: pg.Client }> {
+	const config = JSON.parse(readFileSync(join(DEVFLOW_HOME, 'config.json'), 'utf8')) as LauncherConfig
+	const client = new pg.Client({ connectionString: stackDatabaseUrl(config) })
+	await client.connect()
+	return { config, client }
+}
+
 /**
  * One archived Claude task of the local user on {@link USAGE_DAY}: the task, one session and one prompt,
  * three activities in all, and the run's usage-ledger row ({@link USAGE_RUN}). Plus one archived Codex
@@ -47,9 +54,7 @@ export type UsageFixture = { taskName: string; cleanup: () => Promise<void> }
  * spec runs, and because archiving must not rewrite history.
  */
 export async function seedUsageFixture(): Promise<UsageFixture> {
-	const config = JSON.parse(readFileSync(join(DEVFLOW_HOME, 'config.json'), 'utf8')) as LauncherConfig
-	const client = new pg.Client({ connectionString: stackDatabaseUrl(config) })
-	await client.connect()
+	const { config, client } = await connectToStack()
 
 	const at = Date.parse(`${USAGE_DAY}T15:00:00Z`)
 	const taskId = randomUUID()
@@ -149,5 +154,162 @@ export async function seedUsageFixture(): Promise<UsageFixture> {
 				await client.end()
 			}
 		},
+	}
+}
+
+// ── A year of history ────────────────────────────────────────────────────────
+
+/**
+ * The day the browser thinks it is for the year-sized seed, a Wednesday in 2017: three years before
+ * {@link USAGE_TODAY}, so neither seed shows in the other's grid, periods or comparisons.
+ */
+export const YEAR_TODAY = '2017-06-14'
+/** The Monday 52 weeks back that opens {@link YEAR_TODAY}'s grid; the seed fills every day from here. */
+export const YEAR_FROM = '2016-06-13'
+
+/** What the year seed puts on every day. */
+export const YEAR_PER_DAY = {
+	tasks: 1,
+	sessionsPerTask: 2,
+	promptsPerSession: 4,
+	/** Assistant replies, tool calls and tool results: daemon-written events the message count must skip. */
+	daemonEventsPerSession: 12,
+}
+
+const DAY_MS = 86_400_000
+
+/** Every day of the seeded year, {@link YEAR_FROM} to {@link YEAR_TODAY} inclusive. */
+export const YEAR_DAYS = (Date.parse(`${YEAR_TODAY}T00:00:00Z`) - Date.parse(`${YEAR_FROM}T00:00:00Z`)) / DAY_MS + 1
+
+/** The headline's count: every seeded task, session and prompt. */
+export const YEAR_ACTIVITIES =
+	YEAR_DAYS * YEAR_PER_DAY.tasks * (1 + YEAR_PER_DAY.sessionsPerTask * (1 + YEAR_PER_DAY.promptsPerSession))
+
+export type YearFixture = {
+	/** `EXPLAIN ANALYZE` of the usage page's message count over the seeded year, as plan text. */
+	explainMessages: () => Promise<string>
+	cleanup: () => Promise<void>
+}
+
+/**
+ * A full year of the local user's history ending on {@link YEAR_TODAY}, every day busy: tasks, Claude
+ * sessions, prompts with the daemon's own events around them, and a ledger row per session alternating
+ * Opus and Sonnet. All archived, so the sidebar stays as it was. Rows are generated in SQL and deleted
+ * by id afterwards; the tables are analyzed so the planner sees the seed the way it would see real
+ * history.
+ */
+export async function seedYear(): Promise<YearFixture> {
+	const { config, client } = await connectToStack()
+	const { organizationId, userId } = config
+	const tag = randomUUID().slice(0, 8)
+	// Noon UTC: the spec pins the browser to UTC, so every row lands on the day it was generated for.
+	const firstNoon = Date.parse(`${YEAR_FROM}T12:00:00Z`)
+	let taskIds: string[] = []
+	let sessionIds: string[] = []
+
+	const cleanup = async () => {
+		try {
+			// Events and ledger rows also cascade from their sessions; deleting them first keeps it explicit.
+			await client.query('DELETE FROM session_usage_events WHERE session_id = ANY($1::uuid[])', [sessionIds])
+			await client.query('DELETE FROM conversation_events WHERE session_id = ANY($1::uuid[])', [sessionIds])
+			await client.query('DELETE FROM sessions WHERE id = ANY($1::uuid[])', [sessionIds])
+			await client.query('DELETE FROM tasks WHERE id = ANY($1::uuid[])', [taskIds])
+		} finally {
+			await client.end()
+		}
+	}
+
+	try {
+		await client.query('BEGIN')
+		const tasks = await client.query<{ id: string }>(
+			`INSERT INTO tasks (id, organization_id, name, created_by, resource_owner_user_id, archived, created_at, updated_at)
+			 SELECT gen_random_uuid(), $1, 'Usage e2e year ' || $2::text || ' #' || (d * $3 + n), $4, $4, true,
+				$5::bigint + d::bigint * ${DAY_MS} + n * 60000, $5::bigint + d::bigint * ${DAY_MS} + n * 60000
+			 FROM generate_series(0, $6 - 1) d CROSS JOIN generate_series(0, $3 - 1) n
+			 RETURNING id`,
+			[organizationId, tag, YEAR_PER_DAY.tasks, userId, firstNoon, YEAR_DAYS],
+		)
+		taskIds = tasks.rows.map((row) => row.id)
+		const sessions = await client.query<{ id: string }>(
+			`INSERT INTO sessions (id, organization_id, task_id, created_by, resource_owner_user_id, host_id, working_directory,
+				coding_agent, status, archived, title, created_at, updated_at, last_activity_at)
+			 SELECT gen_random_uuid(), t.organization_id, t.id, $2, $2, $3, '/tmp', 'claude', 'ready_for_input', true,
+				t.name || ' session ' || n, t.created_at + n * 3600000, t.created_at + n * 3600000, t.created_at + n * 3600000
+			 FROM tasks t CROSS JOIN generate_series(0, $4 - 1) n
+			 WHERE t.id = ANY($1::uuid[])
+			 RETURNING id`,
+			[taskIds, userId, `usage-e2e-year-${tag}`, YEAR_PER_DAY.sessionsPerTask],
+		)
+		sessionIds = sessions.rows.map((row) => row.id)
+		// The user's prompts, a minute apart after each session starts.
+		await client.query(
+			`INSERT INTO conversation_events (organization_id, session_id, task_id, resource_owner_user_id, user_id,
+				event_type, role, content, created_at, updated_at)
+			 SELECT s.organization_id, s.id, s.task_id, $2, $2, 'message', 'user', 'Seeded prompt ' || m,
+				s.created_at + m * 60000, s.created_at + m * 60000
+			 FROM sessions s CROSS JOIN generate_series(1, $3) m
+			 WHERE s.id = ANY($1::uuid[])`,
+			[sessionIds, userId, YEAR_PER_DAY.promptsPerSession],
+		)
+		// What the daemon writes around them: no user_id, and only some with role 'message'.
+		await client.query(
+			`INSERT INTO conversation_events (organization_id, session_id, task_id, resource_owner_user_id, user_id,
+				event_type, role, content, created_at, updated_at)
+			 SELECT s.organization_id, s.id, s.task_id, $2, NULL,
+				(ARRAY['message', 'tool_call', 'tool_result'])[k % 3 + 1],
+				(ARRAY['assistant', 'assistant', 'user'])[k % 3 + 1],
+				'Seeded daemon event ' || k, s.created_at + k * 15000, s.created_at + k * 15000
+			 FROM sessions s CROSS JOIN generate_series(1, $3) k
+			 WHERE s.id = ANY($1::uuid[])`,
+			[sessionIds, userId, YEAR_PER_DAY.daemonEventsPerSession],
+		)
+		await client.query(
+			`INSERT INTO session_usage_events (session_id, organization_id, resource_owner_user_id, session_creator_user_id,
+				task_id, coding_agent, source, report_key, model, tokens, input_tokens, output_tokens, cache_read_tokens,
+				cache_creation_tokens, cost_usd, occurred_at)
+			 SELECT s.id, s.organization_id, $2, $2, s.task_id, 'claude', 'claude_sdk_result', 'usage-e2e-year-' || s.id,
+				-- A task's sessions start an hour apart, so every day spends on both models.
+				CASE WHEN (s.created_at / 3600000) % 2 = 0 THEN 'claude-opus-4-5' ELSE 'claude-sonnet-4-5' END,
+				'{"input_tokens":400,"output_tokens":600,"cache_read_input_tokens":6000,"cache_creation_input_tokens":1000}'::jsonb,
+				400, 600, 6000, 1000, 0.25, s.created_at + 30 * 60000
+			 FROM sessions s
+			 WHERE s.id = ANY($1::uuid[])`,
+			[sessionIds, userId],
+		)
+		await client.query('COMMIT')
+		// Fresh statistics, as autovacuum would eventually gather, so the plan reflects the seeded volume.
+		await client.query('ANALYZE tasks, sessions, conversation_events, session_usage_events')
+	} catch (error) {
+		await client.query('ROLLBACK').catch(() => undefined)
+		await cleanup().catch(() => undefined)
+		throw error
+	}
+
+	return {
+		// The message branch of the server's `myActivityEvents` (apps/api/src/orpc/api/usage/usage-sql.ts),
+		// over the same window the grid asks for. `role` and `event_type` stay literals, as there, so the
+		// planner can match the partial index's predicate.
+		explainMessages: async () => {
+			const plan = await client.query<{ 'QUERY PLAN': string }>(
+				`EXPLAIN (ANALYZE, COSTS OFF)
+				 SELECT ce.created_at, ce.task_id, ce.session_id
+				 FROM conversation_events ce
+				 JOIN sessions es ON es.id = ce.session_id
+				 WHERE ce.organization_id = $1
+					AND ce.user_id = $2
+					AND ce.role = 'user'
+					AND ce.event_type = 'message'
+					AND ce.created_at BETWEEN $3 AND $4
+					AND NOT (es.forked_from_session_id IS NOT NULL AND ce.created_at < es.created_at)`,
+				[
+					organizationId,
+					userId,
+					Date.parse(`${YEAR_FROM}T00:00:00Z`),
+					Date.parse(`${YEAR_TODAY}T00:00:00Z`) + DAY_MS - 1,
+				],
+			)
+			return plan.rows.map((row) => row['QUERY PLAN']).join('\n')
+		},
+		cleanup,
 	}
 }

@@ -1,6 +1,7 @@
 import type { Session } from '@devflow/db/tables/sessions'
 import { useLocation, useNavigate, useParams } from '@tanstack/react-router'
 import {
+	Activity,
 	Archive,
 	ArrowRightLeft,
 	Bell,
@@ -249,6 +250,7 @@ function useAppActions(): PaletteItem[] {
 				| '/settings/general'
 				| '/pull-requests'
 				| '/artifacts'
+				| '/usage'
 				| '/settings/archived'
 				| '/settings/keybindings'
 				| '/settings/git',
@@ -287,6 +289,7 @@ function useAppActions(): PaletteItem[] {
 			run: go('/pull-requests'),
 		},
 		{ id: 'artifacts', label: 'Go to artifacts', icon: <FileText className="i sm" />, run: go('/artifacts') },
+		{ id: 'usage', label: 'Go to usage', icon: <Activity className="i sm" />, run: go('/usage') },
 		{
 			id: 'attention',
 			label: attentionView ? 'Show all tasks' : 'Show what needs you',

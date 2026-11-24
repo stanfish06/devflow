@@ -26,6 +26,27 @@ export function localDayKey(date: Date): string {
 	return `${date.getFullYear()}-${month}-${day}`
 }
 
+/** The browser's calendar right now: its local day and its `getTimezoneOffset()` minutes. */
+export type LocalClock = { today: string; timezoneOffset: number }
+
+export function readLocalClock(now: Date): LocalClock {
+	return { today: localDayKey(now), timezoneOffset: now.getTimezoneOffset() }
+}
+
+/** Whether two readings name the same calendar, so a re-read that changed nothing can keep the old one. */
+export function sameLocalClock(a: LocalClock, b: LocalClock): boolean {
+	return a.today === b.today && a.timezoneOffset === b.timezoneOffset
+}
+
+/**
+ * Milliseconds from `now` until the next local midnight, when "today" rolls over. Counted on the local
+ * calendar, so a day that a DST change makes 23 or 25 hours long still ends at its own midnight.
+ */
+export function msUntilLocalMidnight(now: Date): number {
+	const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+	return Math.max(0, midnight.getTime() - now.getTime())
+}
+
 /** Every token kind together, cache reads included: the same total a session's cost badge shows. */
 export function totalTokens(tokens: TokenBreakdown): number {
 	return tokens.cacheRead + tokens.cacheWrite + tokens.input + tokens.output

@@ -1,16 +1,18 @@
 import type { UsagePeriod as Period } from '@devflow/api-contract/api/usage/windows'
-import { useState } from 'react'
 
 import { UsageDayList } from '@/minimalist/components/UsageDayList'
 import { UsageGrid } from '@/minimalist/components/UsageGrid'
 import { UsagePeriod } from '@/minimalist/components/UsagePeriod'
-import { localDayKey } from '@/minimalist/lib/usage'
-import { useUsageYear } from '@/minimalist/lib/use-usage'
+import { useLocalClock, useUsageYear } from '@/minimalist/lib/use-usage'
 
 /**
  * Your own activity over the last year. The browser owns "today": it sends its local day and offset,
  * and the server buckets every row into that calendar. The URL owns the selected day, whose work is
  * listed under the grid, and the period summarised below it.
+ *
+ * Left open, the page keeps up: each region refreshes every minute while the tab is visible, and
+ * "today" rolls over at local midnight (or when the tab comes back), moving the grid and the period on.
+ * A selected day is a date in the URL, so it stays put.
  */
 export function UsagePage({
 	day,
@@ -23,10 +25,7 @@ export function UsagePage({
 	period: Period
 	onPeriodChange: (period: Period) => void
 }) {
-	const [clock] = useState(() => {
-		const now = new Date()
-		return { today: localDayKey(now), timezoneOffset: now.getTimezoneOffset() }
-	})
+	const clock = useLocalClock()
 	const year = useUsageYear(clock.today, clock.timezoneOffset)
 
 	return (
