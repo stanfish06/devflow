@@ -16,6 +16,8 @@ const {
 	startTask,
 	navigate,
 	saveDraft,
+	archive,
+	showToast,
 	confirmTasks,
 } = vi.hoisted(() => ({
 	startTask: vi.fn(),
@@ -27,6 +29,8 @@ const {
 	launchInTask: vi.fn(),
 	navigate: vi.fn(),
 	saveDraft: vi.fn(),
+	archive: vi.fn(),
+	showToast: vi.fn(),
 	confirmTasks: vi.fn(),
 }))
 
@@ -41,7 +45,7 @@ vi.mock('@/components/providers/SyncProvider', () => ({
 }))
 vi.mock('@/orpc/client', () => ({
 	useApi: () => ({
-		client: { tasks: { saveDraft } },
+		client: { tasks: { saveDraft, archive } },
 		queryClient: {
 			projectWorkspaces: { getStatus: { queryOptions: () => ({}) } },
 			projects: { v2: { repositorySources: { get: { queryOptions: () => ({}) } } } },
@@ -61,7 +65,7 @@ vi.mock('@/minimalist/lib/data', () => ({
 	useTaskTree: () => ({ recent: [] }),
 	useSlashCommands,
 }))
-vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast: vi.fn() }) }))
+vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast }) }))
 vi.mock('@/minimalist/lib/use-attachments', () => ({ useAttachments: () => ({ metadata: [], blocked: false }) }))
 vi.mock('@/minimalist/components/Composer', () => ({
 	Composer: ({
@@ -150,6 +154,7 @@ beforeEach(() => {
 		transactionId: '42',
 		task: { id: input.id },
 	}))
+	archive.mockResolvedValue({ success: true, transactionId: '43', affectedSessionCount: 0 })
 	confirmTasks.mockResolvedValue(undefined)
 	useHosts.mockReturnValue({ hosts: [hostView('host')], isReady: true })
 	useProjects.mockReturnValue({ data: [{ id: 'project', name: 'devflow', repositories: [] }], isPending: false })
@@ -591,6 +596,104 @@ describe('an opened draft', () => {
 		expect(screen.getByRole('textbox')).toHaveAttribute(
 			'placeholder',
 			'This draft was saved by a newer version of devflow. Reload to open it.',
+		)
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+	})
+
+	it('shows its name, the Draft badge and its column in the title bar', () => {
+		render(<NewTask existingTaskId={draftId} />)
+		const titlebar = document.querySelector('.titlebar') as HTMLElement
+		expect(within(titlebar).getByText('Retry the webhook')).toBeInTheDocument()
+		expect(within(titlebar).getByText('Draft')).toBeInTheDocument()
+		expect(within(titlebar).getByText('· Todo')).toBeInTheDocument()
+		expect(within(titlebar).getByRole('button', { name: 'Delete draft' })).toBeEnabled()
+	})
+
+	it('saves the last edit, in the column the card is in now, before Start launches it', async () => {
+		let landed: (value: unknown) => void = () => undefined
+		saveDraft.mockReturnValueOnce(
+			new Promise((resolve) => {
+				landed = resolve
+			}),
+		)
+		const { rerender } = render(<NewTask existingTaskId={draftId} />)
+		// Dragged to On hold on the board while the draft was open.
+		useTask.mockReturnValue({ task: { ...draftTask, status: 'on_hold' }, sessions: [], isReady: true })
+		rerender(<NewTask existingTaskId={draftId} />)
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Retry the webhook with jitter' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		await waitFor(() => expect(saveDraft).toHaveBeenCalledOnce())
+		expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({
+			id: draftId,
+			status: 'on_hold',
+			draftLaunch: { prompt: 'Retry the webhook with jitter', hostId: 'host' },
+		})
+		expect(startTask).not.toHaveBeenCalled()
+		landed({ result: 'saved', transactionId: '44', task: { id: draftId } })
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
+			ids: { taskId: draftId },
+			draft: 'Retry the webhook with jitter',
+		})
+		expect(saveDraft.mock.invocationCallOrder[0]).toBeLessThan(startTask.mock.invocationCallOrder[0] ?? 0)
+	})
+
+	it('deletes at once, back to the board, and Undo restores it', async () => {
+		render(<NewTask existingTaskId={draftId} />)
+		fireEvent.click(screen.getByRole('button', { name: 'Delete draft' }))
+		await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: '/board' }))
+		expect(archive).toHaveBeenCalledExactlyOnceWith({ taskId: draftId, archived: true, cascadeToSessions: false })
+		// Nothing was edited, so there was nothing to save first.
+		expect(saveDraft).not.toHaveBeenCalled()
+		expect(showToast).toHaveBeenCalledWith('Draft deleted', { label: 'Undo', run: expect.any(Function) })
+		const undo = showToast.mock.calls[0]?.[1] as { run: () => void }
+		undo.run()
+		await waitFor(() => expect(archive).toHaveBeenCalledTimes(2))
+		expect(archive).toHaveBeenLastCalledWith({ taskId: draftId, archived: false, cascadeToSessions: false })
+		await waitFor(() => expect(showToast).toHaveBeenLastCalledWith('Draft restored'))
+	})
+
+	it('blocks Start while its host is offline, rather than starting on another', () => {
+		useHosts.mockReturnValue({ hosts: [hostView('host', false), hostView('mac')], isReady: true })
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('textbox')).toHaveAttribute('placeholder', 'host is offline')
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Host: host' })).toBeInTheDocument()
+	})
+
+	it('blocks Start when its host is gone, until another is picked for it', async () => {
+		useHosts.mockReturnValue({ hosts: [hostView('mac')], isReady: true })
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('textbox')).toHaveAttribute(
+			'placeholder',
+			"This draft's host is no longer registered. Choose another host.",
+		)
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+		expect(screen.getByRole('button', { name: 'Host: none' })).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Pick mac' }))
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		expect(startTask.mock.calls[0]?.[1]).toMatchObject({ hostId: 'mac' })
+		expect(saveDraft.mock.calls[0]?.[0]).toMatchObject({ draftLaunch: { hostId: 'mac' } })
+	})
+
+	it('blocks Start when its project is gone', () => {
+		useTask.mockReturnValue({
+			task: {
+				...draftTask,
+				default_working_directory: null,
+				draft_launch: {
+					...draftTask.draft_launch,
+					target: { kind: 'project', projectId: '019ab7c2-4f1e-7000-8000-0000000000dd' },
+				},
+			},
+			sessions: [],
+			isReady: true,
+		})
+		render(<NewTask existingTaskId={draftId} />)
+		expect(screen.getByRole('textbox')).toHaveAttribute(
+			'placeholder',
+			"This draft's project is no longer available. Choose another project.",
 		)
 		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
 	})

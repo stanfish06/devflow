@@ -22,6 +22,8 @@ import { Composer } from '@/minimalist/components/Composer'
 import { IssueDialog } from '@/minimalist/components/IssueDialog'
 import { DirectoryMenu, HostIcon, HostMenu, TargetMenu } from '@/minimalist/components/LaunchMenus'
 import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
+import { DraftMark } from '@/minimalist/components/TaskItem'
+import { TASK_STATUS_META } from '@/minimalist/components/TaskStatusIcon'
 import { WiredTaskNavigation } from '@/minimalist/components/WiredTaskNavigation'
 import { withAttachments } from '@/minimalist/lib/attachments'
 import {
@@ -33,8 +35,9 @@ import {
 	useTask,
 	useTaskTree,
 } from '@/minimalist/lib/data'
+import { draftStartBlocker } from '@/minimalist/lib/draft-blocker'
 import { newTaskDraftKey } from '@/minimalist/lib/drafts'
-import { basename } from '@/minimalist/lib/format'
+import { basename, formatAgo, toMs } from '@/minimalist/lib/format'
 import {
 	defaultTarget,
 	ensureRepositorySources,
@@ -63,6 +66,7 @@ import { TASK_SIZES, type TaskSize, taskSizeOption } from '@/minimalist/lib/task
 import { githubFullName, type Ticket, ticketLabel } from '@/minimalist/lib/tickets'
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useCopy } from '@/minimalist/lib/use-copy'
+import { type DraftAutosaveState, useDraftAutosave } from '@/minimalist/lib/use-draft-autosave'
 import { useApi } from '@/orpc/client'
 
 type NewTaskProps = {
@@ -143,10 +147,14 @@ function LaunchPage({
 		? existingWorkspace.data?.workspace.projectId
 		: existing.task?.project_id
 	const taskHost = hosts.find((entry) => entry.host.host_id === latestExisting?.host_id) ?? null
-	const host = launchHost(hosts, {
-		picked: form.hostId,
-		task: inTask && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
-	})
+	// A draft runs on the host it was saved for, or one picked for it here; never on another by default.
+	const host =
+		mode === 'draft'
+			? (hosts.find((entry) => entry.host.host_id === form.hostId) ?? null)
+			: launchHost(hosts, {
+					picked: form.hostId,
+					task: inTask && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
+				})
 	const directories = useRecentDirectories(host?.host.host_id ?? null)
 	const taskDirectory = latestExisting?.working_directory ?? existing.task?.default_working_directory ?? null
 	const moved = Boolean(inTask && host && latestExisting?.host_id && host.host.host_id !== latestExisting.host_id)
@@ -248,7 +256,10 @@ function LaunchPage({
 		movedFrom: host && taskHost && host !== taskHost ? taskHost.name : null,
 	})
 	const targetName = inTask ? (existing.task?.name ?? null) : targetLabel(effectiveTarget)
-	let blocker = launchBlocker({ host, needsTarget: !inTask, target: effectiveTarget })
+	let blocker =
+		mode === 'draft'
+			? draftStartBlocker({ hostId: form.hostId, target: form.target }, hosts, projects.data)
+			: launchBlocker({ host, needsTarget: !inTask, target: effectiveTarget })
 	if (opened?.error) blocker = opened.error
 	else if (!hostsReady || awaitingProject) blocker = 'Loading…'
 	else if (existingTaskId && !existing.isReady) blocker = 'Loading task…'
@@ -265,19 +276,28 @@ function LaunchPage({
 		blocker = 'Choose a task with a workspace or directory'
 	else if (host && moved && directoryTask && !sessionDirectory) blocker = `Choose a directory on ${host.name}`
 
-	// The composer as a draft would save it, and as Start launches it.
-	const snapshot = effectiveTarget
+	// The composer as a draft would save it, and as Start launches it. An open draft keeps its own
+	// target by id, so it still saves while its project loads or after it's gone, and the settings
+	// picked for it, which Start then fits to what the host can run.
+	const snapshotTarget = mode === 'draft' ? form.target : effectiveTarget && draftTarget(effectiveTarget)
+	const snapshot = snapshotTarget
 		? toDraftLaunch({
 				text: form.text,
-				target: draftTarget(effectiveTarget),
+				target: snapshotTarget,
 				hostId: host?.host.host_id ?? form.hostId ?? '',
-				settings,
+				settings: mode === 'draft' ? form.settings : settings,
 				taskSize: form.taskSize,
 				smallAutoAdvance: form.smallAutoAdvance,
 				attachments: attachments.metadata,
 			})
 		: null
 	const hasContent = Boolean(form.text.trim() || attachments.metadata.length > 0 || (ticket && !inTask))
+	// A snapshot from a newer version opens blank: saving would overwrite what it can't read.
+	const autosave = useDraftAutosave(
+		mode === 'draft' && existing.task && !opened?.error ? ids.taskId : null,
+		snapshot,
+		{ ticket, status: existing.task?.status ?? 'todo' },
+	)
 
 	const launch = async () => {
 		if (!hasContent || !host || blocker || launchLock.current || attachments.blocked) return
@@ -285,6 +305,8 @@ function LaunchPage({
 		setLaunching(true)
 		const hostId = host.host.host_id
 		try {
+			// The row holds exactly what launches, and no save is left to land on a started task.
+			if (mode === 'draft') await autosave.flush()
 			if (inTask && existingTaskId && existing.task) {
 				if (existingProjectId && hostId !== latestExisting?.host_id)
 					await ensureRepositorySources(api, existingProjectId, hostId)
@@ -310,7 +332,13 @@ function LaunchPage({
 			// the column it was created from.
 			await startTask(
 				api,
-				launchInput({ ids, target: workspace, snapshot, ticket, status: mode === 'new' ? status : undefined }),
+				launchInput({
+					ids,
+					target: workspace,
+					snapshot: { ...snapshot, settings },
+					ticket,
+					status: mode === 'new' ? status : undefined,
+				}),
 			)
 			if (mode === 'new') {
 				rememberSettings(settings)
@@ -352,6 +380,36 @@ function LaunchPage({
 			void navigate(status ? { to: '/board' } : { to: '/', search: { task: ids.taskId } })
 		} catch {
 			showToast('Could not save the draft. Your prompt is still in the composer.')
+		} finally {
+			launchLock.current = false
+			setLaunching(false)
+		}
+	}
+
+	/**
+	 * Deletes an open draft at once, with Undo: a draft has no agent work to lose. It's archived,
+	 * after its last edits save, so Undo brings it back as it was, in its column.
+	 */
+	const deleteDraft = async () => {
+		if (launchLock.current) return
+		launchLock.current = true
+		setLaunching(true)
+		const archive = (archived: boolean) =>
+			api.tasks.archive({ taskId: ids.taskId, archived, cascadeToSessions: false })
+		try {
+			await autosave.flush()
+			await archive(true)
+			showToast('Draft deleted', {
+				label: 'Undo',
+				run: () =>
+					void archive(false).then(
+						() => showToast('Draft restored'),
+						() => showToast('Could not restore the draft. Try again.'),
+					),
+			})
+			void navigate({ to: '/board' })
+		} catch {
+			showToast('Could not delete the draft. Try again.')
 		} finally {
 			launchLock.current = false
 			setLaunching(false)
@@ -423,7 +481,27 @@ function LaunchPage({
 	const page = (
 		<main className="main" tabIndex={-1}>
 			<div className="titlebar">
-				<span className="sp" />
+				{mode === 'draft' && existing.task ? (
+					<>
+						<span className="title">{existing.task.name || 'Untitled draft'}</span>
+						<DraftMark />
+						<span className="crumb">· {TASK_STATUS_META[existing.task.status].label}</span>
+						<span className="sp" />
+						<span className="draft-saved">
+							{savedLabel(autosave.state, autosave.savedAt ?? toMs(existing.task.updated_at))}
+						</span>
+						<button
+							type="button"
+							className="btn ghost"
+							disabled={launching}
+							onClick={() => void deleteDraft()}
+						>
+							Delete draft
+						</button>
+					</>
+				) : (
+					<span className="sp" />
+				)}
 			</div>
 			{inTask ? (
 				<div className="hero">
@@ -556,6 +634,13 @@ function resolveSessionDirectory(state: {
 	if (state.picked) return state.picked
 	if (!state.taskDirectory) return null
 	return state.directories.includes(state.taskDirectory) ? state.taskDirectory : null
+}
+
+/** The open draft's quiet save hint: saving, when it last saved, or that the last save didn't land. */
+function savedLabel(state: DraftAutosaveState, savedAt: number): string {
+	if (state === 'saving') return 'Saving…'
+	if (state === 'error') return 'Draft not saved'
+	return savedAt ? `Draft saved · ${formatAgo(savedAt)}` : ''
 }
 
 /** The greeting over the composer, naming the selected project or directory. */

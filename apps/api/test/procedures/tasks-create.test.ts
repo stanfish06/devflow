@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest'
 
 import { resolveOrgDefaultTaskShareLevel } from '../../src/db/organization-settings'
 import type { AppRuntime } from '../../src/effects/app-runtime'
+import { archiveTaskProcedure } from '../../src/orpc/api/tasks/archive'
 import { createTaskProcedure } from '../../src/orpc/api/tasks/create'
 import { createTaskDraftEffectProcedure } from '../../src/orpc/api/tasks/createDraft.effect'
 import { saveTaskDraftProcedure as unboundSaveTaskDraftProcedure } from '../../src/orpc/api/tasks/saveDraft'
@@ -965,6 +966,56 @@ describe('api/tasks/create', async () => {
 		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
 			expect.objectContaining({ name: 'Launched', is_draft: false }),
 		])
+	})
+
+	test('saveDraft cannot bring back a deleted draft, and Undo restores it as it was', async () => {
+		const taskId = uuidv7()
+		await call(saveTaskDraftProcedure, { ...saveDraftInput(taskId), status: 'backlog' }, { context: makeContext() })
+		// Delete draft archives the row and leaves no sessions to touch.
+		await call(
+			archiveTaskProcedure,
+			{ taskId, archived: true, cascadeToSessions: false },
+			{ context: makeContext() },
+		)
+
+		// A late autosave from the page that deleted it, or another device, is turned away.
+		expect(
+			await call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(taskId), name: 'Late autosave', draftLaunch: draftLaunch('Late edit') },
+				{ context: makeContext() },
+			),
+		).toEqual({ result: 'draft-id-unavailable' })
+		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
+			expect.objectContaining({
+				name: 'Saved draft',
+				archived: true,
+				is_draft: true,
+				draft_launch: draftLaunch(),
+			}),
+		])
+
+		// Undo: back in its column, with its snapshot and attachments, and saving again.
+		await call(
+			archiveTaskProcedure,
+			{ taskId, archived: false, cascadeToSessions: false },
+			{ context: makeContext() },
+		)
+		expect(await db.select().from(tasks).where(eq(tasks.id, taskId))).toEqual([
+			expect.objectContaining({
+				archived: false,
+				is_draft: true,
+				status: 'backlog',
+				draft_launch: draftLaunch(),
+			}),
+		])
+		expect(
+			await call(
+				saveTaskDraftProcedure,
+				{ ...saveDraftInput(taskId), status: 'backlog', draftLaunch: draftLaunch('Edited after Undo') },
+				{ context: makeContext() },
+			),
+		).toMatchObject({ result: 'saved', task: { draft_launch: draftLaunch('Edited after Undo') } })
 	})
 
 	test.each([

@@ -72,14 +72,15 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 	const { user } = useAuth()
 	const projects = useProjects()
 	// Board drafts, saved from this composer with a snapshot to start from, list with every task.
-	// Drafts without one wait in the standard launcher, as they do in its sidebar; archived ones still list.
+	// Drafts without one wait in the standard launcher, as they do in its sidebar. A deleted draft is
+	// archived, and stays out of the archived list: Undo is how it comes back.
 	const tasksQuery = useLiveQuery(
 		(q) =>
 			q
 				.from({ tasks })
 				.where(({ tasks }) =>
 					archived
-						? eq(tasks.archived, true)
+						? and(eq(tasks.archived, true), eq(tasks.is_draft, false))
 						: and(
 								eq(tasks.archived, false),
 								or(eq(tasks.is_draft, false), not(isNull(tasks.draft_launch))),

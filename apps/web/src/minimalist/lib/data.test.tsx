@@ -535,6 +535,31 @@ describe('project/task/session membership', () => {
 		expect(result.current.recent.every((row) => row.attention === 'idle' && row.sessions.length === 0)).toBe(true)
 	})
 
+	it('keeps deleted drafts out of the archived list: Undo is how they come back', async () => {
+		const row = (id: string, isDraft: boolean) => ({
+			id,
+			name: id,
+			workspace_id: null,
+			project_id: null,
+			default_working_directory: '/Users/me/code/devflow',
+			archived: true,
+			is_draft: isDraft,
+			draft_launch: isDraft ? { version: 1, prompt: 'Later' } : null,
+			resource_owner_user_id: 'me',
+			updated_at: 1,
+		})
+		const tasks = trackedCollection([row('archived-task', false), row('deleted-draft', true)])
+		const sessions = trackedCollection<{ id: string }>([])
+		useSync.mockReturnValue({ tasksCollection: tasks.collection, sessionsCollection: sessions.collection })
+		projectsList.mockResolvedValue({ projects: [] })
+		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+		const { result } = renderHook(() => useTaskTree(true), {
+			wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>,
+		})
+		await waitFor(() => expect(result.current.isReady).toBe(true))
+		expect(result.current.recent.map((entry) => entry.task.id)).toEqual(['archived-task'])
+	})
+
 	it('uses workspace project membership, retains zero-session tasks and keeps standalone sessions separate', async () => {
 		const tasks = trackedCollection([
 			{
