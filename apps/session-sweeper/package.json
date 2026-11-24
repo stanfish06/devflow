@@ -1,0 +1,31 @@
+{
+  "name": "@devflow/session-sweeper",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "bun build ./index.ts --outdir ./dist --target node --format cjs --minify",
+    "sweep:local": "bun --bun index.ts",
+    "test": "bun vitest run",
+    "test:watch": "bun vitest",
+    "typecheck": "tsc --noEmit --project tsconfig.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "@devflow/db": "workspace:*",
+    "drizzle-orm": "catalog:",
+    "postgres": "^3.4.5",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@devflow/test-fixtures": "workspace:*",
+    "@devflow/vitest-config": "workspace:*",
+    "@types/bun": "catalog:",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}

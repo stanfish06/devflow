@@ -1,0 +1,5 @@
+{
+	"name": "@devflow/oxlint-plugin-anti-slop",
+	"private": true,
+	"type": "module"
+}

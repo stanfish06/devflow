@@ -1,0 +1,429 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "concurrency": "20",
+  "envMode": "loose",
+  "tasks": {
+    "build": {
+      "env": [
+        "VITE_*"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+        "!**/*.stories.{tsx,jsx,mdx}"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        ".next/**",
+        "lib/**"
+      ],
+      "cache": false
+    },
+    "build:linux": {
+      "env": [
+        "VITE_*"
+      ],
+      "dependsOn": [
+        "^build:linux"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+        "!**/*.stories.{tsx,jsx,mdx}"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        ".next/**",
+        "lib/**",
+        "*-linux-x64"
+      ],
+      "cache": false
+    },
+    "build:macos": {
+      "env": [
+        "VITE_*"
+      ],
+      "dependsOn": [
+        "^build:macos"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".env*",
+        "!**/*.stories.{tsx,jsx,mdx}"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        ".next/**",
+        "lib/**",
+        "*-darwin-arm64"
+      ],
+      "cache": false
+    },
+    "build:stable": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "BUILD_VERSION"
+      ],
+      "dependsOn": [
+        "^build:macos"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        "lib/**",
+        "*-darwin-arm64",
+        "bin/**"
+      ],
+      "cache": false
+    },
+    "build:local": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "BUILD_VERSION"
+      ],
+      "dependsOn": [
+        "^build:local"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        "lib/**",
+        "*-darwin-arm64",
+        "bin/**"
+      ],
+      "cache": false
+    },
+    "build:pro": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "BUILD_VERSION"
+      ],
+      "dependsOn": [
+        "^build:pro"
+      ],
+      "outputs": [
+        "dist/**",
+        "build/**",
+        "lib/**",
+        "*-darwin-arm64",
+        "bin/**"
+      ],
+      "cache": false
+    },
+    "@devflow/agent-runner#build:stable": {
+      "env": [
+        "BUILD_TYPE",
+        "BUILD_VERSION",
+        "DEVFLOW_DAEMON_API_ORIGIN",
+        "DEVFLOW_DAEMON_SYNC_ORIGIN",
+        "DEVFLOW_DAEMON_CLOUD_ORIGIN",
+        "DEVFLOW_DAEMON_APP_ORIGIN",
+        "NODE_ENV",
+        "SENTRY_ENVIRONMENT",
+        "DEVFLOW_DAEMON_SENTRY_DSN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/agent-runner#build:local": {
+      "env": [
+        "BUILD_TYPE",
+        "BUILD_VERSION",
+        "DEVFLOW_DAEMON_API_ORIGIN",
+        "DEVFLOW_DAEMON_SYNC_ORIGIN",
+        "DEVFLOW_DAEMON_CLOUD_ORIGIN",
+        "DEVFLOW_DAEMON_APP_ORIGIN",
+        "NODE_ENV",
+        "SENTRY_ENVIRONMENT",
+        "DEVFLOW_DAEMON_SENTRY_DSN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/agent-runner#build:dev": {
+      "env": [
+        "BUILD_TYPE",
+        "BUILD_VERSION",
+        "DEVFLOW_DAEMON_API_ORIGIN",
+        "DEVFLOW_DAEMON_SYNC_ORIGIN",
+        "DEVFLOW_DAEMON_CLOUD_ORIGIN",
+        "DEVFLOW_DAEMON_APP_ORIGIN",
+        "NODE_ENV",
+        "SENTRY_ENVIRONMENT",
+        "DEVFLOW_DAEMON_SENTRY_DSN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/agent-runner#build:beta": {
+      "env": [
+        "BUILD_TYPE",
+        "BUILD_VERSION",
+        "DEVFLOW_DAEMON_API_ORIGIN",
+        "DEVFLOW_DAEMON_SYNC_ORIGIN",
+        "DEVFLOW_DAEMON_CLOUD_ORIGIN",
+        "DEVFLOW_DAEMON_APP_ORIGIN",
+        "NODE_ENV",
+        "SENTRY_ENVIRONMENT",
+        "DEVFLOW_DAEMON_SENTRY_DSN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/agent-runner#build:prod": {
+      "env": [
+        "BUILD_TYPE",
+        "BUILD_VERSION",
+        "DEVFLOW_DAEMON_API_ORIGIN",
+        "DEVFLOW_DAEMON_SYNC_ORIGIN",
+        "DEVFLOW_DAEMON_CLOUD_ORIGIN",
+        "DEVFLOW_DAEMON_APP_ORIGIN",
+        "NODE_ENV",
+        "SENTRY_ENVIRONMENT",
+        "DEVFLOW_DAEMON_SENTRY_DSN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/web#build:stable": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "VITE_PUBLIC_BUILD_VERSION",
+        "VITE_PUBLIC_SYNC_ORIGIN",
+        "VITE_PUBLIC_DEVFLOW_API_ORIGIN",
+        "VITE_PUBLIC_WORKOS_CLIENT_ID",
+        "VITE_PUBLIC_POSTHOG_KEY",
+        "VITE_PUBLIC_POSTHOG_HOST",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "NODE_ENV",
+        "VITE_PUBLIC_SENTRY_ENVIRONMENT",
+        "VITE_PUBLIC_SENTRY_DSN",
+        "VITE_PUBLIC_DEEP_LINK_SCHEME",
+        "VITE_PUBLIC_CLOUD_ORIGIN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/web#build:local": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "VITE_PUBLIC_BUILD_VERSION",
+        "VITE_PUBLIC_SYNC_ORIGIN",
+        "VITE_PUBLIC_DEVFLOW_API_ORIGIN",
+        "VITE_PUBLIC_WORKOS_CLIENT_ID",
+        "VITE_PUBLIC_POSTHOG_KEY",
+        "VITE_PUBLIC_POSTHOG_HOST",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "NODE_ENV",
+        "VITE_PUBLIC_SENTRY_ENVIRONMENT",
+        "VITE_PUBLIC_SENTRY_DSN",
+        "VITE_PUBLIC_DEEP_LINK_SCHEME",
+        "VITE_PUBLIC_CLOUD_ORIGIN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/web#build:dev": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "VITE_PUBLIC_BUILD_VERSION",
+        "VITE_PUBLIC_SYNC_ORIGIN",
+        "VITE_PUBLIC_DEVFLOW_API_ORIGIN",
+        "VITE_PUBLIC_WORKOS_CLIENT_ID",
+        "VITE_PUBLIC_POSTHOG_KEY",
+        "VITE_PUBLIC_POSTHOG_HOST",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "NODE_ENV",
+        "VITE_PUBLIC_SENTRY_ENVIRONMENT",
+        "VITE_PUBLIC_SENTRY_DSN",
+        "VITE_PUBLIC_DEEP_LINK_SCHEME",
+        "VITE_PUBLIC_CLOUD_ORIGIN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/web#build:beta": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "VITE_PUBLIC_BUILD_VERSION",
+        "VITE_PUBLIC_SYNC_ORIGIN",
+        "VITE_PUBLIC_DEVFLOW_API_ORIGIN",
+        "VITE_PUBLIC_WORKOS_CLIENT_ID",
+        "VITE_PUBLIC_POSTHOG_KEY",
+        "VITE_PUBLIC_POSTHOG_HOST",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "NODE_ENV",
+        "VITE_PUBLIC_SENTRY_ENVIRONMENT",
+        "VITE_PUBLIC_SENTRY_DSN",
+        "VITE_PUBLIC_DEEP_LINK_SCHEME",
+        "VITE_PUBLIC_CLOUD_ORIGIN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "@devflow/web#build:prod": {
+      "env": [
+        "VITE_PUBLIC_BUILD_TYPE",
+        "VITE_PUBLIC_BUILD_VERSION",
+        "VITE_PUBLIC_SYNC_ORIGIN",
+        "VITE_PUBLIC_DEVFLOW_API_ORIGIN",
+        "VITE_PUBLIC_WORKOS_CLIENT_ID",
+        "VITE_PUBLIC_POSTHOG_KEY",
+        "VITE_PUBLIC_POSTHOG_HOST",
+        "SENTRY_AUTH_TOKEN",
+        "SENTRY_ORG",
+        "SENTRY_PROJECT",
+        "NODE_ENV",
+        "VITE_PUBLIC_SENTRY_ENVIRONMENT",
+        "VITE_PUBLIC_SENTRY_DSN",
+        "VITE_PUBLIC_DEEP_LINK_SCHEME",
+        "VITE_PUBLIC_CLOUD_ORIGIN"
+      ],
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**"
+      ],
+      "cache": false
+    },
+    "//#lint": {
+      "cache": false,
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".oxlintrc.jsonc"
+      ]
+    },
+    "//#format": {
+      "cache": false,
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        ".oxfmtrc.jsonc"
+      ]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "dev:node-proxy": {
+      "cache": false,
+      "persistent": true
+    },
+    "storybook": {
+      "cache": false,
+      "persistent": true
+    },
+    "build:storybook": {
+      "cache": false,
+      "outputs": [
+        "storybook-static/**"
+      ]
+    },
+    "test": {
+      "cache": false,
+      "outputs": [
+        "coverage/**"
+      ]
+    },
+    "test:llm": {
+      "cache": false,
+      "outputs": [
+        "coverage/**"
+      ]
+    },
+    "test:integration": {
+      "cache": false,
+      "outputs": [
+        "coverage/**"
+      ]
+    },
+    "@devflow/test-fixtures#test": {
+      "cache": false,
+      "outputs": [
+        "coverage/**"
+      ]
+    },
+    "@devflow/sync-proxy#test": {
+      "cache": false,
+      "outputs": [
+        "coverage/**"
+      ],
+      "dependsOn": [
+        "@devflow/test-fixtures#test"
+      ]
+    },
+    "typecheck": {
+      "cache": false,
+      "dependsOn": [
+        "^build"
+      ]
+    },
+    "@devflow/cli#typecheck": {
+      "cache": false,
+      "dependsOn": []
+    },
+    "swagger": {
+      "cache": false
+    }
+  }
+}

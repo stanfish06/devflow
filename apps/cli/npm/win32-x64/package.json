@@ -1,0 +1,11 @@
+{
+  "name": "@devflow/cli-win32-x64",
+  "license": "MIT",
+  "version": "0.3.0",
+  "description": "devflow CLI binary for Windows x64",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "files": ["bin/devflow.exe"],
+  "bin": { "devflow": "bin/devflow.exe"}
+}

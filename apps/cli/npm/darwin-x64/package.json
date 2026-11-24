@@ -1,0 +1,11 @@
+{
+  "name": "@devflow/cli-darwin-x64",
+  "license": "MIT",
+  "version": "0.3.0",
+  "description": "devflow CLI binary for macOS x64 (Intel)",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "preferUnplugged": true,
+  "files": ["bin/devflow"],
+  "bin": { "devflow": "bin/devflow"}
+}

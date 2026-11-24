@@ -1,0 +1,15 @@
+{
+	"name": "rpi",
+	"description": "Research-Plan-Implement workflow skills for devflow tasks.",
+	"version": "0.50.0",
+	"author": {
+		"name": "devflow"
+	},
+	"license": "MIT",
+	"keywords": [
+		"rpi",
+		"research",
+		"planning",
+		"implement"
+	]
+}

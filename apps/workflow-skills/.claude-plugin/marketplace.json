@@ -1,0 +1,21 @@
+{
+	"$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+	"name": "devflow",
+	"description": "devflow workflow skills",
+	"owner": {
+		"name": "devflow"
+	},
+	"plugins": [
+		{
+			"name": "rpi",
+			"description": "Research-Plan-Implement workflow skills for devflow tasks.",
+			"version": "0.50.0",
+			"author": {
+				"name": "devflow"
+			},
+			"source": "./",
+			"category": "development"
+		}
+	],
+	"version": "0.50.0"
+}

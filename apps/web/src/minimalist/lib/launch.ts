@@ -1,0 +1,378 @@
+import { type ClaudeEffortLevel, isEffortSupported } from '@devflow/ai/config'
+import type { Task } from '@devflow/db/tables/tasks'
+import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
+import type { ResolvedTaskWorkflow, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
+import { findModelOption } from '@devflow/ui/constants/models'
+import { ORPCError } from '@orpc/client'
+
+import { useSettingsStore } from '@/hooks/stores/settingsStore'
+import { getFirstSessionParams, withDescribePrNextStep } from '@/lib/auto-advance'
+import { initialRepositorySourceSelections, missingRepositorySources } from '@/lib/repository-sources'
+import { getTaskConflictMessage } from '@/lib/task-creation-error'
+import { getTicketLookupError } from '@/lib/ticket-lookup-error'
+import { type AttachmentMetadata, withAttachments } from '@/minimalist/lib/attachments'
+import { projectTaskAutoAdvanceFlags } from '@/minimalist/lib/auto-advance-flags'
+import type { HostView } from '@/minimalist/lib/data'
+import { basename } from '@/minimalist/lib/format'
+import { branchName, readGitPrefs } from '@/minimalist/lib/git-prefs'
+import { AGENT_PROVIDERS, type ComposerSettings } from '@/minimalist/lib/models'
+import { type Ticket, ticketFields, withTicket } from '@/minimalist/lib/tickets'
+import type { ApiClient } from '@/orpc/client'
+
+/** Where a new task works: a project (a fresh worktree on a task branch) or a directory, edited in place. */
+export type Target = { kind: 'project'; projectId: string; name: string } | { kind: 'directory'; path: string }
+
+/** The most recently active project or directory; a new task goes there unless you pick another. */
+export function defaultTarget(recent: {
+	latest: { task: { project_id: string | null }; projectName: string } | undefined
+	directory: string | undefined
+	project: { id: string; name: string } | undefined
+}): Target | null {
+	const latest = recent.latest
+	if (latest?.task.project_id) return { kind: 'project', projectId: latest.task.project_id, name: latest.projectName }
+	if (recent.directory) return { kind: 'directory', path: recent.directory }
+	if (recent.project) return { kind: 'project', projectId: recent.project.id, name: recent.project.name }
+	return null
+}
+
+export function targetLabel(target: Target | null): string | null {
+	if (!target) return null
+	return target.kind === 'project' ? target.name : basename(target.path)
+}
+
+/** Why the composer can't launch yet, as its placeholder says it; null when it can. */
+export function launchBlocker(state: {
+	host: HostView | null
+	needsTarget: boolean
+	target: Target | null
+}): string | null {
+	if (!state.host) return 'Start a daemon to launch sessions'
+	if (!state.host.online) return `${state.host.name} is offline`
+	if (state.needsTarget && !state.target) return 'Choose a project or directory'
+	return null
+}
+
+/**
+ * The host a launch runs on. A new task takes the one you picked, or any online
+ * host. A new session in a task takes the one you picked, or the task's host
+ * while it is online, or any online host. A project task sets up again on
+ * another host from its pushed branch; a directory task runs in a directory
+ * that host knows.
+ */
+export function launchHost<H extends { host: { host_id: string }; online: boolean }>(
+	hosts: readonly H[],
+	state: { picked: string | null; task: { hostId: string | null } | null },
+): H | null {
+	const picked = hosts.find((entry) => entry.host.host_id === state.picked) ?? null
+	const online = hosts.find((entry) => entry.online) ?? null
+	if (!state.task) return picked ?? online
+	const taskHost = hosts.find((entry) => entry.host.host_id === state.task?.hostId) ?? null
+	return picked ?? (taskHost?.online ? taskHost : (online ?? taskHost))
+}
+
+export type WorkingCopy = { label: string; title: string; branch: boolean }
+
+/**
+ * What the agent works in, for the launch strip. Projects get a branch in a new
+ * worktree (or a new clone, when the host has no checkout yet); directories are
+ * edited in place. A new session in a task says nothing unless it moved hosts.
+ */
+export function workingCopy(state: {
+	inTask: boolean
+	project: boolean
+	clonesFirst: boolean
+	hostName: string
+	/** The task's own host, when this session runs somewhere else. */
+	movedFrom: string | null
+}): WorkingCopy | null {
+	const label = state.clonesFirst ? 'New clone' : 'New worktree'
+	if (state.inTask) {
+		if (!state.movedFrom) return null
+		// A directory task has no branch to check out; it runs in a directory the new host knows.
+		if (!state.project)
+			return { label: 'In this directory', title: 'The agent edits your checkout directly', branch: false }
+		return {
+			label,
+			title: `${state.hostName} checks out the task's branch as last pushed. Changes that were not pushed stay on ${state.movedFrom}.`,
+			branch: true,
+		}
+	}
+	if (!state.project)
+		return { label: 'In this directory', title: 'The agent edits your checkout directly', branch: false }
+	return {
+		label,
+		title: state.clonesFirst
+			? `${state.hostName} clones the repository the first time, then makes a branch named after the task`
+			: 'The host creates a branch named after the task',
+		branch: true,
+	}
+}
+
+/** First line of the prompt as a working title; the agent's title replaces it after launch. */
+export function draftTitle(text: string): string {
+	const line =
+		text
+			.trim()
+			.split('\n')[0]
+			?.replace(/^\/\S+\s*/, '') ?? ''
+	const title = line.length > 64 ? `${line.slice(0, 63).trimEnd()}…` : line
+	return title || 'Untitled task'
+}
+
+export function slugify(name: string, suffix: string): string {
+	const base = name
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, '-')
+		.replace(/^-+|-+$/g, '')
+		.slice(0, 48)
+		.replace(/-+$/, '')
+	return `${base || 'task'}-${suffix}`
+}
+
+/** Saves where the host keeps each project repository, so it clones the ones it lacks on first launch. */
+export async function ensureRepositorySources(api: ApiClient, projectId: string, hostId: string) {
+	const saved = await api.projects.v2.repositorySources.get({ projectId, hostId }, { context: { silent: true } })
+	if (missingRepositorySources(saved.sources).length === 0) return
+	await api.projects.v2.repositorySources.upsert(
+		{ projectId, hostId, sources: initialRepositorySourceSelections(saved.sources, false) },
+		{ context: { silent: true } },
+	)
+}
+
+/** A `Target` with its project loaded. */
+export type LoadedTarget =
+	| { kind: 'project'; project: { id: string; repositories: readonly ProjectRepository[] } }
+	| { kind: 'directory'; path: string }
+
+type NewTask = {
+	ids: { taskId: string; sessionId: string; eventId: string }
+	target: LoadedTarget
+	hostId: string
+	draft: string
+	ticket: Ticket | null
+	attachments: AttachmentMetadata[]
+	settings: ComposerSettings
+	/** Freeform sends the prompt as is; guided workflows start their first phase on it. */
+	workflow: ResolvedTaskWorkflow
+	/** A small task: labeled as implementation, and asked to offer describe-pr when it's done. */
+	directImplementation?: boolean
+}
+
+/**
+ * Creates a task and its first session. An issue names the task and its branch; otherwise the
+ * prompt's first line does until the agent's title replaces it. A project task gets a worktree on
+ * a branch from Settings → Git, and the host clones repositories it lacks; a directory task runs
+ * in place. A guided workflow keeps the prompt as the task's content and starts its first phase
+ * on it. A small task starts on implementation and is asked to
+ * offer the describe-pr skill as its next step, with or without auto-advance. Throws if the server refuses; title generation failing
+ * keeps the working title.
+ */
+export async function startTask(api: ApiClient, input: NewTask): Promise<void> {
+	const { ids, target, ticket, attachments } = input
+	const name = ticket?.name ?? draftTitle(input.draft)
+	const slug = ticket?.slug ?? slugify(name, ids.taskId.slice(-4))
+	const prompt = withTicket(withAttachments(input.draft, slug, attachments), slug, ticket)
+	const text = input.directImplementation ? withDescribePrNextStep(prompt) : prompt
+	const worktreeTiming: WorktreeTiming = target.kind === 'project' ? 'now' : 'never'
+	const flags = projectTaskAutoAdvanceFlags(input.workflow, worktreeTiming)
+	const phase =
+		input.workflow.workflowType === 'freeform'
+			? null
+			: getFirstSessionParams({
+					slug,
+					name,
+					autoAdvanceQuestionsToResearch: flags.autoAdvanceQuestionsToResearch,
+					workflow: input.workflow.workflowType === 'oneshot' ? 'oneshot' : 'rpi',
+				})
+	const firstSession = {
+		id: ids.sessionId,
+		eventId: ids.eventId,
+		title: phase?.title ?? null,
+		text: phase?.prompt ?? text,
+		hostId: input.hostId,
+		...launchFields(input.settings),
+		permissionsMode: phase?.permissionsMode ?? input.settings.permissionsMode,
+		intent: input.directImplementation ? ('implementation' as const) : undefined,
+	}
+	const shared = {
+		name,
+		slug,
+		taskContent: text,
+		workflowType: input.workflow.workflowType,
+		attachments,
+		autoAdvanceQuestionsToResearch: flags.autoAdvanceQuestionsToResearch,
+		autoAdvanceResearchToDesign: flags.autoAdvanceResearchToDesign,
+		autoAdvancePlanToWorktree: flags.autoAdvancePlanToWorktree,
+		autoAdvanceWorktreeToImplementation: flags.autoAdvanceWorktreeToImplementation,
+		autoAdvanceImplementationToPr: flags.autoAdvanceImplementationToPr,
+		...ticketFields(ticket),
+	}
+	if (target.kind === 'project') {
+		const branch = branchName(readGitPrefs().branchPrefix, slug)
+		const repositories = target.project.repositories.map((repository) => ({ ...repository, branch }))
+		await ensureRepositorySources(api, target.project.id, input.hostId)
+		await api.tasks.v2.create(
+			{
+				...shared,
+				taskId: ids.taskId,
+				workspaceId: ids.taskId,
+				sessionId: ids.sessionId,
+				eventId: ids.eventId,
+				projectId: target.project.id,
+				repositories,
+				defaultRepositoryIdentity: repositories.find((repository) => repository.default)?.repositoryIdentity,
+				firstSession,
+			},
+			{ context: { silent: true } },
+		)
+	} else {
+		await api.tasks.launchDraft(
+			{
+				...shared,
+				draftId: ids.taskId,
+				defaultWorkingDirectory: target.path,
+				worktreeTiming,
+				firstSession: { ...firstSession, workingDirectory: target.path },
+			},
+			{ context: { silent: true } },
+		)
+	}
+	if (ticket) return
+	void api.ai
+		.generateTitle({ text })
+		.then(({ title }) => (title.trim() ? api.tasks.update({ taskId: ids.taskId, name: title.trim() }) : null))
+		.catch(() => null)
+}
+
+/**
+ * What a failed launch tells you: the reason when the server gives one you can act on, and
+ * that the prompt is kept. The launch calls are silent, so this is the only message.
+ */
+export function launchError(error: unknown): string {
+	return ['Could not start the task.', launchFailure(error), 'Your prompt is still in the composer.']
+		.filter(Boolean)
+		.join(' ')
+}
+
+function launchFailure(error: unknown): string | null {
+	const known = getTaskConflictMessage(error) ?? getTicketLookupError(error)?.message
+	if (known) return known
+	const code = error instanceof ORPCError ? error.code : null
+	if (code === 'FORBIDDEN') return "Your account can't start tasks here."
+	if (code === 'INPUT_VALIDATION_FAILED') {
+		const data = (error as { data?: unknown }).data as { fieldErrors?: Record<string, string[]> } | undefined
+		const fieldErrors = data?.fieldErrors
+		if (fieldErrors) {
+			const entry = Object.entries(fieldErrors)[0]
+			if (entry) {
+				const [field, messages] = entry
+				if (messages?.[0]) return `The ${field} is not valid: ${messages[0].toLowerCase()}`
+			}
+		}
+		return 'The server rejected the request. Check the task name and try again.'
+	}
+	return null
+}
+
+/** The launch fields for an agent, model, effort, fast mode and permissions. */
+function launchFields(settings: ComposerSettings) {
+	return {
+		codingAgent: settings.agent,
+		provider: AGENT_PROVIDERS[settings.agent],
+		model: settings.model,
+		effort: settings.effort,
+		fastMode: settings.fastMode,
+		permissionsMode: settings.permissionsMode,
+	}
+}
+
+/** The settings a new task starts with: the last ones launched. */
+export function savedSettings(): ComposerSettings {
+	const saved = useSettingsStore.getState()
+	if (saved.defaultAgent === 'codelayer' && saved.defaultCodelayerProvider === 'codex')
+		return {
+			agent: 'codelayer',
+			model: saved.defaultCodelayerCodexModel,
+			effort: saved.defaultCodelayerCodexEffort,
+			fastMode: saved.defaultCodelayerCodexFastMode,
+			permissionsMode: 'bypass',
+		}
+	return {
+		agent: 'claude',
+		model: saved.defaultClaudeCodeModel,
+		effort: saved.defaultClaudeCodeEffort,
+		fastMode: false,
+		permissionsMode: saved.launcherV3PermissionsMode,
+	}
+}
+
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
+type EffortLevel = (typeof EFFORT_LEVELS)[number]
+
+/**
+ * The effort to remember, when the model supports it. A model from the host's runtime catalog
+ * isn't in the bundled capability table, but the picker already validated it.
+ */
+function supportedEffort(settings: ComposerSettings): EffortLevel | null {
+	const { effort, model, agent } = settings
+	if (effort === null || !(EFFORT_LEVELS as readonly string[]).includes(effort)) return null
+	const level = effort as EffortLevel
+	if (findModelOption(model) === undefined) return level
+	return isEffortSupported(agent, AGENT_PROVIDERS[agent], model, level) ? level : null
+}
+
+/** Saves a launch's settings as the next task's. */
+export function rememberSettings(settings: ComposerSettings) {
+	const store = useSettingsStore.getState()
+	const effort = supportedEffort(settings)
+	store.setDefaultAgent(settings.agent)
+	if (settings.agent === 'claude') {
+		// Codex always runs without asking; that says nothing about how Claude Code should.
+		store.setLauncherV3PermissionsMode(settings.permissionsMode)
+		const option = findModelOption(settings.model)
+		if (option === undefined || option.provider === 'anthropic') store.setDefaultClaudeCodeModel(settings.model)
+		if (effort && effort !== 'ultra') store.setDefaultClaudeCodeEffort(effort satisfies ClaudeEffortLevel)
+		store.setDefaultClaudeCodeFastMode(settings.fastMode)
+		return
+	}
+	store.setDefaultCodelayerProvider('codex')
+	store.setDefaultCodelayerCodexModel(settings.model)
+	if (effort) store.setDefaultCodelayerCodexEffort(effort)
+	store.setDefaultCodelayerCodexFastMode(settings.fastMode)
+}
+
+type SessionInTask = {
+	sessionId: string
+	eventId: string
+	text: string
+	hostId: string
+	/** Used by directory tasks: the task's directory, or one on the host it moved to. Project tasks get their workspace from the server. */
+	workingDirectory: string
+	settings: ComposerSettings
+}
+
+/**
+ * Starts another session in an existing task. Project tasks go through
+ * `sessions.v2.create` so the server places the workspace; directory tasks use
+ * the older launch with the directory the session runs in.
+ */
+export async function launchInTask(api: ApiClient, task: Pick<Task, 'id' | 'workspace_id'>, input: SessionInTask) {
+	const shared = {
+		eventId: input.eventId,
+		taskId: task.id,
+		text: input.text,
+		hostId: input.hostId,
+		...launchFields(input.settings),
+	}
+	if (task.workspace_id) {
+		await api.sessions.v2.create(
+			{ ...shared, sessionId: input.sessionId, workspaceId: task.workspace_id, title: null },
+			{ context: { silent: true } },
+		)
+		return
+	}
+	await api.sessions.launch(
+		{ ...shared, id: input.sessionId, title: null, workingDirectory: input.workingDirectory },
+		{ context: { silent: true } },
+	)
+}

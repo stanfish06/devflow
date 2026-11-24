@@ -1,0 +1,338 @@
+import { ORPCError } from '@orpc/client'
+import { describe, expect, it, vi } from 'vitest'
+
+import { DESCRIBE_PR_NEXT_STEP_PROMPT } from '@/lib/auto-advance'
+import {
+	defaultTarget,
+	draftTitle,
+	launchError,
+	launchHost,
+	launchInTask,
+	slugify,
+	startTask,
+	workingCopy,
+} from '@/minimalist/lib/launch'
+import type { ComposerSettings } from '@/minimalist/lib/models'
+import type { Ticket } from '@/minimalist/lib/tickets'
+import type { ApiClient } from '@/orpc/client'
+
+describe('draftTitle', () => {
+	it('takes the first line without a slash command', () => {
+		expect(draftTitle('  /research_codebase how auth works\nmore detail')).toBe('how auth works')
+		expect(draftTitle('')).toBe('Untitled task')
+		expect(draftTitle('x'.repeat(80))).toHaveLength(64)
+	})
+})
+
+describe('defaultTarget', () => {
+	const project = { id: 'p2', name: 'Other' }
+
+	it("goes where you last worked: the latest task's project", () => {
+		const latest = { task: { project_id: 'p1' }, projectName: 'App' }
+		expect(defaultTarget({ latest, directory: '/r', project })).toEqual({
+			kind: 'project',
+			projectId: 'p1',
+			name: 'App',
+		})
+	})
+
+	it('falls back to a recent directory, then any project', () => {
+		const latest = { task: { project_id: null }, projectName: 'r' }
+		expect(defaultTarget({ latest, directory: '/r', project })).toEqual({ kind: 'directory', path: '/r' })
+		expect(defaultTarget({ latest: undefined, directory: undefined, project })).toEqual({
+			kind: 'project',
+			projectId: 'p2',
+			name: 'Other',
+		})
+		expect(defaultTarget({ latest: undefined, directory: undefined, project: undefined })).toBeNull()
+	})
+})
+
+describe('launchHost', () => {
+	const hosts = [
+		{ host: { host_id: 'mac' }, online: false },
+		{ host: { host_id: 'box' }, online: true },
+		{ host: { host_id: 'vm' }, online: true },
+	]
+
+	it('starts a new task on the picked host, or any online one', () => {
+		expect(launchHost(hosts, { picked: 'vm', task: null })?.host.host_id).toBe('vm')
+		expect(launchHost(hosts, { picked: null, task: null })?.host.host_id).toBe('box')
+	})
+
+	it('a picked host wins for any task; otherwise the task stays on its host while it is online', () => {
+		expect(launchHost(hosts, { picked: 'vm', task: { hostId: 'mac' } })?.host.host_id).toBe('vm')
+		expect(launchHost(hosts, { picked: 'box', task: { hostId: 'vm' } })?.host.host_id).toBe('box')
+		expect(launchHost(hosts, { picked: null, task: { hostId: 'mac' } })?.host.host_id).toBe('box')
+		expect(launchHost(hosts, { picked: null, task: { hostId: 'vm' } })?.host.host_id).toBe('vm')
+	})
+
+	it('stays on an offline task host when no host is online', () => {
+		const offline = [{ host: { host_id: 'mac' }, online: false }]
+		expect(launchHost(offline, { picked: null, task: { hostId: 'mac' } })?.host.host_id).toBe('mac')
+	})
+})
+
+describe('workingCopy', () => {
+	const base = { inTask: false, project: true, clonesFirst: false, hostName: 'box', movedFrom: null }
+
+	it('names a worktree, a first clone, or the directory itself for a new task', () => {
+		expect(workingCopy(base)).toMatchObject({ label: 'New worktree', branch: true })
+		expect(workingCopy({ ...base, clonesFirst: true })?.title).toBe(
+			'box clones the repository the first time, then makes a branch named after the task',
+		)
+		expect(workingCopy({ ...base, project: false })).toMatchObject({ label: 'In this directory', branch: false })
+	})
+
+	it('says nothing for a session in a task unless it moved hosts', () => {
+		expect(workingCopy({ ...base, inTask: true })).toBeNull()
+		expect(workingCopy({ ...base, inTask: true, movedFrom: 'mac' })?.title).toContain('stay on mac')
+	})
+
+	it('keeps a moved directory task in its directory, with no branch to check out', () => {
+		expect(workingCopy({ ...base, inTask: true, project: false })).toBeNull()
+		expect(workingCopy({ ...base, inTask: true, project: false, movedFrom: 'mac' })).toEqual({
+			label: 'In this directory',
+			title: 'The agent edits your checkout directly',
+			branch: false,
+		})
+	})
+})
+
+describe('launchError', () => {
+	const kept = 'Your prompt is still in the composer.'
+
+	it("gives the server's reason for a name already in use", () => {
+		const error = new ORPCError('TASK_SLUG_CONFLICT', {
+			defined: true,
+			status: 409,
+			data: { slug: 'fix-auth', message: 'The name "fix-auth" is taken.' },
+		})
+		expect(launchError(error)).toBe(`Could not start the task. The name "fix-auth" is taken. ${kept}`)
+	})
+
+	it('says what to do about access', () => {
+		expect(launchError(new ORPCError('FORBIDDEN', { status: 403 }))).toContain("can't start tasks here")
+	})
+
+	it('names the failing field for a validation rejection', () => {
+		const error = new ORPCError('INPUT_VALIDATION_FAILED', {
+			status: 400,
+			data: { fieldErrors: { slug: ['String must contain at most 100 character(s)'] } },
+		})
+		expect(launchError(error)).toContain('slug is not valid')
+		expect(launchError(error)).toContain('string must contain at most 100 character(s)')
+	})
+
+	it('gives a fallback when validation carries no field errors', () => {
+		const error = new ORPCError('INPUT_VALIDATION_FAILED', { status: 400, data: {} })
+		expect(launchError(error)).toContain('The server rejected the request')
+	})
+
+	it('keeps to the plain message otherwise', () => {
+		expect(launchError(new Error('boom'))).toBe(`Could not start the task. ${kept}`)
+	})
+})
+
+describe('slugify', () => {
+	it('keeps letters and digits and adds the suffix', () => {
+		expect(slugify('Fix the login bug!', '1a2b')).toBe('fix-the-login-bug-1a2b')
+		expect(slugify('***', '1a2b')).toBe('task-1a2b')
+	})
+})
+
+describe('startTask', () => {
+	const ids = { taskId: 'task-0001', sessionId: 'session-1', eventId: 'event-1' }
+	const settings: ComposerSettings = {
+		agent: 'claude',
+		model: 'opus',
+		effort: 'high',
+		fastMode: false,
+		permissionsMode: 'auto',
+	}
+	const repository = {
+		remoteUrl: 'git@github.com:acme/app.git',
+		repositoryIdentity: 'github.com/acme/app',
+		defaultBranch: 'main',
+		default: true,
+		autoPushBranch: true,
+		copyGlobs: [],
+	}
+	const ticket: Ticket = {
+		provider: 'github',
+		ticketId: '9',
+		name: '[acme/app#9] Fix login',
+		slug: 'acme-app-9-fix-login',
+		url: 'https://github.com/acme/app/issues/9',
+		githubRepository: {
+			connectionId: 'c1',
+			repositoryId: 'r1',
+			fullName: 'acme/app',
+			accountLogin: 'acme',
+			private: false,
+			archived: false,
+		},
+	}
+
+	function fakeApi() {
+		const api = {
+			projects: { v2: { repositorySources: { get: vi.fn(async () => ({ sources: [] })), upsert: vi.fn() } } },
+			tasks: { v2: { create: vi.fn(async () => ({})) }, launchDraft: vi.fn(async () => ({})), update: vi.fn() },
+			ai: { generateTitle: vi.fn(async () => ({ title: 'Agent title' })) },
+		}
+		return { api, client: api as unknown as ApiClient }
+	}
+
+	it('creates a project task on a branch named after it, then asks for a title', async () => {
+		const { api, client } = fakeApi()
+		await startTask(client, {
+			ids,
+			target: { kind: 'project', project: { id: 'p1', repositories: [repository] } },
+			hostId: 'h1',
+			draft: 'Fix the login bug',
+			ticket: null,
+			attachments: [],
+			settings,
+			workflow: { workflowType: 'freeform', autoAdvance: false },
+		})
+		expect(api.projects.v2.repositorySources.get).toHaveBeenCalled()
+		const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(created).toMatchObject({
+			name: 'Fix the login bug',
+			slug: 'fix-the-login-bug-0001',
+			projectId: 'p1',
+			defaultRepositoryIdentity: 'github.com/acme/app',
+			repositories: [{ repositoryIdentity: 'github.com/acme/app', branch: 'fix-the-login-bug-0001' }],
+			firstSession: { hostId: 'h1', model: 'opus', permissionsMode: 'auto' },
+		})
+		expect(api.ai.generateTitle).toHaveBeenCalledWith({ text: 'Fix the login bug' })
+	})
+
+	it('runs a directory task in place, named after its issue', async () => {
+		const { api, client } = fakeApi()
+		await startTask(client, {
+			ids,
+			target: { kind: 'directory', path: '/code/app' },
+			hostId: 'h1',
+			draft: '',
+			ticket,
+			attachments: [],
+			settings,
+			workflow: { workflowType: 'freeform', autoAdvance: false },
+		})
+		expect(api.tasks.v2.create).not.toHaveBeenCalled()
+		const [launched] = api.tasks.launchDraft.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(launched).toMatchObject({
+			name: '[acme/app#9] Fix login',
+			slug: 'acme-app-9-fix-login',
+			defaultWorkingDirectory: '/code/app',
+			worktreeTiming: 'never',
+			ticketProvider: 'github',
+			ticketId: '9',
+			ticketRepositoryFullName: 'acme/app',
+			firstSession: { workingDirectory: '/code/app' },
+		})
+		expect(api.ai.generateTitle).not.toHaveBeenCalled()
+	})
+
+	it('starts a medium task on its research questions, with the prompt as the task content', async () => {
+		const { api, client } = fakeApi()
+		await startTask(client, {
+			ids,
+			target: { kind: 'project', project: { id: 'p1', repositories: [repository] } },
+			hostId: 'h1',
+			draft: 'Fix the login bug',
+			ticket: null,
+			attachments: [],
+			settings,
+			workflow: { workflowType: 'outline_only', autoAdvance: true },
+		})
+		const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(created).toMatchObject({
+			workflowType: 'outline_only',
+			taskContent: 'Fix the login bug',
+			autoAdvanceQuestionsToResearch: true,
+			autoAdvanceResearchToDesign: true,
+			autoAdvanceWorktreeToImplementation: false,
+			autoAdvanceImplementationToPr: false,
+			firstSession: {
+				text: 'use the rpi:create-research-questions skill for .devflow/tasks/fix-the-login-bug-0001',
+				permissionsMode: 'bypass',
+			},
+		})
+	})
+	it.each([true, false])(
+		'starts a small task on implementation and asks it to offer describe-pr (auto-advance %s)',
+		async (autoAdvance) => {
+			const { api, client } = fakeApi()
+			await startTask(client, {
+				ids,
+				target: { kind: 'project', project: { id: 'p1', repositories: [repository] } },
+				hostId: 'h1',
+				draft: 'Fix the login bug',
+				ticket: null,
+				attachments: [],
+				settings,
+				workflow: { workflowType: 'freeform', autoAdvance },
+				directImplementation: true,
+			})
+			const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
+			const prompt = 'Fix the login bug\n\n' + DESCRIBE_PR_NEXT_STEP_PROMPT
+			expect(created).toMatchObject({
+				workflowType: 'freeform',
+				taskContent: prompt,
+				autoAdvanceQuestionsToResearch: false,
+				autoAdvanceImplementationToPr: autoAdvance,
+				firstSession: { text: prompt, intent: 'implementation', permissionsMode: settings.permissionsMode },
+			})
+		},
+	)
+})
+
+describe('launchInTask', () => {
+	const settings: ComposerSettings = {
+		agent: 'claude',
+		model: 'opus',
+		effort: 'high',
+		fastMode: false,
+		permissionsMode: 'auto',
+	}
+	const input = {
+		sessionId: 'session-2',
+		eventId: 'event-2',
+		text: 'Fix the login bug',
+		hostId: 'h1',
+		workingDirectory: '/code/app',
+		settings,
+	}
+
+	function fakeApi() {
+		const api = {
+			sessions: { launch: vi.fn(async () => ({})), v2: { create: vi.fn(async () => ({})) } },
+		}
+		return { api, client: api as unknown as ApiClient }
+	}
+
+	it('starts a session in a directory task without a title, so the server generates one', async () => {
+		const { api, client } = fakeApi()
+		await launchInTask(client, { id: 'task-1', workspace_id: null }, input)
+		expect(api.sessions.v2.create).not.toHaveBeenCalled()
+		const [launched] = api.sessions.launch.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(launched).toMatchObject({
+			id: 'session-2',
+			taskId: 'task-1',
+			hostId: 'h1',
+			workingDirectory: '/code/app',
+		})
+		expect(launched.title).toBeNull()
+	})
+
+	it('starts a session in a project task through sessions.v2.create, also without a title', async () => {
+		const { api, client } = fakeApi()
+		await launchInTask(client, { id: 'task-1', workspace_id: 'ws-1' }, input)
+		expect(api.sessions.launch).not.toHaveBeenCalled()
+		const [created] = api.sessions.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(created).toMatchObject({ sessionId: 'session-2', workspaceId: 'ws-1', taskId: 'task-1' })
+		expect(created.title).toBeNull()
+	})
+})
