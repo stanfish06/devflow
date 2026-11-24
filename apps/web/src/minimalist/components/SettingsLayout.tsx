@@ -143,7 +143,7 @@ export function MinimalistSettingsLayout({ children }: { children: ReactNode }) 
 					) : (
 						// Shared sections read the standard theme tokens; pin them to the minimalist palette.
 						<div
-							data-theme={dark ? 'framer-dark' : 'framer-light'}
+							data-theme={dark ? 'dark' : 'light'}
 							className="minimalist-shared rounded-corners shared-settings"
 						>
 							{children}

@@ -117,3 +117,7 @@ REACT_DOCTOR_ISSUES.json
 
 # Track the settings template
 !.env.example
+
+# `bun run devflow up` output when started in the background
+.devflow-up.log
+.devflow-e2e.log

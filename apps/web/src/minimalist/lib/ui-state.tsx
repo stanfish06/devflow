@@ -1,6 +1,9 @@
+import { type ThemePreference, useOptionalTheme } from '@devflow/ui/components/theme-provider'
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from 'react'
 
-export type ThemePreference = 'system' | 'light' | 'dark'
+export type { ThemePreference } from '@devflow/ui/components/theme-provider'
+
+const noop = () => {}
 
 type UiState = {
 	sidebarOpen: boolean
@@ -65,7 +68,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
 			readStored<'open' | 'closed'>('hl-min-panel', 'closed') === 'open',
 	)
 	const [searchOpen, setSearchOpen] = useState(false)
-	const [theme, setThemeState] = useState<ThemePreference>(() => readStored('hl-min-theme', 'system'))
+	// Outside a ThemeProvider (isolated renders) the theme is fixed at system.
+	const themeContext = useOptionalTheme()
+	const theme: ThemePreference = themeContext?.preference ?? 'system'
+	const setTheme = themeContext?.setPreference ?? noop
 	const [toast, setToast] = useState<UiState['toast']>(null)
 
 	const toggleSidebar = useCallback(() => {
@@ -79,10 +85,6 @@ export function UiProvider({ children }: { children: ReactNode }) {
 		store('hl-min-panel', panelOpen ? 'closed' : 'open')
 		setPanelOpen(!panelOpen)
 	}, [panelOpen])
-	const setTheme = useCallback((next: ThemePreference) => {
-		store('hl-min-theme', next)
-		setThemeState(next)
-	}, [])
 	const showToast = useCallback<UiState['showToast']>((text, action) => {
 		toastCount += 1
 		setToast({ id: toastCount, text, action })

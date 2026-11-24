@@ -190,15 +190,12 @@ function buildEnv(config: DevflowConfig): Record<string, string> {
 		STAGE: 'local',
 		NODE_USE_SYSTEM_CA: '1',
 		// Single-user auth (apps/api/src/devflow/local-auth.ts)
-		DEVFLOW_LOCAL_AUTH: 'true',
 		DEVFLOW_USER_ID: config.userId,
 		DEVFLOW_USER_EMAIL: config.userEmail,
 		DEVFLOW_USER_NAME: config.userName,
 		DEVFLOW_ORGANIZATION_ID: config.organizationId,
-		DEVFLOW_WORKOS_ORGANIZATION_ID: config.workosOrganizationId,
 		DEVFLOW_AUTH_PRIVATE_JWK_PATH: keys.userJwkPath,
 		DEVFLOW_JWKS_URL: `http://127.0.0.1:${PORTS.api}/devflow/auth/jwks`,
-		VITE_PUBLIC_DEVFLOW_LOCAL_AUTH: 'true',
 		// Helper model calls (titles, next steps) run through Claude Code on the subscription.
 		DEVFLOW_AI_PROVIDER: 'claude-code',
 		DEVFLOW_HOME,
@@ -655,11 +652,22 @@ async function awsCommand(): Promise<void> {
 	throw new Error('Usage: bun run devflow aws push|tunnel --instance <id> [--bucket <name>] [--region <region>]')
 }
 
+/** Caddy's local CA root, which signs the *.devflow.localhost certificates (Caddy's default data dir). */
+const CADDY_ROOT_CA = join(
+	process.env.XDG_DATA_HOME ?? join(homedir(), '.local', 'share'),
+	'caddy',
+	'pki',
+	'authorities',
+	'local',
+	'root.crt',
+)
+
 /** `e2e`: Playwright tests in apps/e2e against the running stack (installed Chrome). */
 function e2e(): void {
 	const result = spawnSync('bun', ['x', 'playwright', 'test', ...process.argv.slice(3)], {
 		cwd: join(REPO_ROOT, 'apps/e2e'),
-		env: { ...process.env, DEVFLOW_HOME },
+		// The tests call the API with fetch, which only trusts the local CA when told about it.
+		env: { ...process.env, DEVFLOW_HOME, NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA },
 		stdio: 'inherit',
 	})
 	process.exit(result.status ?? 1)

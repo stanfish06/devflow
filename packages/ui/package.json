@@ -6,8 +6,6 @@
 	"exports": {
 		"./globals.css": "./src/styles/globals.css",
 		"./postcss.config": "./postcss.config.mjs",
-		"./vscode-themes.generated": "./src/vscode-themes/generated/vscode-themes.generated.ts",
-		"./vscode-themes.generated.css": "./src/vscode-themes/generated/vscode-themes.generated.css",
 		"./lib/*": "./src/lib/*.ts",
 		"./lib/ansi-parser": "./src/lib/ansi-parser.tsx",
 		"./artifact-viewer-v2": "./src/artifact-viewer-v2/index.ts",
@@ -44,7 +42,6 @@
 		"build:linux": "bun run build",
 		"test": "bun vitest run",
 		"typecheck": "tsc --noEmit",
-		"generate:themes": "bun run src/vscode-themes/extract-themes.ts",
 		"test:watch": "bun vitest"
 	},
 	"dependencies": {

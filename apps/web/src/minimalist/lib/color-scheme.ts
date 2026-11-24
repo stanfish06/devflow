@@ -1,19 +1,6 @@
-import { useSyncExternalStore } from 'react'
+import { useOptionalTheme } from '@devflow/ui/components/theme-provider'
 
-import { useUi } from './ui-state'
-
-function subscribeScheme(onChange: () => void) {
-	const media = matchMedia('(prefers-color-scheme: dark)')
-	media.addEventListener('change', onChange)
-	return () => media.removeEventListener('change', onChange)
-}
-
+/** Whether the app renders dark: the shared theme setting, resolved against the OS scheme. Light outside a ThemeProvider. */
 export function useMinimalistDark(): boolean {
-	const { theme } = useUi()
-	const systemDark = useSyncExternalStore(
-		subscribeScheme,
-		() => matchMedia('(prefers-color-scheme: dark)').matches,
-		() => false,
-	)
-	return theme === 'dark' || (theme === 'system' && systemDark)
+	return useOptionalTheme()?.theme === 'dark'
 }

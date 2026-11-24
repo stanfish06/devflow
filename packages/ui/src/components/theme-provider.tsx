@@ -1,68 +1,55 @@
 import * as React from 'react'
 import { useLocalStorage } from '../hooks/use-local-storage'
 
-export type Theme =
-  | 'solarized-dark'
-  | 'solarized-light'
-  | 'bubblegum'
-  | 'sentry'
-  | 'catppuccin'
-  | 'high-contrast'
-  | 'framer-dark'
-  | 'framer-light'
-  | 'gruvbox-dark'
-  | 'gruvbox-light'
-  | 'monokai'
-  | 'launch'
-  | 'rose-pine'
-  | 'rose-pine-dawn'
-  | 'rose-pine-moon'
-  | 'tokyo-night'
-  | 'tokyo-night-storm'
-  | 'vesper'
-  | 'rapture'
-  | 'tactical'
-  | 'neuromancer'
-  | 'red-alert'
-  | 'covenant'
-  | 'wintermute'
-  | 'dash'
-  | 'wednesday'
-  | 'tokyo-night-light-vscode'
-  | 'poimandres-vscode'
-  | 'night-owl-light-vscode'
-  | 'nord-vscode'
-  | 'vercel-dark-vscode'
+/** The applied theme: `data-theme` on <html>, plus the `dark` class in dark. */
+export type Theme = 'light' | 'dark'
+/** What the user picked; `system` follows the OS color scheme. */
+export type ThemePreference = 'system' | Theme
 
 interface ThemeContextType {
+  /** The applied theme. */
   theme: Theme
-  setTheme: (theme: Theme) => void
+  preference: ThemePreference
+  setPreference: (preference: ThemePreference) => void
 }
 
 const ThemeContext = React.createContext<ThemeContextType | undefined>(undefined)
 
+const DARK_QUERY = '(prefers-color-scheme: dark)'
+
+function subscribeSystemScheme(onChange: () => void) {
+  const media = matchMedia(DARK_QUERY)
+  media.addEventListener('change', onChange)
+  return () => media.removeEventListener('change', onChange)
+}
+
+/** Stored values from older builds (named palettes) count as `system`. */
+export function parseThemePreference(value: unknown): ThemePreference {
+  return value === 'light' || value === 'dark' ? value : 'system'
+}
+
 interface ThemeProviderProps {
   children: React.ReactNode
-  defaultTheme?: Theme
   storageKey?: string
   onThemeChange?: (theme: Theme) => void
 }
 
-export function ThemeProvider({
-  children,
-  defaultTheme = 'rose-pine',
-  storageKey = 'ui-theme',
-  onThemeChange,
-}: ThemeProviderProps) {
-  const [theme, setTheme, isLoaded] = useLocalStorage(storageKey, defaultTheme)
+export function ThemeProvider({ children, storageKey = 'ui-theme', onThemeChange }: ThemeProviderProps) {
+  const [stored, setStored, isLoaded] = useLocalStorage<unknown>(storageKey, 'system')
+  const preference = parseThemePreference(stored)
+  const systemDark = React.useSyncExternalStore(
+    subscribeSystemScheme,
+    () => matchMedia(DARK_QUERY).matches,
+    () => false,
+  )
+  const theme: Theme = preference === 'dark' || (preference === 'system' && systemDark) ? 'dark' : 'light'
 
   React.useEffect(() => {
     if (!isLoaded) return
+    const root = document.documentElement
+    root.setAttribute('data-theme', theme)
+    root.classList.toggle('dark', theme === 'dark')
 
-    localStorage.setItem(storageKey, JSON.stringify(theme))
-    document.documentElement.setAttribute('data-theme', theme)
-
-    // Call the optional app-specific callback
     if (!onThemeChange) return
     const timeout = setTimeout(() => {
       onThemeChange(theme)
@@ -70,13 +57,14 @@ export function ThemeProvider({
     // A report still pending when the theme or callback changes is stale; dropping it keeps
     // it from overwriting whatever owns the window theme now.
     return () => clearTimeout(timeout)
-  }, [theme, storageKey, onThemeChange, isLoaded])
+  }, [theme, onThemeChange, isLoaded])
 
-  return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
-      {children}
-    </ThemeContext.Provider>
+  const value = React.useMemo(
+    () => ({ theme, preference, setPreference: (next: ThemePreference) => setStored(next) }),
+    [theme, preference, setStored],
   )
+
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }
 
 export function useTheme() {

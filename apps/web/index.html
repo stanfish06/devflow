@@ -1,11 +1,10 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="rose-pine">
+<html lang="en" data-theme="light">
 
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="/favicon.ico" />
-    <meta name="theme-color" content="#191724" />
     <meta name="robots" content="noindex, nofollow" />
     <meta name="description" content="devflow — plan, delegate, and review work with your coding agents." />
     <title>devflow</title>
@@ -14,9 +13,11 @@
     <meta property="og:description" content="devflow — plan, delegate, and review work with your coding agents." />
     <script>
       try {
-        const storedTheme = localStorage.getItem('devflow-theme')
-        const parsedTheme = storedTheme ? JSON.parse(storedTheme) : null
-        if (typeof parsedTheme === 'string') document.documentElement.dataset.theme = parsedTheme
+        // Apply the stored light/dark/system choice before first paint (ThemeProvider takes over after).
+        const stored = JSON.parse(localStorage.getItem('devflow-theme') ?? 'null')
+        const dark = stored === 'dark' || (stored !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+        document.documentElement.classList.toggle('dark', dark)
       } catch {}
     </script>
   </head>

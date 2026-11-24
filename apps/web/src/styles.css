@@ -1,9 +1,6 @@
 /* Import global terminal-themed styles from UI package */
 @import "@devflow/ui/globals.css";
 
-/* Import VSCode theme overrides */
-@import "@devflow/ui/vscode-themes.generated.css";
-
 /* Streamdown's default components ship Tailwind utility classes; its dist is outside
    the default scan roots, so the classes only compile with an explicit source. */
 @source "../node_modules/streamdown/dist/*.js";

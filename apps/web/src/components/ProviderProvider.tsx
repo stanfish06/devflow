@@ -33,7 +33,7 @@ export function ProviderProvider({ children }: { children: ReactNode }) {
 
 	return (
 		<AuthProvider>
-			<ThemeProvider defaultTheme="rose-pine" storageKey="devflow-theme">
+			<ThemeProvider storageKey="devflow-theme">
 				{providerMode === 'shared' ? (
 					<SharedArtifactProviders>{children}</SharedArtifactProviders>
 				) : (

@@ -1,16 +1,17 @@
 @scope (.minimalist-ui) to (.minimalist-shared) {
-	/* devflow minimalist app. Tokens mirror Codex (Settings → Appearance): #FFFFFF / #1A1C1F light, #181818 / #FFFFFF dark. */
+	/* devflow minimalist app. Colors, type and corners follow agent-viz-demo (web/app/globals.css):
+	   panes on its card surface, Vercel-style grays, near-black ink. */
 	:scope {
 		--bg: #ffffff;
-		--fg: #1a1c1f;
-		--fg-2: #5d6168;
-		--fg-3: #8e9197;
-		--sidebar: #f7f7f8;
+		--fg: #171717;
+		--fg-2: #666666;
+		--fg-3: #8f8f8f;
+		--sidebar: #ffffff;
 		--surface: #ffffff;
-		--surface-2: #f4f4f5;
-		--hover: rgba(0, 0, 0, 0.045);
-		--active: rgba(0, 0, 0, 0.07);
-		--selection: rgba(0, 102, 255, 0.16);
+		--surface-2: #f2f2f2;
+		--hover: #f2f2f2;
+		--active: #e6e6e6;
+		--selection: color-mix(in oklab, oklch(71.7% 0.1648 250.794) 28%, transparent);
 		--mark: rgba(255, 190, 0, 0.26);
 		--code-keyword: #cf222e;
 		--code-string: #0a3069;
@@ -18,37 +19,37 @@
 		--code-comment: #6e7781;
 		--code-title: #8250df;
 		--code-type: #953800;
-		--line: rgba(0, 0, 0, 0.08);
-		--line-2: rgba(0, 0, 0, 0.12);
-		--accent: #1a1c1f;
-		--accent-fg: #ffffff;
-		--add: #1a7f37;
-		--add-bg: rgba(26, 127, 55, 0.09);
-		--del: #cf222e;
-		--del-bg: rgba(207, 34, 46, 0.08);
-		--warn: #b35900;
-		--warn-bg: rgba(230, 126, 0, 0.1);
-		--info: #2563eb;
-		--shadow: 0 8px 28px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.06);
+		--line: #ebebeb;
+		--line-2: #e0e0e0;
+		--accent: oklch(0.205 0 0);
+		--accent-fg: oklch(0.985 0 0);
+		--add: #0b7d55;
+		--add-bg: color-mix(in oklab, #0b7d55 9%, transparent);
+		--del: oklch(0.577 0.245 27.325);
+		--del-bg: color-mix(in oklab, oklch(0.577 0.245 27.325) 8%, transparent);
+		--warn: #9a6700;
+		--warn-bg: color-mix(in oklab, #9a6700 10%, transparent);
+		--info: #1f6fcf;
+		--shadow: 0 0 0 0.5px color-mix(in oklab, #171717 15%, transparent), 0 8px 24px rgba(0, 0, 0, 0.08);
 		/* Dims what a drawer or overlaid panel covers. */
 		--scrim: rgba(0, 0, 0, 0.16);
 		--r-sm: 6px;
 		--r: 10px;
 		--r-lg: 14px;
-		--font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
-		--mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+		--font: var(--font-ui);
+		--mono: var(--font-code);
 	}
 	:scope.dark {
-		--bg: #181818;
-		--fg: #f5f5f5;
-		--fg-2: #b4b4b4;
-		--fg-3: #8a8a8a;
-		--sidebar: #1f1f1f;
-		--surface: #232323;
-		--surface-2: #2a2a2a;
-		--hover: rgba(255, 255, 255, 0.05);
-		--active: rgba(255, 255, 255, 0.08);
-		--selection: rgba(64, 140, 255, 0.34);
+		--bg: #0a0a0a;
+		--fg: #ededed;
+		--fg-2: #a1a1a1;
+		--fg-3: #737373;
+		--sidebar: oklch(0.15 0 0);
+		--surface: #0a0a0a;
+		--surface-2: #1a1a1a;
+		--hover: #1a1a1a;
+		--active: oklch(0.215 0 0);
+		--selection: color-mix(in oklab, oklch(71.7% 0.1648 250.794) 34%, transparent);
 		--mark: rgba(255, 190, 0, 0.2);
 		--code-keyword: #ff7b72;
 		--code-string: #a5d6ff;
@@ -56,17 +57,18 @@
 		--code-comment: #8b949e;
 		--code-title: #d2a8ff;
 		--code-type: #ffa657;
-		--line: rgba(255, 255, 255, 0.08);
-		--line-2: rgba(255, 255, 255, 0.13);
-		--accent: #f5f5f5;
-		--accent-fg: #181818;
-		--add: #4ac26b;
-		--add-bg: rgba(74, 194, 107, 0.12);
-		--del: #ff7b72;
-		--del-bg: rgba(255, 123, 114, 0.12);
-		--warn: #f0a44b;
-		--warn-bg: rgba(240, 164, 75, 0.12);
-		--shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+		--line: oklch(1 0 0 / 10%);
+		--line-2: oklch(1 0 0 / 15%);
+		--accent: oklch(0.922 0 0);
+		--accent-fg: oklch(0.205 0 0);
+		--add: #2bb886;
+		--add-bg: color-mix(in oklab, #2bb886 12%, transparent);
+		--del: oklch(0.704 0.191 22.216);
+		--del-bg: color-mix(in oklab, oklch(0.704 0.191 22.216) 12%, transparent);
+		--warn: #e0a10a;
+		--warn-bg: color-mix(in oklab, #e0a10a 12%, transparent);
+		--info: #5b9cec;
+		--shadow: 0 0 0 0.5px oklch(1 0 0 / 15%), 0 10px 30px rgba(0, 0, 0, 0.5);
 		--scrim: rgba(0, 0, 0, 0.45);
 	}
 	/* The app-wide selection colors belong to the standard theme and hide text on this one. */
@@ -4787,29 +4789,9 @@
 	}
 }
 
-/* Shared settings sections are the standard components; pull them onto the minimalist ink palette and type. */
+/* Shared settings sections are the standard components; use the minimalist type. */
 .minimalist-ui .shared-settings[data-theme] {
-	--terminal-bg: #ffffff;
-	--terminal-bg-alt: #f7f7f8;
-	--terminal-fg: #1a1c1f;
-	--terminal-fg-dim: #5d6168;
-	--terminal-accent: #1a1c1f;
-	--terminal-accent-dim: rgba(26, 28, 31, 0.14);
-	--terminal-accent-alt: #1a1c1f;
-	--terminal-border: #e8e8ea;
-	--terminal-selection: rgba(26, 28, 31, 0.08);
 	font-family: var(--font);
-}
-.minimalist-ui.dark .shared-settings[data-theme] {
-	--terminal-bg: #181818;
-	--terminal-bg-alt: #232323;
-	--terminal-fg: #f5f5f5;
-	--terminal-fg-dim: #b4b4b4;
-	--terminal-accent: #f5f5f5;
-	--terminal-accent-dim: rgba(245, 245, 245, 0.16);
-	--terminal-accent-alt: #f5f5f5;
-	--terminal-border: #2e2e2e;
-	--terminal-selection: rgba(245, 245, 245, 0.1);
 }
 /* A button inside a tooltip takes the tooltip trigger's slot name, so match it by its classes too. */
 .minimalist-ui .shared-settings :is([data-slot='button'], [data-slot='tooltip-trigger'].tracking-wider) {

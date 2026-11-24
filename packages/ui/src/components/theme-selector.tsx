@@ -1,96 +1,17 @@
 import * as React from 'react'
-import {
-  Box,
-  Building2,
-  Cat,
-  Crosshair,
-  CloudLightning,
-  Flower2,
-  Framer,
-  Gauge,
-  Heart,
-  Moon,
-  MoonStar,
-  RadioTower,
-  Palette,
-  ScanEye,
-  Shield,
-  Snowflake,
-  Sun,
-  Sunrise,
-  Terminal,
-  Zap,
-} from 'lucide-react'
-
-function SentryGlyph({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 44" className={className} aria-hidden="true">
-      <path d="M29,2.26a4.67,4.67,0,0,0-8,0L14.42,13.53A32.21,32.21,0,0,1,32.17,40.19H27.55A27.68,27.68,0,0,0,12.09,17.47L6,28a15.92,15.92,0,0,1,9.23,12.17H4.62A.76.76,0,0,1,4,39.06l2.94-5a10.74,10.74,0,0,0-3.36-1.9l-2.91,5a4.54,4.54,0,0,0,1.69,6.24A4.66,4.66,0,0,0,4.62,44H19.15a19.4,19.4,0,0,0-8-17.31l2.31-4A23.87,23.87,0,0,1,23.76,44H36.07a35.88,35.88,0,0,0-16.41-31.8l4.67-8a.77.77,0,0,1,1.05-.27c.53.29,20.29,34.77,20.66,35.17a.76.76,0,0,1-.68,1.13H40.6q.09,1.91,0,3.81h4.78A4.59,4.59,0,0,0,50,39.43a4.49,4.49,0,0,0-.62-2.28Z" fill="currentColor" />
-    </svg>
-  )
-}
+import { Monitor, Moon, Sun } from 'lucide-react'
 import { useHotkeys } from '@devflow/hotkeys'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@devflow/ui/components/tooltip'
-import { useTheme, type Theme } from './theme-provider'
+import { useTheme, type ThemePreference } from './theme-provider'
 import { cn } from '@devflow/ui/lib/utils'
 import { KeyboardShortcut } from './keyboard-shortcut'
-import { vscodeThemes } from '@devflow/ui/vscode-themes.generated'
 
-const manualThemes: { value: Theme; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { value: 'solarized-dark', label: 'Solarized Dark', icon: Moon },
-  { value: 'solarized-light', label: 'Solarized Light', icon: Sun },
-  { value: 'bubblegum', label: 'Bubblegum', icon: Heart },
-  { value: 'sentry', label: 'Sentry', icon: SentryGlyph },
-  { value: 'catppuccin', label: 'Catppuccin', icon: Cat },
-  { value: 'high-contrast', label: 'High Contrast', icon: ScanEye },
-  { value: 'framer-dark', label: 'Framer Dark', icon: Framer },
-  { value: 'framer-light', label: 'Framer Light', icon: Framer },
-  { value: 'gruvbox-dark', label: 'Gruvbox Dark', icon: Box },
-  { value: 'gruvbox-light', label: 'Gruvbox Light', icon: Box },
-  { value: 'monokai', label: 'Monokai', icon: Terminal },
-  { value: 'launch', label: 'Launch', icon: CloudLightning },
-  { value: 'rose-pine', label: 'Rosé Pine', icon: Flower2 },
-  { value: 'rose-pine-dawn', label: 'Rosé Pine Dawn', icon: Sunrise },
-  { value: 'rose-pine-moon', label: 'Rosé Pine Moon', icon: MoonStar },
-  { value: 'tokyo-night', label: 'Tokyo Night', icon: Building2 },
-  { value: 'tokyo-night-storm', label: 'Tokyo Night Storm', icon: CloudLightning },
-  { value: 'vesper', label: 'Vesper', icon: Palette },
-  { value: 'rapture', label: 'Rapture', icon: Zap },
-  { value: 'tactical', label: 'Tactical', icon: Crosshair },
-  { value: 'neuromancer', label: 'Neuromancer', icon: RadioTower },
-  { value: 'red-alert', label: 'Red Alert', icon: Shield },
-  { value: 'covenant', label: 'Covenant', icon: Shield },
-  { value: 'wintermute', label: 'Wintermute', icon: Snowflake },
-  { value: 'dash', label: 'Dash', icon: Gauge },
-  { value: 'wednesday', label: 'Wednesday', icon: Cat },
+const themes: { value: ThemePreference; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { value: 'system', label: 'System', icon: Monitor },
+  { value: 'light', label: 'Light', icon: Sun },
+  { value: 'dark', label: 'Dark', icon: Moon },
 ]
-
-// Map VS Code themes to match the manual theme structure
-const vscodeThemesMapped = vscodeThemes.map(t => ({
-  value: t.value as Theme,
-  label: t.label,
-  icon: t.icon === 'Sun' ? Sun : Moon
-}))
-
-const retroThemeValues = new Set<Theme>([
-  'covenant',
-  'neuromancer',
-  'rapture',
-  'red-alert',
-  'tactical',
-  'wintermute',
-])
-
-const sortedThemes = [...manualThemes, ...vscodeThemesMapped].sort((a, b) =>
-  a.label.localeCompare(b.label)
-)
-const mainThemes = sortedThemes.filter((theme) => !retroThemeValues.has(theme.value))
-const retroThemes = sortedThemes.filter((theme) => retroThemeValues.has(theme.value))
-const themes = [...mainThemes, ...retroThemes]
-const themeSections = [
-  { label: null, themes: mainThemes },
-  { label: 'Retro', themes: retroThemes },
-]
+const themeSections = [{ label: null, themes }]
 const themeIndexByValue = new Map(themes.map((theme, index) => [theme.value, index]))
 
 interface ThemeSelectorProps {
@@ -108,7 +29,7 @@ export function ThemeSelector({
   showTooltip = true,
   onOpenChange,
 }: ThemeSelectorProps) {
-  const { theme, setTheme } = useTheme()
+  const { preference: theme, setPreference: setTheme } = useTheme()
   const [isOpen, setIsOpenState] = React.useState(false)
   const [selectedIndex, setSelectedIndex] = React.useState(0)
   const [positionAbove, setPositionAbove] = React.useState(false)
