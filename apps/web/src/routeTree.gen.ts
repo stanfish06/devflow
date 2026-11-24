@@ -20,6 +20,7 @@ import { Route as AppBoardRouteImport } from './routes/_app/board'
 import { Route as AppPullRequestsRouteImport } from './routes/_app/pull-requests'
 import { Route as AppSessionsRouteRouteImport } from './routes/_app/sessions/route'
 import { Route as AppTasksRouteRouteImport } from './routes/_app/tasks/route'
+import { Route as AppUsageRouteImport } from './routes/_app/usage'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAgentRouteImport } from './routes/settings/agent'
 import { Route as SettingsAgentSignInRouteImport } from './routes/settings/agent-sign-in'
@@ -100,6 +101,11 @@ const AppSessionsRouteRoute = AppSessionsRouteRouteImport.update({
 const AppTasksRouteRoute = AppTasksRouteRouteImport.update({
   id: '/tasks',
   path: '/tasks',
+  getParentRoute: () => AppRouteRoute,
+} as any)
+const AppUsageRoute = AppUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
   getParentRoute: () => AppRouteRoute,
 } as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
@@ -251,6 +257,7 @@ export interface FileRoutesByFullPath {
   '/artifacts': typeof AppArtifactsRoute
   '/board': typeof AppBoardRoute
   '/pull-requests': typeof AppPullRequestsRoute
+  '/usage': typeof AppUsageRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -287,6 +294,7 @@ export interface FileRoutesByTo {
   '/artifacts': typeof AppArtifactsRoute
   '/board': typeof AppBoardRoute
   '/pull-requests': typeof AppPullRequestsRoute
+  '/usage': typeof AppUsageRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -328,6 +336,7 @@ export interface FileRoutesById {
   '/_app/artifacts': typeof AppArtifactsRoute
   '/_app/board': typeof AppBoardRoute
   '/_app/pull-requests': typeof AppPullRequestsRoute
+  '/_app/usage': typeof AppUsageRoute
   '/settings/agent': typeof SettingsAgentRoute
   '/settings/agent-sign-in': typeof SettingsAgentSignInRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -370,6 +379,7 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/board'
     | '/pull-requests'
+    | '/usage'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -406,6 +416,7 @@ export interface FileRouteTypes {
     | '/artifacts'
     | '/board'
     | '/pull-requests'
+    | '/usage'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -446,6 +457,7 @@ export interface FileRouteTypes {
     | '/_app/artifacts'
     | '/_app/board'
     | '/_app/pull-requests'
+    | '/_app/usage'
     | '/settings/agent'
     | '/settings/agent-sign-in'
     | '/settings/archived'
@@ -561,6 +573,13 @@ declare module '@tanstack/react-router' {
       path: '/tasks'
       fullPath: '/tasks'
       preLoaderRoute: typeof AppTasksRouteRouteImport
+      parentRoute: typeof AppRouteRoute
+    }
+    '/_app/usage': {
+      id: '/_app/usage'
+      path: '/usage'
+      fullPath: '/usage'
+      preLoaderRoute: typeof AppUsageRouteImport
       parentRoute: typeof AppRouteRoute
     }
     '/settings/': {
@@ -805,6 +824,7 @@ interface AppRouteRouteChildren {
   AppArtifactsRoute: typeof AppArtifactsRoute
   AppBoardRoute: typeof AppBoardRoute
   AppPullRequestsRoute: typeof AppPullRequestsRoute
+  AppUsageRoute: typeof AppUsageRoute
   AppIndexRoute: typeof AppIndexRoute
   AppAuthSigninRoute: typeof AppAuthSigninRoute
   AppAuthSignoutRoute: typeof AppAuthSignoutRoute
@@ -818,6 +838,7 @@ const AppRouteRouteChildren: AppRouteRouteChildren = {
   AppArtifactsRoute: AppArtifactsRoute,
   AppBoardRoute: AppBoardRoute,
   AppPullRequestsRoute: AppPullRequestsRoute,
+  AppUsageRoute: AppUsageRoute,
   AppIndexRoute: AppIndexRoute,
   AppAuthSigninRoute: AppAuthSigninRoute,
   AppAuthSignoutRoute: AppAuthSignoutRoute,

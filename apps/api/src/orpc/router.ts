@@ -182,6 +182,7 @@ import { getDownloadUrlProcedure } from './api/uploads/download-url.effect'
 import { getPresignedUrlProcedure } from './api/uploads/get-presigned-url.effect'
 import { upsertTextArtifactProcedure } from './api/uploads/upsert-text.effect'
 import { getPresignedUrlV2Procedure } from './api/uploads/v2/get-presigned-url.effect'
+import { usageYearProcedure } from './api/usage/year.effect'
 import { retryWorkspaceSetupStepProcedure } from './api/workspace-setup/retry-step'
 import { skipWorkspaceSetupStepProcedure } from './api/workspace-setup/skip-step'
 import { updateWorkspaceSetupRepositoryDirectoryProcedure } from './api/workspace-setup/update-repository-directory'
@@ -263,6 +264,9 @@ export const apiRouter = os.router({
 		userStageSpend: userStageSpendProcedure,
 		userModeSpend: userModeSpendProcedure,
 		weeklyActiveUsers: weeklyActiveUsersProcedure,
+	},
+	usage: {
+		year: usageYearProcedure,
 	},
 	automation: {
 		run: {

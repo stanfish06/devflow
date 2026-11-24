@@ -101,6 +101,11 @@ export const conversationEvents = pgTable(
 			.where(
 				sql`(${t.event_type} = 'tool_call' AND ${t.tool_call_id} IS NOT NULL) OR ${t.tool_result_for_id} IS NOT NULL`,
 			),
+		// The usage page's message count: prompts a user sent, over time. Only user prompts match, so the
+		// index stays small and the daemon's own writes (which carry no user_id) never touch it.
+		index('conversation_events_user_messages_idx')
+			.on(t.organization_id, t.user_id, t.created_at)
+			.where(sql`${t.role} = 'user' AND ${t.event_type} = 'message' AND ${t.user_id} IS NOT NULL`),
 	],
 )
 

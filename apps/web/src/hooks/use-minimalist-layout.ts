@@ -13,6 +13,7 @@ export function supportsMinimalistLayout(pathname: string, search: Record<string
 		pathname === '/pull-requests' ||
 		pathname === '/board' ||
 		pathname === '/artifacts' ||
+		pathname === '/usage' ||
 		// The minimalist archive lives in settings; these routes send it there.
 		pathname === '/archive/tasks' ||
 		pathname === '/archive/sessions' ||
