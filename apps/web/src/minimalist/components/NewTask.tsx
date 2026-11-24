@@ -62,6 +62,7 @@ import { githubFullName, type Ticket, ticketLabel } from '@/minimalist/lib/ticke
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useAttachments } from '@/minimalist/lib/use-attachments'
 import { useCopy } from '@/minimalist/lib/use-copy'
+import { useWorkingHost } from '@/minimalist/lib/use-working-host'
 import { useApi } from '@/orpc/client'
 
 export function NewTask({
@@ -97,10 +98,15 @@ export function NewTask({
 	const existingProjectId = existing.task?.workspace_id
 		? existingWorkspace.data?.workspace.projectId
 		: existing.task?.project_id
+	// The host you picked for this launch. Until you pick, a new task starts on the working host; this
+	// composer only reads it, so picking here never changes it. A session in a task keeps the task's host.
 	const [hostId, setHostId] = useState<string | null>(requestedHostId ?? null)
+	const working = useWorkingHost()
+	const seedHostId = existingTaskId || working.id === 'all' ? null : working.id
+	const seedOffline = hostId === null && seedHostId !== null && working.state === 'offline' ? working.host : null
 	const taskHost = hosts.find((entry) => entry.host.host_id === latestExisting?.host_id) ?? null
 	const host = launchHost(hosts, {
-		picked: hostId,
+		picked: hostId ?? seedHostId,
 		task: existingTaskId && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
 	})
 	const directories = useRecentDirectories(host?.host.host_id ?? null)
@@ -319,6 +325,7 @@ export function NewTask({
 				type="button"
 				ref={hostAnchor}
 				aria-label={`Host: ${host ? host.name : 'none'}`}
+				title={seedOffline ? offlineSeedCopy(seedOffline.name) : undefined}
 				onClick={() => setMenu('host')}
 			>
 				<HostIcon host={host} />
@@ -350,6 +357,9 @@ export function NewTask({
 			)}
 			<div className="col">
 				{hostsReady && hosts.length === 0 ? <NoHostsNotice /> : null}
+				{seedOffline ? (
+					<OfflineWorkingHostNotice name={seedOffline.name} onPick={() => setMenu('host')} />
+				) : null}
 				<Composer
 					value={draft}
 					onChange={setDraft}
@@ -542,6 +552,28 @@ function NoHostsNotice() {
 						}
 					>
 						Copy start command
+					</button>
+				</div>
+			</div>
+		</div>
+	)
+}
+
+function offlineSeedCopy(name: string) {
+	return `${name} is offline — pick a host for this launch`
+}
+
+/** The working host is offline. Say so and offer another host for this launch, without changing it. */
+function OfflineWorkingHostNotice({ name, onPick }: { name: string; onPick: () => void }) {
+	return (
+		<div className="notice" role="status">
+			<Server className="i sm" strokeWidth={1.6} />
+			<div className="body">
+				<b>{offlineSeedCopy(name)}</b>
+				<div className="d">Your working host stays {name}. The host you pick is used for this task only.</div>
+				<div className="acts">
+					<button type="button" className="btn" onClick={onPick}>
+						Pick a host
 					</button>
 				</div>
 			</div>

@@ -39,6 +39,7 @@ vi.mock('@/minimalist/lib/thread-panel', () => ({ useOpenInTask: () => vi.fn() }
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi }))
 vi.mock('@/minimalist/lib/shortcuts', () => ({ shortcutHint: () => 'shortcut' }))
 vi.mock('@/minimalist/components/AccountMenu', () => ({ AccountMenu: () => null }))
+vi.mock('@/minimalist/components/WorkingHostSwitcher', () => ({ WorkingHostSwitcher: () => null }))
 vi.mock('@/minimalist/components/ProjectList', () => ({ ProjectList: () => <div>Projects</div> }))
 vi.mock('@/components/providers/SyncProvider', () => ({
 	useSyncInternal: () => ({

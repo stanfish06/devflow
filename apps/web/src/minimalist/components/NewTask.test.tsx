@@ -6,17 +6,27 @@ import { useSettingsStore } from '@/hooks/stores/settingsStore'
 
 import { NewTask } from './NewTask'
 
-const { useHosts, useProjects, useTask, useRecentDirectories, useSlashCommands, launchInTask, startTask, navigate } =
-	vi.hoisted(() => ({
-		startTask: vi.fn(),
-		useHosts: vi.fn(),
-		useProjects: vi.fn(),
-		useTask: vi.fn(),
-		useRecentDirectories: vi.fn(),
-		useSlashCommands: vi.fn(),
-		launchInTask: vi.fn(),
-		navigate: vi.fn(),
-	}))
+const {
+	useHosts,
+	useProjects,
+	useTask,
+	useRecentDirectories,
+	useSlashCommands,
+	useWorkingHost,
+	launchInTask,
+	startTask,
+	navigate,
+} = vi.hoisted(() => ({
+	startTask: vi.fn(),
+	useHosts: vi.fn(),
+	useProjects: vi.fn(),
+	useTask: vi.fn(),
+	useRecentDirectories: vi.fn(),
+	useSlashCommands: vi.fn(),
+	useWorkingHost: vi.fn(),
+	launchInTask: vi.fn(),
+	navigate: vi.fn(),
+}))
 
 function hostView(id: string, online = true) {
 	return { host: { host_id: id, supported_models: null }, name: id, online }
@@ -46,6 +56,7 @@ vi.mock('@/minimalist/lib/data', () => ({
 	useTaskTree: () => ({ recent: [] }),
 	useSlashCommands,
 }))
+vi.mock('@/minimalist/lib/use-working-host', () => ({ useWorkingHost }))
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ showToast: vi.fn() }) }))
 vi.mock('@/minimalist/lib/use-attachments', () => ({ useAttachments: () => ({ metadata: [], blocked: false }) }))
 vi.mock('@/minimalist/components/Composer', () => ({
@@ -128,6 +139,7 @@ beforeEach(() => {
 	useTask.mockReturnValue({ task: null, sessions: [], isReady: true })
 	useRecentDirectories.mockReturnValue([])
 	useSlashCommands.mockReturnValue([])
+	useWorkingHost.mockReturnValue({ id: 'all', host: null, state: 'all', isReady: true, set: vi.fn() })
 })
 
 function expectPlainLanding(container: HTMLElement, heading: string) {
@@ -419,5 +431,76 @@ describe('a new session in a directory task', () => {
 		startSession()
 		await waitFor(() => expect(launchInTask).toHaveBeenCalledOnce())
 		expect(launchInTask.mock.calls[0]?.[2]).toMatchObject({ hostId: 'mac', workingDirectory: taskDirectory })
+	})
+})
+
+describe('starting on the working host', () => {
+	function working(id: string, online = true) {
+		const host = hostView(id, online)
+		return { id, host, state: online ? 'online' : 'offline', isReady: true, set: vi.fn() }
+	}
+
+	beforeEach(() => {
+		useHosts.mockReturnValue({ hosts: [hostView('mac'), hostView('vm')], isReady: true })
+	})
+
+	async function startNewTask() {
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Fix the flaky test' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start task' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		return startTask.mock.calls[0]?.[1]
+	}
+
+	it('starts a new task on the working host', async () => {
+		useWorkingHost.mockReturnValue(working('vm'))
+		render(<NewTask />)
+		expect(screen.getByRole('button', { name: 'Host: vm' })).toBeInTheDocument()
+		expect(await startNewTask()).toMatchObject({ hostId: 'vm' })
+	})
+
+	it('starts on the first online host when the working host is all hosts', () => {
+		render(<NewTask />)
+		expect(screen.getByRole('button', { name: 'Host: mac' })).toBeInTheDocument()
+	})
+
+	it('lets you pick another host for one launch without changing the working host', async () => {
+		const state = working('vm')
+		useWorkingHost.mockReturnValue(state)
+		render(<NewTask />)
+		fireEvent.click(screen.getByRole('button', { name: 'Pick mac' }))
+		expect(await startNewTask()).toMatchObject({ hostId: 'mac' })
+		expect(state.set).not.toHaveBeenCalled()
+	})
+
+	it('prefers a host named in the address', () => {
+		useWorkingHost.mockReturnValue(working('vm'))
+		render(<NewTask hostId="mac" />)
+		expect(screen.getByRole('button', { name: 'Host: mac' })).toBeInTheDocument()
+	})
+
+	it("keeps a new session in a task on the task's host", () => {
+		useWorkingHost.mockReturnValue(working('vm'))
+		useTask.mockReturnValue({
+			task: { id: 'task', name: 'Move the project', workspace_id: 'workspace', project_id: 'project' },
+			sessions: [{ id: 'session', host_id: 'mac', working_directory: '/code/checkout' }],
+			isReady: true,
+		})
+		render(<NewTask existingTaskId="task" />)
+		expect(screen.getByRole('button', { name: 'Host: mac' })).toBeInTheDocument()
+	})
+
+	it('says when the working host is offline and offers another host for this launch', async () => {
+		useHosts.mockReturnValue({ hosts: [hostView('mac'), hostView('vm', false)], isReady: true })
+		useWorkingHost.mockReturnValue(working('vm', false))
+		render(<NewTask />)
+		expect(screen.getByRole('status')).toHaveTextContent('vm is offline — pick a host for this launch')
+		expect(screen.getByRole('button', { name: 'Host: vm' })).toHaveAttribute(
+			'title',
+			'vm is offline — pick a host for this launch',
+		)
+		expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled()
+		fireEvent.click(screen.getByRole('button', { name: 'Pick mac' }))
+		expect(screen.queryByRole('status')).not.toBeInTheDocument()
+		expect(await startNewTask()).toMatchObject({ hostId: 'mac' })
 	})
 })
