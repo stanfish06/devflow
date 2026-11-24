@@ -186,6 +186,7 @@ import { getPresignedUrlContract } from './api/uploads/get-presigned-url'
 import { upsertTextArtifactContract } from './api/uploads/upsert-text'
 import { getPresignedUrlV2Contract } from './api/uploads/v2/get-presigned-url'
 import { usageDayContract } from './api/usage/day'
+import { usagePeriodContract } from './api/usage/period'
 import { usageYearContract } from './api/usage/year'
 import { retryWorkspaceSetupStepContract } from './api/workspace-setup/retry-step'
 import { skipWorkspaceSetupStepContract } from './api/workspace-setup/skip-step'
@@ -272,6 +273,7 @@ export const ApiContract = {
 	// Self-scoped: the caller's own history, so any organization member may call it.
 	usage: {
 		year: usageYearContract,
+		period: usagePeriodContract,
 		day: usageDayContract,
 	},
 	automation: {

@@ -183,6 +183,7 @@ import { getPresignedUrlProcedure } from './api/uploads/get-presigned-url.effect
 import { upsertTextArtifactProcedure } from './api/uploads/upsert-text.effect'
 import { getPresignedUrlV2Procedure } from './api/uploads/v2/get-presigned-url.effect'
 import { usageDayProcedure } from './api/usage/day.effect'
+import { usagePeriodProcedure } from './api/usage/period.effect'
 import { usageYearProcedure } from './api/usage/year.effect'
 import { retryWorkspaceSetupStepProcedure } from './api/workspace-setup/retry-step'
 import { skipWorkspaceSetupStepProcedure } from './api/workspace-setup/skip-step'
@@ -268,6 +269,7 @@ export const apiRouter = os.router({
 	},
 	usage: {
 		year: usageYearProcedure,
+		period: usagePeriodProcedure,
 		day: usageDayProcedure,
 	},
 	automation: {

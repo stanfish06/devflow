@@ -5001,6 +5001,80 @@
 	.usage-day-row .none {
 		color: var(--fg-3);
 	}
+	/* The period section: Week / Month / Year totals, each against the same stretch of the one before. */
+	.usage-period {
+		margin-top: 28px;
+	}
+	.usage-period-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.usage-period-head h2 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-tiles {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 12px;
+	}
+	.usage-tile {
+		min-width: 0;
+		padding: 12px 14px;
+		border: 1px solid var(--line);
+		border-radius: var(--r);
+	}
+	.usage-tile .k {
+		color: var(--fg-2);
+		font-size: 12px;
+	}
+	.usage-tile .v {
+		display: flex;
+		align-items: baseline;
+		min-height: 33px;
+		margin-top: 2px;
+		font-size: 22px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-tile .v .of {
+		margin-left: 4px;
+		color: var(--fg-3);
+		font-size: 14px;
+		font-weight: 400;
+	}
+	.usage-tile .v .none {
+		color: var(--fg-3);
+		font-weight: 400;
+	}
+	.usage-tile .d {
+		margin-top: 2px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+	}
+	.usage-tile-skel {
+		display: inline-block;
+		align-self: center;
+		width: 56px;
+		height: 18px;
+		border-radius: var(--r-sm);
+		background: var(--surface-2);
+	}
+	.usage-footnote {
+		margin: 14px 0 0;
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	@media (max-width: 720px) {
+		.usage-tiles {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
 }
 
 /* Shared settings sections are the standard components; use the minimalist type. */

@@ -1,3 +1,4 @@
+import type { UsagePeriod } from '@devflow/api-contract/api/usage/windows'
 import { useQuery } from '@tanstack/react-query'
 
 import { useApi } from '@/orpc/client'
@@ -25,6 +26,21 @@ export function useUsageYear(today: string, timezoneOffset: number) {
 export function useUsageDay(date: string, timezoneOffset: number) {
 	const { queryClient: api, authScope } = useApi()
 	const options = api.usage.day.queryOptions({ input: { date, timezoneOffset } })
+	return useQuery({
+		...options,
+		queryKey: [...options.queryKey, authScope],
+		enabled: authScope.userId !== null && authScope.organizationId !== null,
+		refetchOnMount: 'always',
+	})
+}
+
+/**
+ * The caller's totals for a calendar period to date and the same stretch of the one before. Switching
+ * period fetches only this; scoped and refreshed like {@link useUsageYear}.
+ */
+export function useUsagePeriod(period: UsagePeriod, today: string, timezoneOffset: number) {
+	const { queryClient: api, authScope } = useApi()
+	const options = api.usage.period.queryOptions({ input: { period, today, timezoneOffset } })
 	return useQuery({
 		...options,
 		queryKey: [...options.queryKey, authScope],

@@ -155,3 +155,72 @@ test('a link to a day reopens its list, and survives a reload', async ({ page })
 	await expect(page).toHaveURL(new RegExp(`/usage\\?day=${USAGE_DAY}$`))
 	await expect(row.getByRole('cell').last()).toHaveText('$0.12', { timeout: 30_000 })
 })
+
+test('the period switch summarises the week, month and year, and Back undoes a switch', async ({ page }) => {
+	await page.goto('/')
+	const usageLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Usage' })
+	await expect(usageLink).toBeVisible({ timeout: 30_000 })
+	await page.clock.setFixedTime(new Date(`${USAGE_TODAY}T12:00:00Z`))
+	await usageLink.click()
+
+	// Month is the default: Jun 1–17, which holds both fixture days.
+	const month = page.getByRole('region', { name: 'This month' })
+	const periods = month.getByRole('radiogroup', { name: 'Period' })
+	await expect(periods.getByRole('radio', { name: 'Month' })).toBeChecked({ timeout: 30_000 })
+	const tile = (section: typeof month, label: string) => section.getByRole('group', { name: label })
+	await expect(tile(month, 'Activities').locator('.v')).toHaveText('4', { timeout: 30_000 })
+	await expect(tile(month, 'Activities').locator('.d')).toHaveText('1 task · 2 sessions · 1 message')
+	await expect(tile(month, 'Tokens').locator('.v')).toHaveText('1,200')
+	// May recorded nothing, so there is no comparison to make, only the breakdown.
+	await expect(tile(month, 'Tokens').locator('.d')).toHaveText([
+		'600 cache read · 100 cache write · 400 input · 100 output',
+	])
+	await expect(tile(month, 'Cost').locator('.v')).toHaveText('$0.12')
+	await expect(tile(month, 'Cost').locator('.d')).toHaveCount(0)
+	await expect(tile(month, 'Active days').locator('.v')).toHaveText('2 / 17')
+	await expect(tile(month, 'Active days').locator('.d')).toHaveText('most active: Wed')
+	await expect(
+		page.getByText('Tokens and cost cover Claude sessions only. Codex sessions count toward activity.'),
+	).toBeVisible()
+
+	// This week, Monday Jun 15 to today, is empty: zeros for activity, no data rather than $0.00 for usage.
+	await periods.getByRole('radio', { name: 'Week' }).click()
+	await expect(page).toHaveURL(/\/usage\?period=week$/)
+	const week = page.getByRole('region', { name: 'This week' })
+	await expect(week.getByRole('radio', { name: 'Week' })).toBeChecked()
+	await expect(tile(week, 'Activities').locator('.v')).toHaveText('0', { timeout: 30_000 })
+	await expect(tile(week, 'Tokens').locator('.v')).toHaveText('—')
+	await expect(tile(week, 'Tokens').locator('.d')).toHaveText('No token data recorded')
+	await expect(tile(week, 'Cost').locator('.d')).toHaveText('No token data recorded')
+	await expect(tile(week, 'Active days').locator('.v')).toHaveText('0 / 3')
+
+	// The last twelve months, Jul 1, 2019 to today.
+	await week.getByRole('radio', { name: 'Year' }).click()
+	await expect(page).toHaveURL(/\/usage\?period=year$/)
+	const year = page.getByRole('region', { name: 'Last 12 months' })
+	await expect(tile(year, 'Activities').locator('.v')).toHaveText('4', { timeout: 30_000 })
+	await expect(tile(year, 'Cost').locator('.v')).toHaveText('$0.12')
+	await expect(tile(year, 'Active days').locator('.v')).toHaveText('2 / 353')
+
+	// Each switch was its own step: Back walks them back to the default month.
+	await page.goBack()
+	await expect(page).toHaveURL(/\/usage\?period=week$/)
+	await expect(page.getByRole('region', { name: 'This week' })).toBeVisible()
+	await page.goBack()
+	await expect(page).toHaveURL(/\/usage$/)
+	await expect(tile(month, 'Activities').locator('.v')).toHaveText('4')
+})
+
+test('a link to a period and a day opens both, independently', async ({ page }) => {
+	await page.goto(`/usage?period=week&day=${USAGE_DAY}`)
+	const list = page.getByRole('region', { name: 'Work on Wed, Jun 10, 2020' })
+	const row = list.getByRole('row').filter({ hasText: fixture?.taskName ?? 'missing fixture' })
+	await expect(row.getByRole('cell').last()).toHaveText('$0.12', { timeout: 30_000 })
+	const week = page.getByRole('region', { name: 'This week' })
+	await expect(week.getByRole('radio', { name: 'Week' })).toBeChecked({ timeout: 30_000 })
+
+	// Closing the day keeps the period.
+	await list.getByRole('button', { name: 'Clear' }).click()
+	await expect(page).toHaveURL(/\/usage\?period=week$/)
+	await expect(week).toBeVisible()
+})

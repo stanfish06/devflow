@@ -1,16 +1,28 @@
+import type { UsagePeriod as Period } from '@devflow/api-contract/api/usage/windows'
 import { useState } from 'react'
 
 import { UsageDayList } from '@/minimalist/components/UsageDayList'
 import { UsageGrid } from '@/minimalist/components/UsageGrid'
+import { UsagePeriod } from '@/minimalist/components/UsagePeriod'
 import { localDayKey } from '@/minimalist/lib/usage'
 import { useUsageYear } from '@/minimalist/lib/use-usage'
 
 /**
  * Your own activity over the last year. The browser owns "today": it sends its local day and offset,
  * and the server buckets every row into that calendar. The URL owns the selected day, whose work is
- * listed under the grid.
+ * listed under the grid, and the period summarised below it.
  */
-export function UsagePage({ day, onDayChange }: { day: string | null; onDayChange: (day: string | null) => void }) {
+export function UsagePage({
+	day,
+	onDayChange,
+	period,
+	onPeriodChange,
+}: {
+	day: string | null
+	onDayChange: (day: string | null) => void
+	period: Period
+	onPeriodChange: (period: Period) => void
+}) {
 	const [clock] = useState(() => {
 		const now = new Date()
 		return { today: localDayKey(now), timezoneOffset: now.getTimezoneOffset() }
@@ -41,6 +53,12 @@ export function UsagePage({ day, onDayChange }: { day: string | null; onDayChang
 							onClear={() => onDayChange(null)}
 						/>
 					) : null}
+					<UsagePeriod
+						period={period}
+						onPeriodChange={onPeriodChange}
+						today={clock.today}
+						timezoneOffset={clock.timezoneOffset}
+					/>
 				</div>
 			</div>
 		</main>

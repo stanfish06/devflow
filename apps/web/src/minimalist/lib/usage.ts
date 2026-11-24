@@ -2,6 +2,8 @@
 // around them. The server computes every number; this only arranges and describes them.
 import { dayOfWeek, parseDayKey } from '@devflow/api-contract/api/metrics/range'
 import type { UsageDayRow } from '@devflow/api-contract/api/usage/day'
+import type { PeriodTotals } from '@devflow/api-contract/api/usage/period'
+import type { UsagePeriod } from '@devflow/api-contract/api/usage/windows'
 import type { DayUsage, TokenBreakdown } from '@devflow/api-contract/api/usage/year'
 
 /** What the grid's cells measure: things you did, tokens your sessions used, or what they cost. */
@@ -164,16 +166,20 @@ export function formatCost(usd: number): string {
 /** What a cell's tooltip says for a day with activity but no usage-ledger rows. */
 export const NO_TOKEN_DATA = 'No token data recorded'
 
-/** '2.1M tokens: 1.9M cache read · 140k cache write · 12k input · 48k output'. */
-export function tokenSummary(tokens: TokenBreakdown): string {
-	const total = totalTokens(tokens)
-	const parts = [
+/** The four token kinds: '1.9M cache read · 140k cache write · 12k input · 48k output'. */
+export function tokenBreakdown(tokens: TokenBreakdown): string {
+	return [
 		`${formatTokenCount(tokens.cacheRead)} cache read`,
 		`${formatTokenCount(tokens.cacheWrite)} cache write`,
 		`${formatTokenCount(tokens.input)} input`,
 		`${formatTokenCount(tokens.output)} output`,
-	]
-	return `${formatTokenCount(total)} ${total === 1 ? 'token' : 'tokens'}: ${parts.join(' · ')}`
+	].join(' · ')
+}
+
+/** '2.1M tokens: 1.9M cache read · 140k cache write · 12k input · 48k output'. */
+export function tokenSummary(tokens: TokenBreakdown): string {
+	const total = totalTokens(tokens)
+	return `${formatTokenCount(total)} ${total === 1 ? 'token' : 'tokens'}: ${tokenBreakdown(tokens)}`
 }
 
 /** 'Wed, Nov 18, 2026' for a day key, whatever the browser's time zone. */
@@ -273,4 +279,58 @@ export function dayRowMeta(row: UsageDayRow): string {
 			: [row.created ? 'Started' : null, row.messages > 0 ? plural(row.messages, 'message') : null]
 	const text = parts.filter(Boolean).join(' · ')
 	return text || 'Usage only'
+}
+
+// ── Period section ───────────────────────────────────────────────────────────
+
+export const USAGE_PERIOD_OPTIONS: ReadonlyArray<{ value: UsagePeriod; label: string }> = [
+	{ value: 'week', label: 'Week' },
+	{ value: 'month', label: 'Month' },
+	{ value: 'year', label: 'Year' },
+]
+
+/** The section's heading: each period runs to today. */
+export function periodTitle(period: UsagePeriod): string {
+	if (period === 'week') return 'This week'
+	if (period === 'month') return 'This month'
+	return 'Last 12 months'
+}
+
+/** What a period is compared with. */
+function previousPeriodName(period: UsagePeriod): string {
+	if (period === 'week') return 'last week'
+	if (period === 'month') return 'last month'
+	return 'the 12 months before'
+}
+
+/** Everything you did in a period, counted as the grid counts a day. */
+export function periodActivities(totals: Pick<PeriodTotals, 'tasks' | 'sessions' | 'messages'>): number {
+	return totals.tasks + totals.sessions + totals.messages
+}
+
+/** The Activities tile's breakdown: '9 tasks · 41 sessions · 136 messages'. */
+export function periodActivityDetail(totals: Pick<PeriodTotals, 'tasks' | 'sessions' | 'messages'>): string {
+	return [plural(totals.tasks, 'task'), plural(totals.sessions, 'session'), plural(totals.messages, 'message')].join(
+		' · ',
+	)
+}
+
+/**
+ * How a period compares with the same stretch of the one before: '↑ 18% vs last month',
+ * '↓ 5% vs last week', 'About the same as last month'. Nothing when either side has no token data, or
+ * when the previous one is zero and a percentage would mean nothing.
+ */
+export function periodDelta(current: number | null, previous: number | null, period: UsagePeriod): string | null {
+	if (current === null || previous === null || previous <= 0) return null
+	const percent = Math.round(((current - previous) / previous) * 100)
+	const name = previousPeriodName(period)
+	if (percent === 0) return `About the same as ${name}`
+	return `${percent > 0 ? '↑' : '↓'} ${count.format(Math.abs(percent))}% vs ${name}`
+}
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const
+
+/** The Active days tile's footnote: 'most active: Tue', from a 0 = Monday weekday. */
+export function topWeekdayLabel(weekday: number | null): string {
+	return weekday === null ? 'No active days yet' : `most active: ${WEEKDAYS[weekday] ?? ''}`
 }

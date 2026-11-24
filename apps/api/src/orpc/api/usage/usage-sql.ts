@@ -134,3 +134,45 @@ export function myUsageRows(scope: UsageScope, window: EpochWindow): SQL {
 			AND sue.occurred_at BETWEEN ${startMs} AND ${endMs}
 	`
 }
+
+/**
+ * The caller's activity counts and ledger sums per local day of the window, ascending, one row per day
+ * that had either: `(day, tasks, sessions, messages, ledger_rows, cache_read, cache_write, input,
+ * output, cost_usd)`. Days with neither are absent; a day with activity but no ledger rows has NULL
+ * usage columns.
+ *
+ * Each side is aggregated per day before the join, so a day's ledger rows can't multiply its activity
+ * counts or the other way round.
+ */
+export function myDailyUsage(scope: UsageScope, window: EpochWindow): SQL {
+	return sql`
+		WITH activity_by_day AS (
+			SELECT
+				day,
+				COUNT(*) FILTER (WHERE kind = 'task')::int AS tasks,
+				COUNT(*) FILTER (WHERE kind = 'session')::int AS sessions,
+				COUNT(*) FILTER (WHERE kind = 'message')::int AS messages
+			FROM (${myActivityEvents(scope, window)}) activity
+			GROUP BY day
+		),
+		usage_by_day AS (
+			SELECT
+				day,
+				COUNT(*)::int AS ledger_rows,
+				SUM(cache_read)::bigint AS cache_read,
+				SUM(cache_write)::bigint AS cache_write,
+				SUM(input)::bigint AS input,
+				SUM(output)::bigint AS output,
+				SUM(cost_usd)::float8 AS cost_usd
+			FROM (${myUsageRows(scope, window)}) ledger
+			GROUP BY day
+		)
+		SELECT
+			COALESCE(a.day, u.day) AS day,
+			a.tasks, a.sessions, a.messages,
+			u.ledger_rows, u.cache_read, u.cache_write, u.input, u.output, u.cost_usd
+		FROM activity_by_day a
+		FULL JOIN usage_by_day u ON u.day = a.day
+		ORDER BY 1
+	`
+}

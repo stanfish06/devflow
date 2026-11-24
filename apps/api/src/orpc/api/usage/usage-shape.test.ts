@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildDayRows, type DayItemRow, ledgerUsage, zeroFillDays } from './usage-shape'
+import { buildDayRows, type DayItemRow, ledgerUsage, sumTotals, zeroFillDays } from './usage-shape'
 
 const none = { tokens: null, costUsd: null }
 
@@ -110,6 +110,101 @@ describe('ledgerUsage', () => {
 		expect(
 			ledgerUsage({ ledger_rows: 1, cache_read: 0, cache_write: 0, input: 3, output: 4, cost_usd: null }),
 		).toEqual({ tokens: { cacheRead: 0, cacheWrite: 0, input: 3, output: 4 }, costUsd: 0 })
+	})
+})
+
+describe('sumTotals', () => {
+	// Mon Nov 16 – Tue Nov 24, 2026.
+	const window = { from: '2026-11-16', to: '2026-11-24' }
+	const ledger = (cost: number) => ({
+		ledger_rows: 1,
+		cache_read: 600,
+		cache_write: 100,
+		input: 400,
+		output: 100,
+		cost_usd: cost,
+	})
+
+	it('adds up the days inside the window and ignores the rest', () => {
+		const totals = sumTotals(
+			[
+				{ day: '2026-11-15', tasks: 9, sessions: 9, messages: 9, ...ledger(9) },
+				{ day: '2026-11-18', tasks: 1, sessions: 1, messages: 2, ...ledger(0.12) },
+				{ day: '2026-11-19', tasks: '0', sessions: '1', messages: '0', ...ledger(0.05) },
+				{ day: '2026-11-25', tasks: 9, sessions: 9, messages: 9, ...ledger(9) },
+			],
+			window,
+		)
+		expect(totals).toMatchObject({
+			tasks: 1,
+			sessions: 2,
+			messages: 2,
+			tokens: { cacheRead: 1200, cacheWrite: 200, input: 800, output: 200 },
+			activeDays: 2,
+			elapsedDays: 9,
+		})
+		expect(totals.costUsd).toBeCloseTo(0.17)
+	})
+
+	it('reports no ledger rows as null, never zero', () => {
+		const totals = sumTotals([{ day: '2026-11-18', tasks: 1, sessions: 1, messages: 0 }], window)
+		expect(totals).toMatchObject({ tokens: null, costUsd: null, activeDays: 1 })
+	})
+
+	it('keeps a real zero when ledger rows exist but cost nothing', () => {
+		const totals = sumTotals(
+			[
+				{
+					day: '2026-11-18',
+					tasks: 0,
+					sessions: 1,
+					messages: 0,
+					ledger_rows: 1,
+					cache_read: 0,
+					cache_write: 0,
+					input: 0,
+					output: 0,
+					cost_usd: null,
+				},
+			],
+			window,
+		)
+		expect(totals).toMatchObject({ tokens: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 }, costUsd: 0 })
+	})
+
+	it("doesn't count a day that only spent tokens as active", () => {
+		const totals = sumTotals(
+			[{ day: '2026-11-18', tasks: null, sessions: null, messages: null, ...ledger(1) }],
+			window,
+		)
+		expect(totals).toMatchObject({ activeDays: 0, topWeekday: null, costUsd: 1 })
+	})
+
+	it('names the weekday with the most activities, the earlier one on a tie', () => {
+		const rows = [
+			// Monday, twice, 2 + 3.
+			{ day: '2026-11-16', tasks: 0, sessions: 1, messages: 1 },
+			{ day: '2026-11-23', tasks: 0, sessions: 1, messages: 2 },
+			// Wednesday, 6.
+			{ day: '2026-11-18', tasks: 1, sessions: 1, messages: 4 },
+		]
+		expect(sumTotals(rows, window).topWeekday).toBe(2)
+		// Monday's 5 against Wednesday's 5: Monday comes first.
+		const tie = [...rows.slice(0, 2), { day: '2026-11-18', tasks: 0, sessions: 1, messages: 4 }]
+		expect(sumTotals(tie, window).topWeekday).toBe(0)
+	})
+
+	it('is all zeros and nulls for an empty window', () => {
+		expect(sumTotals([], { from: '2026-11-01', to: '2026-11-24' })).toEqual({
+			tasks: 0,
+			sessions: 0,
+			messages: 0,
+			tokens: null,
+			costUsd: null,
+			activeDays: 0,
+			elapsedDays: 24,
+			topWeekday: null,
+		})
 	})
 })
 

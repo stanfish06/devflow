@@ -18,7 +18,13 @@ import {
 	isEmptyYear,
 	lensValue,
 	localDayKey,
+	periodActivities,
+	periodActivityDetail,
+	periodDelta,
+	periodTitle,
 	streaks,
+	tokenBreakdown,
+	topWeekdayLabel,
 } from '@/minimalist/lib/usage'
 
 const noUsage = { tokens: null, costUsd: null }
@@ -324,5 +330,48 @@ describe('day list', () => {
 
 	it('marks a row that only spent tokens that day', () => {
 		expect(dayRowMeta(row({ kind: 'session', tokens: 10, costUsd: 0.01 }))).toBe('Usage only')
+	})
+})
+
+describe('period section', () => {
+	it('titles each period to date', () => {
+		expect(periodTitle('week')).toBe('This week')
+		expect(periodTitle('month')).toBe('This month')
+		expect(periodTitle('year')).toBe('Last 12 months')
+	})
+
+	it('counts and breaks down activities as the grid does', () => {
+		const totals = { tasks: 9, sessions: 41, messages: 136 }
+		expect(periodActivities(totals)).toBe(186)
+		expect(periodActivityDetail(totals)).toBe('9 tasks · 41 sessions · 136 messages')
+		expect(periodActivityDetail({ tasks: 1, sessions: 1, messages: 0 })).toBe('1 task · 1 session · 0 messages')
+	})
+
+	it('breaks tokens down by kind', () => {
+		expect(tokenBreakdown({ cacheRead: 600, cacheWrite: 100, input: 400, output: 100 })).toBe(
+			'600 cache read · 100 cache write · 400 input · 100 output',
+		)
+	})
+
+	it('compares with the previous period in whole percent', () => {
+		expect(periodDelta(118, 100, 'month')).toBe('↑ 18% vs last month')
+		expect(periodDelta(84.12, 75.79, 'month')).toBe('↑ 11% vs last month')
+		expect(periodDelta(95, 100, 'week')).toBe('↓ 5% vs last week')
+		expect(periodDelta(0, 2, 'year')).toBe('↓ 100% vs the 12 months before')
+		expect(periodDelta(1200, 300, 'month')).toBe('↑ 300% vs last month')
+		expect(periodDelta(12_000, 1_000, 'month')).toBe('↑ 1,100% vs last month')
+		expect(periodDelta(100.2, 100, 'month')).toBe('About the same as last month')
+	})
+
+	it('hides the comparison when either side has no token data, or there was nothing before', () => {
+		expect(periodDelta(null, 100, 'month')).toBeNull()
+		expect(periodDelta(100, null, 'month')).toBeNull()
+		expect(periodDelta(100, 0, 'month')).toBeNull()
+	})
+
+	it('names the most active weekday', () => {
+		expect(topWeekdayLabel(1)).toBe('most active: Tue')
+		expect(topWeekdayLabel(6)).toBe('most active: Sun')
+		expect(topWeekdayLabel(null)).toBe('No active days yet')
 	})
 })
