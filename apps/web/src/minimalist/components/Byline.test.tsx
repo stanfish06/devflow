@@ -12,10 +12,18 @@ describe('Byline', () => {
 		expect(container.querySelectorAll('.avatar')).toHaveLength(1)
 		expect(container.querySelector('.avatar-stack')).toBeNull()
 	})
-	it("stacks the devflow mark on the person for their agent's comments", () => {
+	it("stacks a robot badge on the person for their agent's comments", () => {
 		const { container } = render(<Byline name="Ada Lovelace" agent />)
 		expect(screen.getByText("Ada Lovelace's agent")).toBeInTheDocument()
 		expect(container.querySelector('.avatar-stack')).toHaveAttribute('title', "Ada Lovelace's agent")
 		expect(container.querySelectorAll('.avatar-stack .avatar')).toHaveLength(2)
+		const mark = container.querySelector('.avatar-stack .avatar.agent-mark')
+		expect(mark?.querySelector('svg.i.xs.lucide-bot')).not.toBeNull()
+		expect(mark?.querySelector('img')).toBeNull()
+	})
+	it('loads no logo image for the agent badge', () => {
+		const { container } = render(<Byline name="Ada Lovelace" agent />)
+		// Without a profile picture the only avatar content is the initials and the robot icon.
+		expect(container.querySelector('img')).toBeNull()
 	})
 })

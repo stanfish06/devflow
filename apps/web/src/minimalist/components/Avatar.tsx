@@ -1,5 +1,5 @@
-import appLogo from '@devflow/ui/assets/devflow-logo.png'
 import { getInitials } from '@devflow/ui/lib/comment-utils'
+import { Bot } from 'lucide-react'
 import { useState } from 'react'
 
 import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
@@ -58,8 +58,8 @@ export function WiredUserAvatar({ userId, size }: { userId: string; size?: numbe
 }
 
 /**
- * A comment's author: their avatar and name. The agent's comments stack the devflow logo on the
- * person it works for, and read as "Ada Lovelace's agent".
+ * A comment's author: their avatar and name. The agent's comments stack a neutral robot badge on
+ * the person it works for, and read as "Ada Lovelace's agent".
  */
 export function Byline({ name, src, agent, size = 18 }: CommentPerson & { size?: number }) {
 	return (
@@ -68,7 +68,7 @@ export function Byline({ name, src, agent, size = 18 }: CommentPerson & { size?:
 				<span className="avatar-stack" title={`${name}'s agent`}>
 					<Avatar name={name} src={src} size={size} />
 					<span className="avatar agent-mark" style={{ width: size, height: size }} aria-hidden="true">
-						<img src={appLogo} alt="" className="loaded" />
+						<Bot className="i xs" />
 					</span>
 				</span>
 			) : (

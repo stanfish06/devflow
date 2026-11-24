@@ -451,8 +451,11 @@
 		margin-left: -6px;
 		box-shadow: 0 0 0 1.5px var(--surface);
 	}
+	/* A neutral robot badge in the theme's own colours, so it follows light and dark. */
 	.avatar.agent-mark {
-		background: #fff;
+		background: var(--surface-2);
+		color: var(--fg-3);
+		border: 1px solid var(--line);
 	}
 	.host-chip {
 		margin-left: auto;

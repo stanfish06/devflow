@@ -1,4 +1,5 @@
-import appLogo from '../assets/devflow-logo.png'
+import { Bot } from 'lucide-react'
+
 import { getInitials } from '../lib/comment-utils'
 import { cn } from '../lib/utils'
 import { Avatar, AvatarFallback, AvatarGroup, AvatarImage } from './avatar'
@@ -39,13 +40,14 @@ export function AgentAvatarStack({
 					{getInitials(authorDisplayName ?? authorFallbackId)}
 				</AvatarFallback>
 			</Avatar>
-			<Avatar className={cn('shrink-0 border border-border bg-background', avatarClassName)}>
-				<AvatarImage
-					src={appLogo}
-					alt="devflow agent"
-					className="absolute inset-0 object-cover"
-				/>
-				<AvatarFallback className="text-[8px]">HL</AvatarFallback>
+			{/* A neutral robot badge marks the agent, in the theme's muted colours. */}
+			<Avatar
+				className={cn('shrink-0 border border-border bg-muted', avatarClassName)}
+				data-testid="agent-avatar-badge"
+			>
+				<AvatarFallback className="bg-muted text-muted-foreground">
+					<Bot className="size-[65%]" strokeWidth={1.8} aria-hidden="true" />
+				</AvatarFallback>
 			</Avatar>
 		</AvatarGroup>
 	)

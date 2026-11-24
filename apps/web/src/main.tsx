@@ -26,15 +26,20 @@ import reportWebVitals from './reportWebVitals'
 // Import the generated route tree
 import { routeTree } from './routeTree.gen'
 
+// The app ships no favicon, so tabs show the browser's default icon. A devstack tab gets its own
+// coloured icon so you can tell stacks apart; that's the only icon link the page ever has.
 const devstackId = import.meta.env.VITE_PUBLIC_DEVSTACK_ID
 if (devstackId) {
 	document.title = devstackId
-	const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]')
 	const devstackColor = `#${import.meta.env.VITE_PUBLIC_DEVSTACK_COLOR}`
-	if (favicon && /^#[\da-f]{6}$/i.test(devstackColor)) {
+	if (/^#[\da-f]{6}$/i.test(devstackColor)) {
+		const favicon = document.createElement('link')
+		favicon.rel = 'icon'
+		favicon.type = 'image/svg+xml'
 		favicon.href = `data:image/svg+xml,${encodeURIComponent(
 			`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="${devstackColor}"/><path d="M19 46 29 18h7l10 28h-7l-2-7H27l-2 7Zm10-13h6l-3-9Z" fill="#1b1e28"/></svg>`,
 		)}`
+		document.head.append(favicon)
 	}
 }
 
