@@ -313,9 +313,12 @@ function StatusListView(props: ViewProps) {
 									className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
 								>
 									<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
-									<span className="hidden shrink-0 items-center gap-1.5 md:flex">
+									{/* The stage tag stays at every width; below md the project chip makes room for it. */}
+									<span className="flex shrink-0 items-center gap-1.5">
 										<StageTag stage={stageOf(row)} />
-										<Chip>{row.projectName}</Chip>
+										<span className="hidden md:contents">
+											<Chip>{row.projectName}</Chip>
+										</span>
 									</span>
 									<span className="w-14 shrink-0 text-right text-xs text-muted-foreground">
 										{shortDate(row.lastActivity)}

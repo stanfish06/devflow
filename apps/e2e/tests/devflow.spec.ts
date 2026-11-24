@@ -104,7 +104,7 @@ test('the API crashing mid-turn loses no events', async ({ page }) => {
 
 test('Medium (RPI) task auto-advances from research questions to research', async ({ page }) => {
 	await openE2eProject(page)
-	await startTask(page, {
+	const taskId = await startTask(page, {
 		prompt: 'Add a one-line CONTRIBUTING.md that says pull requests are welcome.',
 		size: 'Medium',
 	})
@@ -112,6 +112,13 @@ test('Medium (RPI) task auto-advances from research questions to research', asyn
 	// The second session is created by the API's auto-advance, not by the test.
 	await expect(page.getByText(/^research:/).first()).toBeVisible({ timeout: 360_000 })
 	await expect(page.getByText(/01-research-questions/).first()).toBeVisible()
+
+	// The board tags the task with its stage group, from the labels the agent's sessions wrote.
+	// Questions, research and design all fall under Research & Design, so a further auto-advance holds.
+	await page.goto('/board')
+	await expect(page.locator(`[data-task-id="${taskId}"] [data-stage="research-design"]`)).toHaveText(
+		'Research & Design',
+	)
 })
 
 test('the CLI lists the tasks created in the UI', async () => {
