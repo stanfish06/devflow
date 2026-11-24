@@ -5,7 +5,13 @@
 
 import { dayOfWeek, enumerateBuckets, rangeLengthDays } from '@devflow/api-contract/api/metrics/range'
 import { type UsageDayRow, usageDayRowActivity } from '@devflow/api-contract/api/usage/day'
-import type { PeriodTotals } from '@devflow/api-contract/api/usage/period'
+import {
+	type PeriodBucket,
+	type PeriodModelCost,
+	type PeriodTopTask,
+	type PeriodTotals,
+	USAGE_TOP_TASKS,
+} from '@devflow/api-contract/api/usage/period'
 import type { DayWindow } from '@devflow/api-contract/api/usage/windows'
 import type { DayUsage, TokenBreakdown } from '@devflow/api-contract/api/usage/year'
 
@@ -176,4 +182,87 @@ export function buildDayRows(rows: readonly DayItemRow[]): UsageDayRow[] {
 			a.name.localeCompare(b.name) ||
 			a.id.localeCompare(b.id),
 	)
+}
+
+/**
+ * The caller's spend on one model during one local day of the period query's current window:
+ * `SUM(cost_usd)` over that day's ledger rows for the model, NULL when none of them reported a cost.
+ */
+export type ModelDayRow = {
+	day: string
+	model: string
+	cost_usd: Numeric
+}
+
+/**
+ * The cost-by-model chart's bars: one per slot of the current period, ascending, each holding the spend
+ * of every day from its own start up to the next slot's. Dense, so future slots are there, empty, and
+ * the chart keeps its width early in a period. Rows outside the window are dropped.
+ */
+export function denseBuckets(
+	rows: readonly ModelDayRow[],
+	slots: readonly string[],
+	window: DayWindow,
+): PeriodBucket[] {
+	const buckets = slots.map((start): PeriodBucket => ({ start, costByModel: {} }))
+	for (const row of rows) {
+		// Day keys order as text.
+		if (row.day < window.from || row.day > window.to) continue
+		// The last slot starting on or before the day: a day for week and month, a month for year.
+		const bucket = buckets.findLast((candidate) => candidate.start <= row.day)
+		if (!bucket) continue
+		bucket.costByModel[row.model] = (bucket.costByModel[row.model] ?? 0) + num(row.cost_usd)
+	}
+	return buckets
+}
+
+/**
+ * The by-model list: every model with ledger rows in the window, most expensive first, then by name. A
+ * model whose runs reported no cost still shows, at $0.00, since it did run. Read from the same rows as
+ * the chart, so the list adds up to the bars.
+ */
+export function rankByModel(rows: readonly ModelDayRow[], window: DayWindow): PeriodModelCost[] {
+	const byModel = new Map<string, number>()
+	for (const row of rows) {
+		if (row.day < window.from || row.day > window.to) continue
+		byModel.set(row.model, (byModel.get(row.model) ?? 0) + num(row.cost_usd))
+	}
+	return Array.from(byModel, ([model, costUsd]) => ({ model, costUsd })).sort(
+		(a, b) => b.costUsd - a.costUsd || a.model.localeCompare(b.model),
+	)
+}
+
+/** One task's spend over the period query's current window, from sessions the caller started. */
+export type TopTaskRow = {
+	task_id: string
+	name: string | null
+	archived: boolean | null
+	tokens: Numeric
+	cost_usd: Numeric
+}
+
+/**
+ * The top-tasks table: the {@link USAGE_TOP_TASKS} most expensive tasks, then by tokens, then by name.
+ * Every row has ledger rows behind it, so tokens and cost are real numbers, never the null of "No token
+ * data recorded".
+ */
+export function rankTopTasks(rows: readonly TopTaskRow[]): PeriodTopTask[] {
+	return rows
+		.map(
+			(row): PeriodTopTask => ({
+				taskId: row.task_id,
+				name: row.name?.trim() || 'Untitled task',
+				archived: row.archived === true,
+				tokens: num(row.tokens),
+				costUsd: num(row.cost_usd),
+			}),
+		)
+		.sort(
+			(a, b) =>
+				b.costUsd - a.costUsd ||
+				b.tokens - a.tokens ||
+				a.name.localeCompare(b.name) ||
+				a.taskId.localeCompare(b.taskId),
+		)
+		.slice(0, USAGE_TOP_TASKS)
 }

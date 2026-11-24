@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildDayRows, type DayItemRow, ledgerUsage, sumTotals, zeroFillDays } from './usage-shape'
+import {
+	buildDayRows,
+	type DayItemRow,
+	denseBuckets,
+	ledgerUsage,
+	rankByModel,
+	rankTopTasks,
+	sumTotals,
+	type TopTaskRow,
+	zeroFillDays,
+} from './usage-shape'
 
 const none = { tokens: null, costUsd: null }
 
@@ -278,6 +288,114 @@ describe('buildDayRows', () => {
 		expect(rows).toMatchObject([
 			{ id: 's1', kind: 'session', name: 'Untitled session', archived: true },
 			{ id: 't1', kind: 'task', name: 'Untitled task', archived: false },
+		])
+	})
+})
+
+describe('denseBuckets', () => {
+	it('has one bucket per slot, future ones empty, with each day under its own slot', () => {
+		const slots = ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26']
+		const buckets = denseBuckets(
+			[
+				{ day: '2026-11-23', model: 'claude-opus-4-8', cost_usd: 0.5 },
+				{ day: '2026-11-23', model: 'claude-haiku-4-5', cost_usd: '0.01' },
+				{ day: '2026-11-24', model: 'claude-opus-4-8', cost_usd: 0.12 },
+			],
+			slots,
+			{ from: '2026-11-23', to: '2026-11-24' },
+		)
+		expect(buckets).toEqual([
+			{ start: '2026-11-23', costByModel: { 'claude-opus-4-8': 0.5, 'claude-haiku-4-5': 0.01 } },
+			{ start: '2026-11-24', costByModel: { 'claude-opus-4-8': 0.12 } },
+			{ start: '2026-11-25', costByModel: {} },
+			{ start: '2026-11-26', costByModel: {} },
+		])
+	})
+
+	it('folds every day of a month into that month for the year period', () => {
+		const buckets = denseBuckets(
+			[
+				{ day: '2026-10-01', model: 'claude-opus-4-8', cost_usd: 1 },
+				{ day: '2026-10-31', model: 'claude-opus-4-8', cost_usd: 2 },
+				{ day: '2026-11-24', model: 'claude-sonnet-4-6', cost_usd: 0.25 },
+			],
+			['2026-10-01', '2026-11-01'],
+			{ from: '2026-10-01', to: '2026-11-24' },
+		)
+		expect(buckets).toEqual([
+			{ start: '2026-10-01', costByModel: { 'claude-opus-4-8': 3 } },
+			{ start: '2026-11-01', costByModel: { 'claude-sonnet-4-6': 0.25 } },
+		])
+	})
+
+	it('keeps a model whose runs reported no cost, at zero, and drops days outside the window', () => {
+		const buckets = denseBuckets(
+			[
+				{ day: '2026-11-22', model: 'claude-opus-4-8', cost_usd: 9 },
+				{ day: '2026-11-23', model: 'claude-opus-4-8', cost_usd: null },
+				{ day: '2026-11-25', model: 'claude-opus-4-8', cost_usd: 9 },
+			],
+			['2026-11-23', '2026-11-24', '2026-11-25'],
+			{ from: '2026-11-23', to: '2026-11-24' },
+		)
+		expect(buckets.map((bucket) => bucket.costByModel)).toEqual([{ 'claude-opus-4-8': 0 }, {}, {}])
+	})
+})
+
+describe('rankByModel', () => {
+	const window = { from: '2026-11-01', to: '2026-11-24' }
+
+	it('sums each model over the window, most expensive first, then by name', () => {
+		expect(
+			rankByModel(
+				[
+					{ day: '2026-11-02', model: 'claude-sonnet-4-6', cost_usd: 1 },
+					{ day: '2026-11-03', model: 'claude-opus-4-8', cost_usd: '2.5' },
+					{ day: '2026-11-04', model: 'claude-sonnet-4-6', cost_usd: 0.5 },
+					{ day: '2026-11-04', model: 'claude-haiku-4-5', cost_usd: 0.25 },
+					{ day: '2026-11-05', model: 'claude-fable-5-1', cost_usd: 0.25 },
+					{ day: '2026-10-31', model: 'claude-haiku-4-5', cost_usd: 99 },
+				],
+				window,
+			),
+		).toEqual([
+			{ model: 'claude-opus-4-8', costUsd: 2.5 },
+			{ model: 'claude-sonnet-4-6', costUsd: 1.5 },
+			{ model: 'claude-fable-5-1', costUsd: 0.25 },
+			{ model: 'claude-haiku-4-5', costUsd: 0.25 },
+		])
+	})
+
+	it('is empty when nothing was recorded', () => {
+		expect(rankByModel([], window)).toEqual([])
+	})
+})
+
+describe('rankTopTasks', () => {
+	const task = (overrides: Partial<TopTaskRow> & Pick<TopTaskRow, 'task_id'>): TopTaskRow => ({
+		name: `Task ${overrides.task_id}`,
+		archived: false,
+		tokens: 100,
+		cost_usd: 1,
+		...overrides,
+	})
+
+	it('keeps the five most expensive, then by tokens and name', () => {
+		const rows = rankTopTasks([
+			task({ task_id: 'a', cost_usd: 1 }),
+			task({ task_id: 'b', cost_usd: '4.5' }),
+			task({ task_id: 'c', cost_usd: 2, tokens: 10 }),
+			task({ task_id: 'd', cost_usd: 2, tokens: '500' }),
+			task({ task_id: 'e', cost_usd: 0.5 }),
+			task({ task_id: 'f', cost_usd: 0.1 }),
+		])
+		expect(rows.map((row) => row.taskId)).toEqual(['b', 'd', 'c', 'a', 'e'])
+		expect(rows[1]).toEqual({ taskId: 'd', name: 'Task d', archived: false, tokens: 500, costUsd: 2 })
+	})
+
+	it('names an untitled task and carries the archived flag', () => {
+		expect(rankTopTasks([task({ task_id: 'x', name: ' ', archived: true, cost_usd: null })])).toEqual([
+			{ taskId: 'x', name: 'Untitled task', archived: true, tokens: 100, costUsd: 0 },
 		])
 	})
 })

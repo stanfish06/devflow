@@ -1,12 +1,26 @@
 import { addDays, rangeLengthDays } from '@devflow/api-contract/api/metrics/range'
 import type { UsageDayRow } from '@devflow/api-contract/api/usage/day'
-import { yearWindow } from '@devflow/api-contract/api/usage/windows'
+import { periodWindows, yearWindow } from '@devflow/api-contract/api/usage/windows'
 import type { DayUsage } from '@devflow/api-contract/api/usage/year'
 import { describe, expect, it } from 'vitest'
 
 import {
 	cellLabel,
 	cellSummary,
+	chartCeiling,
+	chartFamilies,
+	chartSlots,
+	chartTitle,
+	costShare,
+	FAMILY_ORDER,
+	formatAxisCost,
+	modelColor,
+	modelFamily,
+	modelName,
+	slotAccessibleName,
+	slotLabel,
+	slotSummary,
+	slotTitle,
 	dayListCount,
 	dayRowMeta,
 	formatCost,
@@ -373,5 +387,157 @@ describe('period section', () => {
 		expect(topWeekdayLabel(1)).toBe('most active: Tue')
 		expect(topWeekdayLabel(6)).toBe('most active: Sun')
 		expect(topWeekdayLabel(null)).toBe('No active days yet')
+	})
+})
+
+describe('model families', () => {
+	it('reads the family from any form of model ID', () => {
+		expect(modelFamily('claude-opus-4-8')).toBe('opus')
+		expect(modelFamily('opus')).toBe('opus')
+		expect(modelFamily('opus[1m]')).toBe('opus')
+		expect(modelFamily('claude-sonnet-4-6')).toBe('sonnet')
+		expect(modelFamily('claude-haiku-4-5-20251001')).toBe('haiku')
+		expect(modelFamily('claude-fable-5-1')).toBe('fable')
+		expect(modelFamily('claude-3-5-sonnet-20241022')).toBe('sonnet')
+		expect(modelFamily('gpt-5.5')).toBe('other')
+		expect(modelFamily('')).toBe('other')
+	})
+
+	it('colours every version of a family the same, from fixed chart slots', () => {
+		expect(modelColor('claude-opus-4-8')).toBe('var(--chart-1)')
+		expect(modelColor('claude-opus-4-5-20251101')).toBe(modelColor('opus'))
+		expect(modelColor('claude-sonnet-4-6')).toBe('var(--chart-2)')
+		expect(modelColor('claude-haiku-4-5')).toBe('var(--chart-11)')
+		expect(modelColor('claude-fable-5')).toBe('var(--chart-9)')
+		// Never a generated hue: anything unknown is the neutral ink.
+		expect(modelColor('some-new-model')).toBe('var(--fg-3)')
+		const slots = FAMILY_ORDER.map((family) => modelColor(family === 'other' ? 'x' : family))
+		expect(new Set(slots).size).toBe(FAMILY_ORDER.length)
+	})
+
+	it('names a model the way people say it', () => {
+		expect(modelName('claude-opus-4-8')).toBe('Opus 4.8')
+		expect(modelName('claude-opus-4-5-20251101')).toBe('Opus 4.5')
+		expect(modelName('claude-opus-4-20250514')).toBe('Opus 4')
+		expect(modelName('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
+		expect(modelName('claude-fable-5-1')).toBe('Fable 5.1')
+		expect(modelName('claude-opus-4-6-1m')).toBe('Opus 4.6 1M')
+		expect(modelName('opus[1m]')).toBe('Opus 1M')
+		expect(modelName('sonnet')).toBe('Sonnet')
+		expect(modelName('claude-3-5-sonnet-20241022')).toBe('Sonnet 3.5')
+		expect(modelName('gpt-5.5')).toBe('gpt-5.5')
+	})
+})
+
+describe('cost chart', () => {
+	it('rounds the top up to a clean figure', () => {
+		expect(chartCeiling(0)).toBe(0)
+		expect(chartCeiling(0.12)).toBeCloseTo(0.15)
+		expect(chartCeiling(0.3)).toBeCloseTo(0.3)
+		expect(chartCeiling(0.1 + 0.2)).toBeCloseTo(0.3)
+		expect(chartCeiling(7.31)).toBe(8)
+		expect(chartCeiling(8.01)).toBe(10)
+		expect(chartCeiling(123)).toBe(150)
+		// Never below a cent.
+		expect(chartCeiling(0.001)).toBeCloseTo(0.01)
+	})
+
+	it('labels the gridline in cents while small and whole dollars after', () => {
+		expect(formatAxisCost(0.15)).toBe('$0.15')
+		expect(formatAxisCost(2.5)).toBe('$2.50')
+		expect(formatAxisCost(150)).toBe('$150')
+		expect(formatAxisCost(1500)).toBe('$1,500')
+	})
+
+	it('has a bar for every slot, stacked by family in a fixed order, future slots empty', () => {
+		const { slots: windowSlots } = periodWindows('week', '2026-11-25')
+		const { slots, max } = chartSlots(
+			[
+				{
+					start: '2026-11-23',
+					costByModel: {
+						'claude-haiku-4-5': 0.02,
+						'claude-opus-4-8': 0.1,
+						'claude-opus-4-5': 0.05,
+						'gpt-5.5': 0.01,
+					},
+				},
+				{ start: '2026-11-24', costByModel: { 'claude-sonnet-4-6': 0 } },
+			],
+			windowSlots,
+			'2026-11-25',
+		)
+		expect(slots).toHaveLength(7)
+		expect(slots.map((slot) => slot.future)).toEqual([false, false, false, true, true, true, true])
+		const [monday, tuesday, wednesday] = slots
+		// Opus at the bottom, whichever order the server listed the models in.
+		expect(monday?.segments.map((segment) => segment.family)).toEqual(['opus', 'haiku', 'other'])
+		expect(monday?.segments[0]?.costUsd).toBeCloseTo(0.15)
+		expect(monday?.models.map((entry) => entry.model)).toEqual([
+			'claude-opus-4-8',
+			'claude-opus-4-5',
+			'claude-haiku-4-5',
+			'gpt-5.5',
+		])
+		expect(monday?.total).toBeCloseTo(0.18)
+		// Rows that cost nothing are a real $0.00, not a missing one.
+		expect(tuesday).toMatchObject({ empty: false, total: 0, segments: [] })
+		expect(wednesday).toMatchObject({ empty: true, total: 0, segments: [], models: [] })
+		expect(max).toBeCloseTo(0.2)
+	})
+
+	it('draws the slots before the server answers, empty', () => {
+		const { slots, max } = chartSlots(undefined, periodWindows('month', '2026-02-10').slots, '2026-02-10')
+		expect(slots).toHaveLength(28)
+		expect(slots.every((slot) => slot.empty)).toBe(true)
+		expect(max).toBe(0)
+	})
+
+	it('keeps a family on its colour whichever families a period has', () => {
+		expect(chartFamilies([{ model: 'claude-haiku-4-5', costUsd: 9 }])).toEqual(['haiku'])
+		expect(
+			chartFamilies([
+				{ model: 'gpt-5.5', costUsd: 3 },
+				{ model: 'claude-fable-5-1', costUsd: 2 },
+				{ model: 'claude-opus-4-8', costUsd: 1 },
+				{ model: 'claude-opus-4-5', costUsd: 1 },
+			]),
+		).toEqual(['opus', 'fable', 'other'])
+	})
+
+	it('titles and labels bars by day, or by month for the year', () => {
+		expect(chartTitle('week')).toBe('Daily cost by model')
+		expect(chartTitle('month')).toBe('Daily cost by model')
+		expect(chartTitle('year')).toBe('Monthly cost by model')
+		expect(slotLabel('2026-11-01', 'month')).toBe('Nov 1')
+		expect(slotLabel('2025-12-01', 'year')).toBe('Dec 2025')
+		expect(slotTitle('2026-11-18', 'week')).toBe('Wed, Nov 18, 2026')
+		expect(slotTitle('2026-11-01', 'year')).toBe('November 2026')
+	})
+
+	it('describes a bar, and never calls an unrecorded one free', () => {
+		const { slots } = chartSlots(
+			[
+				{ start: '2026-11-18', costByModel: { 'claude-opus-4-5': 0.1, 'claude-haiku-4-5': 0.02 } },
+				{ start: '2026-11-19', costByModel: {} },
+			],
+			['2026-11-18', '2026-11-19'],
+			'2026-11-19',
+		)
+		const [spent, quiet] = slots
+		if (!spent || !quiet) throw new Error('expected two slots')
+		expect(slotSummary(spent)).toBe('$0.12')
+		expect(slotAccessibleName(spent, 'month')).toBe('Wed, Nov 18, 2026: $0.12 · Opus 4.5 $0.10 · Haiku 4.5 $0.02')
+		expect(slotSummary(quiet)).toBe('No cost recorded')
+		expect(slotAccessibleName(quiet, 'month')).toBe('Thu, Nov 19, 2026: No cost recorded')
+	})
+
+	it("gives each model its share of the period's spend", () => {
+		const byModel = [
+			{ model: 'claude-opus-4-8', costUsd: 3 },
+			{ model: 'claude-haiku-4-5', costUsd: 1 },
+		]
+		expect(costShare(3, byModel)).toBe(0.75)
+		expect(costShare(0, [{ model: 'claude-opus-4-8', costUsd: 0 }])).toBe(0)
 	})
 })

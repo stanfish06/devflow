@@ -47,14 +47,15 @@ describe('usage/period', async () => {
 	const callAs = (userId: string, period: UsagePeriod, timezoneOffset = 0, orgId = organizationId) =>
 		call(usagePeriodProcedure, { period, today: TODAY, timezoneOffset }, { context: contextFor(userId, orgId) })
 
-	const createTask = async (values: { createdBy: string; createdAt: bigint }) => {
+	const createTask = async (values: { createdBy: string; createdAt: bigint; name?: string; archived?: boolean }) => {
 		const [task] = await db
 			.insert(tasks)
 			.values({
 				organization_id: organizationId,
-				name: `usage period task ${randomUUID()}`,
+				name: values.name ?? `usage period task ${randomUUID()}`,
 				created_by: values.createdBy,
 				resource_owner_user_id: values.createdBy,
+				archived: values.archived ?? false,
 				created_at: values.createdAt,
 				updated_at: values.createdAt,
 			})
@@ -113,6 +114,7 @@ describe('usage/period', async () => {
 		input: number
 		output: number
 		costUsd: number | null
+		model?: string
 		orgId?: string
 	}) => {
 		await db.insert(sessionUsageEvents).values({
@@ -123,7 +125,7 @@ describe('usage/period', async () => {
 			coding_agent: 'claude',
 			source: 'claude_sdk_result',
 			report_key: `report-${randomUUID()}`,
-			model: 'claude-opus-4-5',
+			model: values.model ?? 'claude-opus-4-5',
 			tokens: { input_tokens: values.input, output_tokens: values.output },
 			input_tokens: values.input,
 			output_tokens: values.output,
@@ -154,8 +156,8 @@ describe('usage/period', async () => {
 		organizationId = org.id
 		otherOrganizationId = otherOrg.id
 
-		// Wed Nov 18: a task, its session and two prompts of mine; the run cost $0.12 for 1,200 tokens.
-		const task = await createTask({ createdBy: ME, createdAt: at('2026-11-18') })
+		// Wed Nov 18: a task, its session and two prompts of mine; the Opus run cost $0.12 for 1,200 tokens.
+		const task = await createTask({ createdBy: ME, createdAt: at('2026-11-18'), name: 'Mid-November task' })
 		const session = await createSession({ createdBy: ME, createdAt: at('2026-11-18'), taskId: task.id })
 		await createPrompt({ sessionId: session.id, userId: ME, createdAt: at('2026-11-18', 16) })
 		await createPrompt({ sessionId: session.id, userId: ME, createdAt: at('2026-11-18', 17) })
@@ -192,12 +194,13 @@ describe('usage/period', async () => {
 		const codex = await createSession({ createdBy: ME, createdAt: at('2026-11-23'), codingAgent: 'codelayer' })
 		await createPrompt({ sessionId: codex.id, userId: ME, createdAt: at('2026-11-23', 16) })
 
-		// Mon Nov 16, last week: a session whose run cost $0.05.
+		// Mon Nov 16, last week: a session with no task whose Sonnet run cost $0.05.
 		const lastWeek = await createSession({ createdBy: ME, createdAt: at('2026-11-16') })
 		await createUsage({
 			sessionId: lastWeek.id,
 			creator: ME,
 			occurredAt: at('2026-11-16'),
+			model: 'claude-sonnet-4-6',
 			cacheRead: 10,
 			cacheWrite: 0,
 			input: 5,
@@ -208,12 +211,20 @@ describe('usage/period', async () => {
 		// Sun Nov 1, 05:00 UTC: a session that, 8 hours west of UTC, was started on Oct 31.
 		await createSession({ createdBy: ME, createdAt: at('2026-11-01', 5) })
 
-		// Sat Oct 10, inside last month's Oct 1–24: a session whose run cost $0.30.
-		const lastMonth = await createSession({ createdBy: ME, createdAt: at('2026-10-10') })
+		// Sat Oct 10, inside last month's Oct 1–24: a follow-up session whose Haiku run cost $0.30, in an
+		// archived task created long before any window opens, so the task adds no activity of its own.
+		const oldTask = await createTask({
+			createdBy: ME,
+			createdAt: at('2024-06-01'),
+			name: 'Archived spring task',
+			archived: true,
+		})
+		const lastMonth = await createSession({ createdBy: ME, createdAt: at('2026-10-10'), taskId: oldTask.id })
 		await createUsage({
 			sessionId: lastMonth.id,
 			creator: ME,
 			occurredAt: at('2026-10-10'),
+			model: 'claude-haiku-4-5',
 			cacheRead: 100,
 			cacheWrite: 0,
 			input: 50,
@@ -377,6 +388,63 @@ describe('usage/period', async () => {
 			costUsd: 1,
 		})
 		expect(elsewhere.previous).toMatchObject({ sessions: 0, tokens: null, costUsd: null })
+	})
+
+	test('splits the month into a bar per day, the future ones empty, and ranks models and tasks', async () => {
+		const { buckets, byModel, topTasks } = await callAs(ME, 'month')
+		// Every day of November, the 25th–30th still to come.
+		expect(buckets.map((bucket) => bucket.start)).toEqual(
+			Array.from({ length: 30 }, (_, index) => `2026-11-${String(index + 1).padStart(2, '0')}`),
+		)
+		const spent = buckets.filter((bucket) => Object.keys(bucket.costByModel).length > 0)
+		expect(spent).toEqual([
+			{ start: '2026-11-16', costByModel: { 'claude-sonnet-4-6': 0.05 } },
+			{ start: '2026-11-18', costByModel: { 'claude-opus-4-5': 0.12 } },
+		])
+		expect(byModel).toEqual([
+			{ model: 'claude-opus-4-5', costUsd: 0.12 },
+			{ model: 'claude-sonnet-4-6', costUsd: 0.05 },
+		])
+		// The Nov 16 session has no task, so only the Nov 18 task is listed; the teammate's $9 isn't mine.
+		expect(topTasks).toEqual([
+			{ taskId: expect.any(String), name: 'Mid-November task', archived: false, tokens: 1200, costUsd: 0.12 },
+		])
+	})
+
+	test('splits the year into a bar per month and tags an archived task', async () => {
+		const { buckets, byModel, topTasks } = await callAs(ME, 'year')
+		expect(buckets).toHaveLength(12)
+		expect(buckets[0]).toEqual({ start: '2025-12-01', costByModel: {} })
+		expect(buckets.at(-2)).toEqual({ start: '2026-10-01', costByModel: { 'claude-haiku-4-5': 0.3 } })
+		expect(buckets.at(-1)).toEqual({
+			start: '2026-11-01',
+			costByModel: { 'claude-opus-4-5': 0.12, 'claude-sonnet-4-6': 0.05 },
+		})
+		expect(byModel.map((row) => row.model)).toEqual(['claude-haiku-4-5', 'claude-opus-4-5', 'claude-sonnet-4-6'])
+		// The archived task's follow-up session outspent this month's task; archiving rewrites no history.
+		expect(topTasks).toEqual([
+			{ taskId: expect.any(String), name: 'Archived spring task', archived: true, tokens: 200, costUsd: 0.3 },
+			{ taskId: expect.any(String), name: 'Mid-November task', archived: false, tokens: 1200, costUsd: 0.12 },
+		])
+	})
+
+	test('has seven empty bars, and nothing to rank, for a week with no recorded usage', async () => {
+		const { buckets, byModel, topTasks } = await callAs(ME, 'week')
+		expect(buckets).toEqual(
+			['23', '24', '25', '26', '27', '28', '29'].map((day) => ({ start: `2026-11-${day}`, costByModel: {} })),
+		)
+		expect(byModel).toEqual([])
+		expect(topTasks).toEqual([])
+	})
+
+	test("adds up the chart's bars to the period's cost", async () => {
+		const { current, buckets, byModel } = await callAs(ME, 'year')
+		const barTotal = buckets.reduce(
+			(sum, bucket) => sum + Object.values(bucket.costByModel).reduce((a, b) => a + b, 0),
+			0,
+		)
+		expect(barTotal).toBeCloseTo(current.costUsd ?? Number.NaN, 10)
+		expect(byModel.reduce((sum, row) => sum + row.costUsd, 0)).toBeCloseTo(barTotal, 10)
 	})
 
 	test('rejects a period it does not know', async () => {

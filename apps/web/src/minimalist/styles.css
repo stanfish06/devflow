@@ -4911,6 +4911,28 @@
 	.usage-tip b {
 		font-weight: 600;
 	}
+	/* A breakdown under the tooltip's lead: value strong, name secondary, keyed by a stroke of colour. */
+	.usage-tip .rows {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-top: 4px;
+	}
+	.usage-tip .row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-tip .key {
+		flex-shrink: 0;
+		width: 10px;
+		height: 2px;
+		border-radius: 1px;
+	}
+	.usage-tip .name {
+		color: color-mix(in oklab, var(--bg) 72%, var(--fg));
+	}
 	/* The selected day's work, under the grid. About five rows show; a busy day scrolls inside the card
 	   so the rest of the page never moves down. */
 	.usage-day {
@@ -5065,6 +5087,236 @@
 		border-radius: var(--r-sm);
 		background: var(--surface-2);
 	}
+	/* What the period's money went on. The chart is hand-built: thin bars (24px at most) growing from one
+	   baseline, square there and rounded at the top, 2px of surface between stacked segments and between
+	   neighbouring bars, one solid hairline at the top value. The colours are the --chart-* slots picked in
+	   lib/usage.ts. */
+	.usage-chart {
+		margin-top: 22px;
+	}
+	.usage-sub-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+		margin-bottom: 10px;
+	}
+	.usage-sub-head h3 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-sub-head .hint {
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-sub-head .usage-legend {
+		color: var(--fg-2);
+		font-size: 12px;
+	}
+	.usage-plot {
+		--usage-axis: 46px;
+		position: relative;
+		display: flex;
+		height: 160px;
+		padding-left: var(--usage-axis);
+	}
+	.usage-axis {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: calc(var(--usage-axis) - 8px);
+		color: var(--fg-3);
+		font-size: 10.5px;
+		line-height: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-axis span {
+		position: absolute;
+		right: 0;
+	}
+	.usage-axis .top {
+		top: -6px;
+	}
+	.usage-axis .zero {
+		bottom: -6px;
+	}
+	.usage-gridline {
+		position: absolute;
+		top: 0;
+		right: 0;
+		left: var(--usage-axis);
+		border-top: 1px solid var(--line);
+	}
+	.usage-bars {
+		position: relative;
+		display: flex;
+		flex: 1;
+		gap: 2px;
+		min-width: 0;
+		border-bottom: 1px solid var(--line-2);
+	}
+	/* The whole column is the hit target, so a short or empty bar is as easy to hover as a tall one. */
+	.usage-bar {
+		display: flex;
+		flex: 1 1 0;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-end;
+		min-width: 0;
+		border-radius: var(--r-sm) var(--r-sm) 0 0;
+		outline: none;
+	}
+	.usage-bar.on,
+	.usage-bar:focus-visible {
+		background: var(--hover);
+	}
+	.usage-bar:focus-visible {
+		box-shadow: inset 0 0 0 1.5px var(--fg-3);
+	}
+	.usage-stack {
+		display: flex;
+		flex-direction: column-reverse;
+		gap: 2px;
+		width: min(24px, 100%);
+		overflow: hidden;
+		border-radius: 4px 4px 0 0;
+	}
+	.usage-stack i {
+		display: block;
+		flex: 0 1 0;
+		min-height: 1px;
+	}
+	.usage-chart-note {
+		position: absolute;
+		inset: 0 0 0 var(--usage-axis);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin: 0;
+		color: var(--fg-3);
+		font-size: 12px;
+		pointer-events: none;
+	}
+	.usage-xlab {
+		display: flex;
+		gap: 2px;
+		margin-top: 4px;
+		padding-left: 46px;
+		color: var(--fg-3);
+		font-size: 10.5px;
+	}
+	.usage-xlab span {
+		flex: 1 1 0;
+		min-width: 0;
+		text-align: center;
+		white-space: nowrap;
+		overflow: visible;
+	}
+	.usage-xlab span:empty {
+		visibility: hidden;
+	}
+	.usage-breakdowns {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+		gap: 12px;
+		margin-top: 22px;
+	}
+	.usage-model-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.usage-model-row {
+		display: grid;
+		grid-template-columns: minmax(0, 112px) minmax(0, 1fr) 72px;
+		gap: 10px;
+		align-items: center;
+		padding: 5px 0;
+	}
+	.usage-model-row + .usage-model-row {
+		border-top: 1px solid var(--line);
+	}
+	.usage-model-row .name {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.usage-model-row .t {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.usage-model-row .sw {
+		flex-shrink: 0;
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+	}
+	.usage-model-row .share {
+		height: 6px;
+		overflow: hidden;
+		border-radius: 3px;
+		background: var(--surface-2);
+	}
+	.usage-model-row .share i {
+		display: block;
+		height: 100%;
+		border-radius: 3px;
+	}
+	.usage-model-row .v {
+		text-align: right;
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-top-table {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+	}
+	.usage-top-table th {
+		padding: 0 0 6px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+		font-weight: 500;
+		text-align: left;
+	}
+	.usage-top-table th:not(:first-child) {
+		width: 72px;
+	}
+	.usage-top-table td {
+		padding: 5px 0;
+		border-top: 1px solid var(--line);
+		font-size: 12.5px;
+	}
+	.usage-top-table .r {
+		text-align: right;
+	}
+	.usage-top-table .num {
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-top-table .t {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.usage-top-table a {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--fg);
+		text-decoration: none;
+	}
+	.usage-top-table a:hover {
+		text-decoration: underline;
+	}
+	.usage-top-table .badge {
+		flex-shrink: 0;
+	}
 	.usage-footnote {
 		margin: 14px 0 0;
 		color: var(--fg-3);
@@ -5073,6 +5325,9 @@
 	@media (max-width: 720px) {
 		.usage-tiles {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.usage-breakdowns {
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 }

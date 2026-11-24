@@ -211,6 +211,53 @@ test('the period switch summarises the week, month and year, and Back undoes a s
 	await expect(tile(month, 'Activities').locator('.v')).toHaveText('4')
 })
 
+test('the cost chart, by-model list and top tasks show where the money went', async ({ page }) => {
+	await page.goto('/')
+	const usageLink = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Usage' })
+	await expect(usageLink).toBeVisible({ timeout: 30_000 })
+	await page.clock.setFixedTime(new Date(`${USAGE_TODAY}T12:00:00Z`))
+	await usageLink.click()
+
+	// June: a bar for every day of the month, the 18th–30th still to come.
+	const chart = page.getByRole('region', { name: 'Daily cost by model' })
+	const bars = chart.getByRole('group', { name: 'Daily cost by model, 30 bars' })
+	await expect(bars).toBeVisible({ timeout: 30_000 })
+	await expect(chart.locator('.usage-bar')).toHaveCount(30)
+	await expect(chart.locator('.usage-bar.future')).toHaveCount(13)
+	// The Opus family names the legend; the tooltip names the model.
+	await expect(chart.locator('.usage-legend')).toHaveText('Opus')
+
+	const spentBar = bars.getByRole('img', { name: 'Wed, Jun 10, 2020: $0.12 · Opus 4.5 $0.12' })
+	await spentBar.hover()
+	const tooltip = page.getByRole('tooltip')
+	await expect(tooltip).toContainText('$0.12 · Wed, Jun 10, 2020')
+	await expect(tooltip.locator('.row')).toHaveText(['$0.12 Opus 4.5'])
+	// The Codex day spent nothing it could record.
+	await bars.getByRole('img', { name: 'Fri, Jun 12, 2020: No cost recorded' }).hover()
+	await expect(tooltip).toHaveText('No cost recorded · Fri, Jun 12, 2020')
+
+	const byModel = page.getByRole('region', { name: 'By model' })
+	await expect(byModel.getByRole('listitem')).toHaveText([/Opus 4\.5\s*\$0\.12/])
+
+	// The archived fixture task still ranks, says it is archived, and links through to its page.
+	const topTasks = page.getByRole('region', { name: 'Top tasks' })
+	const taskRow = topTasks.getByRole('row').filter({ hasText: fixture?.taskName ?? 'missing fixture' })
+	await expect(taskRow.getByRole('cell')).toHaveText([/Usage e2e fixture.*Archived/, '1,200', '$0.12'])
+
+	// This week recorded nothing: seven bars, none drawn, and the lists say so rather than showing $0.00.
+	await page.getByRole('radiogroup', { name: 'Period' }).getByRole('radio', { name: 'Week' }).click()
+	const week = page.getByRole('region', { name: 'This week' })
+	const weekChart = week.getByRole('region', { name: 'Daily cost by model' })
+	await expect(weekChart.locator('.usage-bar')).toHaveCount(7, { timeout: 30_000 })
+	await expect(weekChart.getByText('No cost recorded this period.')).toBeVisible()
+	await expect(week.getByRole('region', { name: 'By model' })).toContainText('No cost recorded this period.')
+	await expect(week.getByRole('region', { name: 'Top tasks' })).toContainText('No task spend recorded this period.')
+
+	await page.goBack()
+	await taskRow.getByRole('link', { name: fixture?.taskName }).click({ timeout: 30_000 })
+	await expect(page).toHaveURL(/\/tasks\//)
+})
+
 test('a link to a period and a day opens both, independently', async ({ page }) => {
 	await page.goto(`/usage?period=week&day=${USAGE_DAY}`)
 	const list = page.getByRole('region', { name: 'Work on Wed, Jun 10, 2020' })

@@ -19,8 +19,24 @@ export function anchorAbove(target: HTMLElement, container: HTMLElement): Toolti
 	return { left, top, align: 'center' }
 }
 
-/** The value leads in bold; what and when follow. */
-export function UsageTooltip({ anchor, value, detail }: { anchor: TooltipAnchor; value: string; detail?: string }) {
+/** A tooltip row: one series' value, keyed by a short stroke of its colour. */
+export type TooltipRow = { id: string; color: string; label: string; value: string }
+
+/**
+ * The value leads in bold; what and when follow. Optional rows break a value down by series, each value
+ * strong and its name secondary, keyed by a stroke of the series colour rather than a filled box.
+ */
+export function UsageTooltip({
+	anchor,
+	value,
+	detail,
+	rows = [],
+}: {
+	anchor: TooltipAnchor
+	value: string
+	detail?: string
+	rows?: TooltipRow[]
+}) {
 	return (
 		<div
 			className="usage-tip"
@@ -30,6 +46,16 @@ export function UsageTooltip({ anchor, value, detail }: { anchor: TooltipAnchor;
 		>
 			<b>{value}</b>
 			{detail ? ` · ${detail}` : null}
+			{rows.length > 0 ? (
+				<span className="rows">
+					{rows.map((row) => (
+						<span key={row.id} className="row">
+							<span className="key" style={{ background: row.color }} aria-hidden="true" />
+							<b>{row.value}</b> <span className="name">{row.label}</span>
+						</span>
+					))}
+				</span>
+			) : null}
 		</div>
 	)
 }
