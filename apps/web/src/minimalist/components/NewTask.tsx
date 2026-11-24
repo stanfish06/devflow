@@ -397,7 +397,8 @@ function LaunchPage({
 		const archive = (archived: boolean) =>
 			api.tasks.archive({ taskId: ids.taskId, archived, cascadeToSessions: false })
 		try {
-			await autosave.flush()
+			// Undo restores the row, so archive only once the row holds the latest edits.
+			if (!(await autosave.flush())) throw new Error('draft edits not saved')
 			await archive(true)
 			showToast('Draft deleted', {
 				label: 'Undo',

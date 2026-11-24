@@ -653,6 +653,18 @@ describe('an opened draft', () => {
 		await waitFor(() => expect(showToast).toHaveBeenLastCalledWith('Draft restored'))
 	})
 
+	it('keeps the draft open when its last edits fail to save before Delete', async () => {
+		saveDraft.mockRejectedValueOnce(new Error('offline'))
+		render(<NewTask existingTaskId={draftId} />)
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Edited before delete' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Delete draft' }))
+		await waitFor(() => expect(showToast).toHaveBeenCalledWith('Could not delete the draft. Try again.'))
+		expect(saveDraft).toHaveBeenCalledOnce()
+		expect(archive).not.toHaveBeenCalled()
+		expect(navigate).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'Delete draft' })).toBeEnabled()
+	})
+
 	it('blocks Start while its host is offline, rather than starting on another', () => {
 		useHosts.mockReturnValue({ hosts: [hostView('host', false), hostView('mac')], isReady: true })
 		render(<NewTask existingTaskId={draftId} />)

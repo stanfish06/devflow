@@ -168,6 +168,22 @@ describe('autosaving an open draft', () => {
 		expect(saveDraft).toHaveBeenCalledOnce()
 	})
 
+	it('flush resolves false when the save fails, and true once a retry lands', async () => {
+		saveDraft.mockRejectedValueOnce(new Error('offline'))
+		const { result, rerender } = renderAutosave()
+		rerender({ id: taskId, prompt: 'Unsaved edit', row: todo })
+		let landed: boolean | undefined
+		await act(async () => {
+			landed = await result.current.flush()
+		})
+		expect(landed).toBe(false)
+		await act(async () => {
+			landed = await result.current.flush()
+		})
+		expect(landed).toBe(true)
+		expect(savedPrompts()).toEqual(['Unsaved edit', 'Unsaved edit'])
+	})
+
 	it('saves a pending edit when the page goes away', async () => {
 		const { rerender, unmount } = renderAutosave()
 		rerender({ id: taskId, prompt: 'Left mid-sentence', row: todo })

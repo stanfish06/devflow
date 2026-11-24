@@ -83,8 +83,8 @@ export function useDraftAutosave(taskId: string | null, snapshot: DraftLaunch | 
 		return request
 	}
 
-	/** Saves until the row holds what's on screen, or a save fails. */
-	const save = async (): Promise<void> => {
+	/** Saves until the row holds what's on screen; resolves false when a save fails or the draft is gone. */
+	const save = async (): Promise<boolean> => {
 		clearTimer()
 		for (;;) {
 			const running = inFlight.current
@@ -94,10 +94,11 @@ export function useDraftAutosave(taskId: string | null, snapshot: DraftLaunch | 
 				continue
 			}
 			const pending = latest.current
-			if (stopped.current || !pending || pending.key === saved.current) return
+			if (stopped.current) return false
+			if (!pending || pending.key === saved.current) return true
 			const landed = await send(pending)
 			inFlight.current = null
-			if (!landed) return
+			if (!landed) return false
 		}
 	}
 
@@ -115,7 +116,7 @@ export function useDraftAutosave(taskId: string | null, snapshot: DraftLaunch | 
 		state,
 		/** When this page last saved the draft; null before its first save here. */
 		savedAt,
-		/** Saves what's pending now, and resolves once the row holds it (or the save failed). */
+		/** Saves what's pending now; resolves true once the row holds it, false when the save failed. */
 		flush: save,
 	}
 }
