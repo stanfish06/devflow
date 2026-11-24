@@ -40,8 +40,11 @@ services:
       postgres:
         condition: service_healthy
 
+  # MinIO stopped publishing images to Docker Hub and quay.io; Chainguard's build is public and also
+  # ships `mc` and a shell. Root keeps volumes written by the old minio/minio image readable.
   minio:
-    image: docker.io/minio/minio:latest
+    image: cgr.dev/chainguard/minio:latest
+    user: "0:0"
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
@@ -58,7 +61,8 @@ services:
       retries: 5
 
   minio-setup:
-    image: docker.io/minio/mc:latest
+    image: cgr.dev/chainguard/minio:latest
+    user: "0:0"
     depends_on:
       minio:
         condition: service_healthy

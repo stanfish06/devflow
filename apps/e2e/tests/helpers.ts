@@ -80,7 +80,7 @@ type Permission = 'Ask first' | 'Auto-accept edits' | 'Auto' | 'Bypass permissio
 /** Pick size, model and permission mode in the composer, send the prompt, and wait for the task page. */
 export async function startTask(
 	page: Page,
-	input: { prompt: string; size?: Size; model?: string; permission?: Permission },
+	input: { prompt: string; size?: Size; model?: string | RegExp; permission?: Permission },
 ): Promise<string> {
 	await page.getByRole('button', { name: /^Task size:/ }).click()
 	await page.getByRole('button', { name: new RegExp(`^${input.size ?? 'Small'}`) }).click()
@@ -100,12 +100,17 @@ export async function startTask(
 	return page.url().match(/\/tasks\/([0-9a-f-]+)/)![1]!
 }
 
-export async function chooseModel(page: Page, model: string): Promise<void> {
+export async function chooseModel(page: Page, model: string | RegExp): Promise<void> {
 	await page
 		.locator('button', { hasText: /(Opus|Sonnet|Haiku|Fable|GPT)[- ]?\d/ })
 		.last()
 		.click()
-	await page.getByRole('button', { name: model, exact: true }).click()
+	const options = page.getByRole('dialog', { name: 'Options' })
+	await (
+		typeof model === 'string'
+			? options.getByRole('button', { name: model, exact: true })
+			: options.getByRole('button', { name: model }).first()
+	).click()
 	await page.keyboard.press('Escape')
 }
 
@@ -117,7 +122,12 @@ export async function sendFollowUp(page: Page, text: string): Promise<void> {
 
 /** Wait until the open session's agent turn has ended (the stop button is gone). */
 export async function waitForTurnEnd(page: Page, timeout = 240_000): Promise<void> {
-	await expect(page.getByPlaceholder('Ask for follow-up changes')).toBeVisible({ timeout })
+	// The follow-up placeholder also shows for a moment before a turn starts (e.g. right after an
+	// approval), so the turn has ended only once the Stop button is gone as well.
+	await expect(async () => {
+		await expect(page.getByRole('button', { name: 'Stop' })).toHaveCount(0)
+		await expect(page.getByPlaceholder('Ask for follow-up changes')).toBeVisible()
+	}).toPass({ timeout, intervals: [1_000] })
 }
 
 export async function archiveTask(page: Page, title: RegExp): Promise<void> {

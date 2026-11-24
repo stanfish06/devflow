@@ -24,7 +24,8 @@ Other commands:
 | `bun run devflow env` | the generated environment (secrets masked) |
 | `bun run devflow api --help` | the CLI against this stack, e.g. `bun run devflow api sync tasks` |
 | `bun run devflow e2e` | Playwright end-to-end tests against the running stack (installed Chrome) |
-| `bun run devflow aws push\|tunnel ...` | deploy to and connect to the AWS VM ([infra/terraform/README.md](infra/terraform/README.md)) |
+| `bun run devflow up --port 48443` | run on 48443 (all ports shifted with it); later commands keep the port |
+| `bun run devflow remote <ssh-host>` | make another machine (e.g. a `cloud` VM: `bun run devflow remote vm`) a host of this server, listed in the host picker while it runs |
 
 ## Settings
 

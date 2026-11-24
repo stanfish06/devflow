@@ -8,8 +8,9 @@
  *   bun run devflow down     stop containers (data volumes are kept)
  *   bun run devflow status   print URLs and container state
  *   bun run devflow env      print the generated environment
- *   bun run devflow up --headless       on the AWS VM: no Caddy, daemon talks to the API directly
- *   bun run devflow aws push|tunnel ... deploy to / connect to the VM (infra/terraform/README.md)
+ *   bun run devflow up --port 48443   same, on 48443 and the ports shifted with it (kept for later commands)
+ *   bun run devflow remote <ssh-host>  run an agent runner on another machine as a host of this server
+ *   bun run devflow host     agent runner only (what `remote` starts on the other machine)
  *   bun run devflow e2e      Playwright end-to-end tests against the running stack
  *   bun run devflow <other>  devflow's CLI against this stack, e.g. `bun run devflow api --help`
  *
@@ -30,11 +31,16 @@ import { OrganizationSeed, OrganizationSeedLive, OrganizationSeedPersistenceLive
 const REPO_ROOT = resolve(import.meta.dirname, '../../..')
 const DEVFLOW_HOME = process.env.DEVFLOW_HOME ?? join(homedir(), '.devflow')
 const STACK_ID = 'devflow'
-// Caddy terminates TLS for every route on this one port (SNI picks the backend).
-const HTTPS_PORT = Number(process.env.DEVFLOW_HTTPS_PORT ?? 47443)
-const HTTP_PORT = Number(process.env.DEVFLOW_HTTP_PORT ?? 47080)
+const CONFIG_PATH = join(DEVFLOW_HOME, 'config.json')
+// Caddy terminates TLS for every route on one port (SNI picks the backend). Every other port is
+// this one's offset from 47443 applied to the base ports below, so `--port 48443` moves the whole
+// stack to 48xxx.
+const BASE_HTTPS_PORT = 47443
+const HTTPS_PORT = resolveHttpsPort()
+const PORT_OFFSET = HTTPS_PORT - BASE_HTTPS_PORT
+const HTTP_PORT = Number(process.env.DEVFLOW_HTTP_PORT ?? 47080 + PORT_OFFSET)
 const AGENT_IMAGE = process.env.DEVFLOW_AGENT_IMAGE ?? 'devflow-agent:latest'
-const PORTS = {
+const BASE_PORTS = {
 	ui: 47000,
 	cloud: 47001,
 	api: 47100,
@@ -54,7 +60,31 @@ const PORTS = {
 	testRivetEngine: 47641,
 	testRivetServices: 47643,
 } as const
-const REDIS_PORT = 47379
+const PORTS = portsFor(HTTPS_PORT)
+const REDIS_PORT = 47379 + PORT_OFFSET
+
+/** The base ports shifted by `httpsPort`'s offset from 47443. */
+function portsFor(httpsPort: number): { [K in keyof typeof BASE_PORTS]: number } {
+	const offset = httpsPort - BASE_HTTPS_PORT
+	return Object.fromEntries(Object.entries(BASE_PORTS).map(([name, port]) => [name, port + offset])) as {
+		[K in keyof typeof BASE_PORTS]: number
+	}
+}
+
+/**
+ * The local stack's HTTPS port: `--port`, then
+ * DEVFLOW_HTTPS_PORT, then the port saved by an earlier `up --port`, then 47443.
+ */
+function resolveHttpsPort(): number {
+	const flag = option('port')
+	if (flag) return parsePort(flag)
+	if (process.env.DEVFLOW_HTTPS_PORT) return parsePort(process.env.DEVFLOW_HTTPS_PORT)
+	if (existsSync(CONFIG_PATH)) {
+		const saved = (JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as { httpsPort?: number }).httpsPort
+		if (saved) return saved
+	}
+	return BASE_HTTPS_PORT
+}
 // Dev servers started by `up --dev` (turbo filters).
 // The UI runs as a production build served by `vite preview` unless `up --dev` asks for hot reload.
 const DEV_PACKAGES = ['@devflow/api', '@devflow/sync-proxy', '@devflow/agent-runner']
@@ -66,7 +96,6 @@ const UI_DIR = 'apps/web'
 const UI_SOURCES = ['apps/web/src', 'apps/web/index.html', 'apps/web/vite.config.ts', 'packages/ui/src']
 // -----------------------------------------------------------------------------
 
-const CONFIG_PATH = join(DEVFLOW_HOME, 'config.json')
 const KEYS_DIR = join(DEVFLOW_HOME, 'keys')
 const LOG_DIR = join(DEVFLOW_HOME, 'logs')
 const CADDYFILE_PATH = join(DEVFLOW_HOME, 'Caddyfile')
@@ -79,18 +108,30 @@ type DevflowConfig = {
 	userName: string
 	postgresPassword: string
 	electricSecret: string
+	/** Set by `up --port` / `setup --port`; every command uses it until another `--port`. */
+	httpsPort?: number
 }
 
 // GitHub API base URL when no GitHub App is configured: a closed local port, so GitHub calls fail
 // fast and no request leaves the machine.
 const OFFLINE_API_BASE_URL = 'http://127.0.0.1:9'
 
-const route = (host: string) => `https://${host}.${STACK_ID}.localhost:${HTTPS_PORT}`
+const route = (host: string, httpsPort = HTTPS_PORT) => `https://${host}.${STACK_ID}.localhost:${httpsPort}`
 const ROUTES = { ui: route('app'), api: route('api'), sync: route('sync'), s3: route('s3') }
 
 function loadOrCreateConfig(): DevflowConfig {
 	mkdirSync(DEVFLOW_HOME, { recursive: true, mode: 0o700 })
-	if (existsSync(CONFIG_PATH)) return JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as DevflowConfig
+	if (existsSync(CONFIG_PATH)) {
+		const config = JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as DevflowConfig
+		// Keep the port from `--port` for later commands; 47443 is the default and needs no entry.
+		const httpsPort = HTTPS_PORT === BASE_HTTPS_PORT ? undefined : HTTPS_PORT
+		if (option('port') && config.httpsPort !== httpsPort) {
+			const updated = { ...config, httpsPort }
+			writeFileSync(CONFIG_PATH, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 })
+			return updated
+		}
+		return config
+	}
 	const gitName = spawnSync('git', ['config', 'user.name'], { encoding: 'utf8' }).stdout.trim()
 	const gitEmail = spawnSync('git', ['config', 'user.email'], { encoding: 'utf8' }).stdout.trim()
 	const config: DevflowConfig = {
@@ -102,6 +143,7 @@ function loadOrCreateConfig(): DevflowConfig {
 		postgresPassword: randomBytes(18).toString('base64url'),
 		electricSecret: randomBytes(24).toString('base64url'),
 	}
+	if (HTTPS_PORT !== BASE_HTTPS_PORT) config.httpsPort = HTTPS_PORT
 	writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 })
 	return config
 }
@@ -231,14 +273,21 @@ function buildEnv(config: DevflowConfig): Record<string, string> {
 	return env
 }
 
-function run(command: string, args: string[], env: Record<string, string>, options: { cwd?: string } = {}): void {
+/** `quiet` drops stdout and keeps the arguments out of the error, for commands that carry secrets. */
+function run(
+	command: string,
+	args: string[],
+	env: Record<string, string>,
+	options: { cwd?: string; quiet?: boolean } = {},
+): void {
 	const result = spawnSync(command, args, {
 		cwd: options.cwd ?? REPO_ROOT,
 		env: { ...process.env, ...env },
-		stdio: 'inherit',
+		stdio: options.quiet ? ['ignore', 'ignore', 'inherit'] : 'inherit',
 	})
 	if (result.error) throw result.error
-	if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} exited with ${result.status}`)
+	const shown = options.quiet ? `${command} ${args.slice(0, 2).join(' ')}` : `${command} ${args.join(' ')}`
+	if (result.status !== 0) throw new Error(`${shown} exited with ${result.status}`)
 }
 
 function compose(env: Record<string, string>, args: string[]): void {
@@ -256,23 +305,37 @@ function ensureAgentImage(env: Record<string, string>): void {
 	run('docker', ['build', '-t', AGENT_IMAGE, join(REPO_ROOT, 'docker/devflow-agent')], {})
 }
 
-function writeCaddyfile(): void {
+/** Backend ports behind the app, api, sync and s3 routes. */
+type RouteTargets = { ui: number; api: number; sync: number; s3: number }
+
+const LOCAL_TARGETS: RouteTargets = { ui: PORTS.ui, api: PORTS.api, sync: PORTS.electricProxy, s3: PORTS.minioApi }
+
+function writeCaddyfile(
+	path = CADDYFILE_PATH,
+	httpsPort = HTTPS_PORT,
+	httpPort = HTTP_PORT,
+	targets: RouteTargets = LOCAL_TARGETS,
+): void {
 	// Same route block as apps/launcher/src/lib/caddy.ts renderCaddyConfig, on one non-default port.
 	const block = (url: string, port: number) =>
 		`${url} {\n\treverse_proxy 127.0.0.1:${port} {\n\t\tflush_interval -1\n\t}\n\theader Cache-Control "no-cache, no-transform"\n\theader X-Accel-Buffering "no"\n}`
 	const config = [
-		`{\n\thttp_port ${HTTP_PORT}\n\thttps_port ${HTTPS_PORT}\n\tskip_install_trust\n\tlog {\n\t\tlevel WARN\n\t}\n}`,
-		block(ROUTES.ui, PORTS.ui),
-		block(ROUTES.api, PORTS.api),
-		block(ROUTES.sync, PORTS.electricProxy),
-		block(ROUTES.s3, PORTS.minioApi),
+		`{\n\thttp_port ${httpPort}\n\thttps_port ${httpsPort}\n\tskip_install_trust\n\tlog {\n\t\tlevel WARN\n\t}\n}`,
+		block(route('app', httpsPort), targets.ui),
+		block(route('api', httpsPort), targets.api),
+		block(route('sync', httpsPort), targets.sync),
+		block(route('s3', httpsPort), targets.s3),
 	].join('\n\n')
-	writeFileSync(CADDYFILE_PATH, `# Generated by apps/launcher/src/devflow.ts. Do not edit.\n\n${config}\n`)
+	writeFileSync(path, `# Generated by apps/launcher/src/devflow.ts. Do not edit.\n\n${config}\n`)
 }
+
+/** Written next to the UI build: the origins Vite baked in, so a port change forces a rebuild. */
+const UI_BUILD_STAMP = join(REPO_ROOT, UI_DIR, 'dist/.devflow-build.json')
 
 function uiBuildIsStale(): boolean {
 	const builtIndex = join(REPO_ROOT, UI_DIR, 'dist/index.html')
 	if (!existsSync(builtIndex)) return true
+	if (!existsSync(UI_BUILD_STAMP) || readFileSync(UI_BUILD_STAMP, 'utf8') !== JSON.stringify(ROUTES)) return true
 	const newer = spawnSync(
 		'find',
 		[...UI_SOURCES.map((path) => join(REPO_ROOT, path)), '-newer', builtIndex, '-print', '-quit'],
@@ -381,13 +444,13 @@ function prefixOutput(child: ReturnType<typeof spawn>, name: string): void {
 }
 
 async function up(): Promise<void> {
-	// Headless (the AWS VM): no Caddy here; the laptop runs Caddy in front of `aws tunnel`.
-	const headless = process.argv.includes('--headless')
 	requireTool('docker')
-	if (!headless) requireTool('caddy')
+	requireTool('caddy')
 	const busy = [PORTS.ui, PORTS.api, PORTS.electricProxy, HTTPS_PORT].filter((port) => listeningPids(port).length > 0)
 	if (busy.length > 0) {
-		throw new Error(`Ports ${busy.join(', ')} are in use. Stop the other devflow (or the process on them) first.`)
+		throw new Error(
+			`Ports ${busy.join(', ')} are in use. Stop the process on them, or move devflow: bun run devflow up --port ${HTTPS_PORT + 1000}`,
+		)
 	}
 	if (!existsSync(CONFIG_PATH)) await setup()
 	const config = loadOrCreateConfig()
@@ -397,15 +460,11 @@ async function up(): Promise<void> {
 	writeCaddyfile()
 	ensureAgentImage(env)
 	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env }
-	if (headless) {
-		// The daemon reaches the API and sync proxy directly; only browsers go through Caddy.
-		childEnv.DEVFLOW_DAEMON_API_ORIGIN = `http://127.0.0.1:${PORTS.api}`
-		childEnv.DEVFLOW_DAEMON_SYNC_ORIGIN = `http://127.0.0.1:${PORTS.electricProxy}`
-	}
 	const devUi = process.argv.includes('--dev')
 	if (!devUi && uiBuildIsStale()) {
 		console.log('Building the UI (about 40s; skipped while sources are unchanged)...')
 		run('bun', ['--bun', 'x', 'vite', 'build', '--logLevel', 'error'], env, { cwd: join(REPO_ROOT, UI_DIR) })
+		writeFileSync(UI_BUILD_STAMP, JSON.stringify(ROUTES))
 	}
 
 	// Every child leads its own process group (detached), so stopping a group also stops what it
@@ -450,7 +509,7 @@ async function up(): Promise<void> {
 		})
 		return child
 	}
-	if (!headless) start('caddy', 'caddy', ['run', '--config', CADDYFILE_PATH, '--adapter', 'caddyfile'], '.')
+	start('caddy', 'caddy', ['run', '--config', CADDYFILE_PATH, '--adapter', 'caddyfile'], '.')
 	if (devUi) {
 		// Hot-reload mode: the packages' own `dev` scripts through turbo.
 		const packages = [...DEV_PACKAGES, UI_PACKAGE]
@@ -563,93 +622,183 @@ function option(name: string): string | undefined {
 	return index === -1 ? undefined : process.argv[index + 1]
 }
 
-function requireOption(name: string): string {
-	const value = option(name)
-	if (!value) throw new Error(`Missing --${name}. See infra/terraform/README.md.`)
-	return value
+function parsePort(value: string): number {
+	const port = Number(value)
+	if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Invalid port: ${value}`)
+	return port
 }
 
 /**
- * `aws push`: upload the working tree (including uncommitted changes) to the bundle bucket and
- * run the VM's deploy script through SSM. `aws tunnel`: forward the VM's UI, API and sync ports
- * to this machine over SSM and serve them through the local Caddy at the usual HTTPS URLs.
+ * What another machine's agent runner needs to act as a host of this server: the server's HTTPS port
+ * (its URLs), the self-signed daemon credentials, the Caddy CA that signs those URLs (base64), and
+ * the agent logins the sandbox uses when this machine has them.
  */
-async function awsCommand(): Promise<void> {
-	requireTool('aws')
-	const sub = process.argv[3]
-	const instance = requireOption('instance')
-	const region = option('region') ?? process.env.AWS_REGION ?? 'us-east-1'
-	if (sub === 'push') {
-		const bucket = requireOption('bucket')
-		const bundle = join(DEVFLOW_HOME, 'devflow.tar.gz')
-		// `git stash create` snapshots uncommitted tracked changes without touching the working tree.
-		const stash = spawnSync('git', ['stash', 'create'], { cwd: REPO_ROOT, encoding: 'utf8' }).stdout.trim()
-		run('git', ['archive', '--format=tar.gz', '-o', bundle, stash || 'HEAD'], {})
-		run('aws', ['s3', 'cp', bundle, `s3://${bucket}/devflow.tar.gz`, '--region', region], {})
-		run(
-			'aws',
-			[
-				'ssm',
-				'send-command',
-				'--region',
-				region,
-				'--instance-ids',
-				instance,
-				'--document-name',
-				'AWS-RunShellScript',
-				'--comment',
-				'devflow deploy',
-				'--parameters',
-				'commands=["/opt/devflow/bin/deploy"]',
-				'--output',
-				'text',
-				'--query',
-				'Command.CommandId',
-			],
-			{},
-		)
-		console.log(
-			`Deploy started on ${instance}. Then run: bun run devflow aws tunnel --instance ${instance} --region ${region}`,
-		)
-		return
+function hostEnvironment() {
+	const config = loadOrCreateConfig()
+	const keys = ensureKeys()
+	if (!existsSync(CADDY_ROOT_CA))
+		throw new Error(`No Caddy CA at ${CADDY_ROOT_CA}. Run bun run devflow up once first.`)
+	const ghToken = process.env.GH_TOKEN ?? spawnSync('gh', ['auth', 'token'], { encoding: 'utf8' }).stdout?.trim()
+	return {
+		DEVFLOW_HTTPS_PORT: String(HTTPS_PORT),
+		DEVFLOW_DAEMON_TOKEN_PRIVATE_KEY: keys.daemonPrivate,
+		DEVFLOW_DAEMON_USER_ID: config.userId,
+		DEVFLOW_DAEMON_ORGANIZATION_ID: config.organizationId,
+		DEVFLOW_SERVER_CA: readFileSync(CADDY_ROOT_CA).toString('base64'),
+		// Sandboxed agents push and open pull requests with it.
+		GH_TOKEN: ghToken || undefined,
+		CLAUDE_CODE_OAUTH_TOKEN: process.env.CLAUDE_CODE_OAUTH_TOKEN || undefined,
 	}
-	if (sub === 'tunnel') {
-		requireTool('caddy')
-		requireTool('session-manager-plugin')
-		writeCaddyfile()
-		const children = [PORTS.ui, PORTS.api, PORTS.electricProxy].map((port) =>
-			spawn(
-				'aws',
+}
+
+/** Where `remote` puts the code on the other machine, relative to its home. */
+const REMOTE_DIR = 'devflow-host'
+
+/**
+ * `remote <ssh-host>`: make another machine (e.g. a `cloud` VM) a host of this server. Copies the
+ * working tree there, installs packages, writes ~/.devflow/host.env, then runs `devflow host` over
+ * ssh with the remote's 127.0.0.1:<https port> forwarded back to this machine's Caddy, so it uses
+ * the same URLs as the local agent runner. The host is listed while this runs; Ctrl-C stops the
+ * remote agent runner too, and a dropped link reconnects.
+ */
+async function remote(): Promise<void> {
+	requireTool('ssh')
+	const target = process.argv[3]
+	if (!target || target.startsWith('-')) throw new Error('Usage: bun run devflow remote <ssh-host>')
+	if (listeningPids(HTTPS_PORT).length === 0) {
+		throw new Error(`Nothing listens on ${HTTPS_PORT}. Start the server first: bun run devflow up`)
+	}
+	const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`
+	// The remote user's interactive login shell, so PATH holds what an ssh login gets (e.g. mise tools).
+	const inLoginShell = (command: string) => `exec "$SHELL" -lic ${quote(command)}`
+	// A fresh connection each time: a shared ControlMaster session keeps the groups it logged in
+	// with (e.g. predating `docker`), and the long-lived forward should not ride on it.
+	const sshOptions = ['-o', 'ControlPath=none']
+	const ssh = (command: string, input?: Buffer | string) => {
+		const result = spawnSync('ssh', [...sshOptions, target, inLoginShell(command)], {
+			input,
+			stdio: [input === undefined ? 'ignore' : 'pipe', 'inherit', 'inherit'],
+			maxBuffer: 1 << 30,
+		})
+		if (result.status !== 0) throw new Error(`ssh ${target} failed (${result.status}): ${command.slice(0, 40)}`)
+	}
+
+	console.log(`Copying the working tree to ${target}:~/${REMOTE_DIR}...`)
+	// `git stash create` snapshots uncommitted tracked changes without touching the working tree.
+	const stash = spawnSync('git', ['stash', 'create'], { cwd: REPO_ROOT, encoding: 'utf8' }).stdout.trim()
+	const archive = spawnSync('git', ['archive', '--format=tar.gz', stash || 'HEAD'], {
+		cwd: REPO_ROOT,
+		maxBuffer: 1 << 30,
+	})
+	if (archive.status !== 0) throw new Error('git archive failed')
+	// Replace the tree but keep node_modules, so the install only applies changes.
+	ssh(
+		`set -e; mkdir -p ~/${REMOTE_DIR}; cd ~/${REMOTE_DIR}; find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +; tar -xzf -`,
+		archive.stdout,
+	)
+	ssh(`cd ~/${REMOTE_DIR} && bun install --frozen-lockfile`)
+
+	const lines = Object.entries(hostEnvironment()).flatMap(([name, value]) =>
+		value === undefined ? [] : [`${name}=${quote(value)}`],
+	)
+	ssh('mkdir -p ~/.devflow && umask 077 && cat > ~/.devflow/host.env', `${lines.join('\n')}\n`)
+
+	const forward = `127.0.0.1:${HTTPS_PORT}:127.0.0.1:${HTTPS_PORT}`
+	// -tt gives the remote command a terminal, so it stops when this connection closes.
+	const start = `cd ~/${REMOTE_DIR} && set -a && . ~/.devflow/host.env && set +a && exec bun run devflow host`
+	let stopping = false
+	let child: ReturnType<typeof spawn> | undefined
+	const stop = () => {
+		stopping = true
+		child?.kill('SIGTERM')
+	}
+	process.on('SIGINT', stop)
+	process.on('SIGTERM', stop)
+	console.log(`${target} is a host of ${ROUTES.ui} while this runs (Ctrl-C to stop).`)
+	while (!stopping) {
+		const code = await new Promise<number | null>((resolveExit) => {
+			const session = spawn(
+				'ssh',
 				[
-					'ssm',
-					'start-session',
-					'--region',
-					region,
-					'--target',
-					instance,
-					'--document-name',
-					'AWS-StartPortForwardingSession',
-					'--parameters',
-					JSON.stringify({ portNumber: [String(port)], localPortNumber: [String(port)] }),
+					...sshOptions,
+					'-tt',
+					'-o',
+					'ExitOnForwardFailure=yes',
+					'-o',
+					'ServerAliveInterval=30',
+					'-R',
+					forward,
+					target,
+					inLoginShell(start),
 				],
-				{ stdio: 'ignore' },
-			),
-		)
-		children.push(
-			spawn('caddy', ['run', '--config', CADDYFILE_PATH, '--adapter', 'caddyfile'], { stdio: 'inherit' }),
-		)
-		console.log(`Tunnel open. UI: ${ROUTES.ui} (Ctrl-C to close)`)
-		const stop = () => {
-			for (const child of children) child.kill('SIGTERM')
-			process.exit(0)
-		}
-		process.on('SIGINT', stop)
-		process.on('SIGTERM', stop)
-		await new Promise<void>((resolveExit) => children[0]!.once('exit', () => resolveExit()))
-		stop()
-		return
+				{ stdio: ['ignore', 'inherit', 'inherit'] },
+			)
+			child = session
+			session.once('exit', resolveExit)
+		})
+		if (stopping) break
+		console.error(`[devflow] ${target} disconnected (${code}); reconnecting in 5s`)
+		await new Promise((r) => setTimeout(r, 5000))
 	}
-	throw new Error('Usage: bun run devflow aws push|tunnel --instance <id> [--bucket <name>] [--region <region>]')
+}
+
+/**
+ * `host`: run only the agent runner, as a host of the server at DEVFLOW_HTTPS_PORT's URLs (reached
+ * through the forward `remote` opens). `remote` starts this with ~/.devflow/host.env loaded.
+ * Restarts the agent runner whenever it exits.
+ */
+async function host(): Promise<void> {
+	requireTool('docker')
+	const serverCa = process.env.DEVFLOW_SERVER_CA
+	const missing = [
+		'DEVFLOW_DAEMON_TOKEN_PRIVATE_KEY',
+		'DEVFLOW_DAEMON_USER_ID',
+		'DEVFLOW_DAEMON_ORGANIZATION_ID',
+		'DEVFLOW_SERVER_CA',
+	].filter((name) => !process.env[name])
+	if (missing.length > 0)
+		throw new Error(`Missing ${missing.join(', ')}. Start it from the server: bun run devflow remote <this host>`)
+	mkdirSync(DEVFLOW_HOME, { recursive: true, mode: 0o700 })
+	const caPath = join(DEVFLOW_HOME, 'server-ca.crt')
+	writeFileSync(caPath, Buffer.from(serverCa ?? '', 'base64'))
+	const env = {
+		DEVSTACK_ID: STACK_ID,
+		DEVFLOW_HOME,
+		DEVFLOW_DAEMON_API_ORIGIN: ROUTES.api,
+		DEVFLOW_DAEMON_SYNC_ORIGIN: ROUTES.sync,
+		DEVFLOW_DAEMON_APP_ORIGIN: ROUTES.ui,
+		DEVFLOW_DAEMON_LOAD_CREDS: 'true',
+		DEVFLOW_DAEMON_FORCE_LOCAL_PLUGIN: 'true',
+		DEVFLOW_AGENT_SANDBOX: process.env.DEVFLOW_AGENT_SANDBOX ?? 'docker',
+		DEVFLOW_AGENT_IMAGE: AGENT_IMAGE,
+		NODE_EXTRA_CA_CERTS: caPath,
+		LOG_BASE: LOG_DIR,
+	}
+	ensureAgentImage(env)
+	let stopping = false
+	let child: ReturnType<typeof spawn> | undefined
+	const stop = () => {
+		stopping = true
+		child?.kill('SIGTERM')
+	}
+	process.on('SIGINT', stop)
+	process.on('SIGTERM', stop)
+	console.log(`devflow host: agent runner for ${ROUTES.ui}`)
+	while (!stopping) {
+		const code = await new Promise<number | null>((resolveExit) => {
+			const runner = spawn('bun', ['--bun', 'src/daemon.ts'], {
+				cwd: join(REPO_ROOT, 'apps/agent-runner'),
+				env: { ...process.env, ...env },
+				stdio: 'inherit',
+			})
+			child = runner
+			runner.once('exit', resolveExit)
+		})
+		if (stopping) break
+		// Usually the server is unreachable (the forward from `remote` is down).
+		console.error(`[devflow] agent runner exited (${code}); restarting in 5s`)
+		await new Promise((r) => setTimeout(r, 5000))
+	}
 }
 
 /** Caddy's local CA root, which signs the *.devflow.localhost certificates (Caddy's default data dir). */
@@ -667,7 +816,13 @@ function e2e(): void {
 	const result = spawnSync('bun', ['x', 'playwright', 'test', ...process.argv.slice(3)], {
 		cwd: join(REPO_ROOT, 'apps/e2e'),
 		// The tests call the API with fetch, which only trusts the local CA when told about it.
-		env: { ...process.env, DEVFLOW_HOME, NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA },
+		env: {
+			...process.env,
+			DEVFLOW_HOME,
+			NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA,
+			DEVFLOW_APP_URL: ROUTES.ui,
+			DEVFLOW_API_URL: ROUTES.api,
+		},
 		stdio: 'inherit',
 	})
 	process.exit(result.status ?? 1)
@@ -680,7 +835,8 @@ const commands: Record<string, () => void | Promise<void>> = {
 	down,
 	status,
 	env: printEnv,
-	aws: awsCommand,
+	host,
+	remote,
 }
 /**
  * Every other command goes to devflow's CLI (apps/cli) against this stack, e.g.

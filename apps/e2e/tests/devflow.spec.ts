@@ -49,15 +49,20 @@ test('task runs in the Docker sandbox and a follow-up resumes the same conversat
 	await waitForTurnEnd(page)
 	// The sandbox is a Linux container even on macOS.
 	await expect(page.getByText('Linux', { exact: true }).first()).toBeVisible()
-	expect(worktreeFile('write-the-word-kiwi', 'fruit-e2e.txt')?.trim()).toBe('kiwi')
+	await expect.poll(() => worktreeFile('write-the-word-kiwi', 'fruit-e2e.txt')?.trim()).toBe('kiwi')
 
 	await sendFollowUp(
 		page,
 		'Without reading any file, which word did you write, and to which file? Reply in one line.',
 	)
 	await waitForTurnEnd(page)
-	await expect(page.getByText(/kiwi/i).last()).toBeVisible()
-	await expect(page.getByText(/fruit-e2e\.txt/).last()).toBeVisible()
+	await expect(page.getByText(/kiwi/i).filter({ visible: true }).last()).toBeVisible()
+	await expect(
+		page
+			.getByText(/fruit-e2e\.txt/)
+			.filter({ visible: true })
+			.last(),
+	).toBeVisible()
 
 	await page.reload()
 	// Everything above is stored in Postgres: a reload shows both turns.
@@ -75,7 +80,9 @@ test('a command in Ask first mode waits for approval, then runs', async ({ page 
 	await expect(page.getByText('echo approved-e2e > approval-e2e.txt').first()).toBeVisible()
 	await page.getByRole('button', { name: /^Approve/ }).click()
 	await waitForTurnEnd(page)
-	expect(worktreeFile('run-the-shell-command-echo-approved-e2e', 'approval-e2e.txt')?.trim()).toBe('approved-e2e')
+	await expect
+		.poll(() => worktreeFile('run-the-shell-command-echo-approved-e2e', 'approval-e2e.txt')?.trim())
+		.toBe('approved-e2e')
 })
 
 test('the API crashing mid-turn loses no events', async ({ page }) => {
@@ -117,10 +124,16 @@ test('Codex runs through codex app-server', async ({ page }) => {
 	await openE2eProject(page)
 	await startTask(page, {
 		prompt: 'Create codex-e2e.txt containing the word papaya, run `cat codex-e2e.txt`, and reply with the output.',
-		model: 'GPT-6 Astra',
+		// The Codex CLI names its models (`model/list`); take the first one unless one is set.
+		model: process.env.DEVFLOW_E2E_CODEX_MODEL ?? /^GPT/,
 		permission: 'Bypass permissions',
 	})
 	await waitForTurnEnd(page)
-	await expect(page.getByText(/papaya/).last()).toBeVisible()
-	expect(worktreeFile('create-codex-e2e-txt', 'codex-e2e.txt')?.trim()).toBe('papaya')
+	await expect(
+		page
+			.getByText(/papaya/)
+			.filter({ visible: true })
+			.last(),
+	).toBeVisible()
+	await expect.poll(() => worktreeFile('create-codex-e2e-txt', 'codex-e2e.txt')?.trim()).toBe('papaya')
 })
