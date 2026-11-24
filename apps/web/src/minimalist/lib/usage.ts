@@ -1,10 +1,16 @@
 // Pure logic behind the usage page: the year grid's calendar layout, streaks, shading and the words
 // around them. The server computes every number; this only arranges and describes them.
 import { dayOfWeek, parseDayKey } from '@devflow/api-contract/api/metrics/range'
-import type { DayUsage } from '@devflow/api-contract/api/usage/year'
+import type { DayUsage, TokenBreakdown } from '@devflow/api-contract/api/usage/year'
 
-/** What the grid's cells measure. Tokens and Cost arrive with the usage ledger fields. */
-export type UsageLens = 'activity'
+/** What the grid's cells measure: things you did, tokens your sessions used, or what they cost. */
+export type UsageLens = 'activity' | 'tokens' | 'cost'
+
+export const USAGE_LENSES: ReadonlyArray<{ value: UsageLens; label: string }> = [
+	{ value: 'activity', label: 'Activity' },
+	{ value: 'tokens', label: 'Tokens' },
+	{ value: 'cost', label: 'Cost' },
+]
 
 export type IntensityLevel = 0 | 1 | 2 | 3 | 4
 export type Thresholds = [number, number, number]
@@ -16,8 +22,15 @@ export function localDayKey(date: Date): string {
 	return `${date.getFullYear()}-${month}-${day}`
 }
 
-/** A day's value under a lens. */
-export function lensValue(day: DayUsage, _lens: UsageLens): number {
+/** Every token kind together, cache reads included: the same total a session's cost badge shows. */
+export function totalTokens(tokens: TokenBreakdown): number {
+	return tokens.cacheRead + tokens.cacheWrite + tokens.input + tokens.output
+}
+
+/** A day's value under a lens. A day with no token data counts as zero for shading and totals. */
+export function lensValue(day: DayUsage, lens: UsageLens): number {
+	if (lens === 'tokens') return day.tokens ? totalTokens(day.tokens) : 0
+	if (lens === 'cost') return day.costUsd ?? 0
 	return day.tasks + day.sessions + day.messages
 }
 
@@ -123,6 +136,45 @@ function plural(value: number, one: string, many = `${one}s`): string {
 	return `${count.format(value)} ${value === 1 ? one : many}`
 }
 
+/** One decimal, dropping a trailing '.0': 2.1, 48.2, 1. */
+function oneDecimal(value: number): string {
+	return String(Math.round(value * 10) / 10)
+}
+
+/**
+ * Token counts, exact while they're small enough to read and short after: '1,200', '12k', '140k',
+ * '2.1M', '48.2M', '1.3B'. Rounding never reads as the next unit up ('1000k').
+ */
+export function formatTokenCount(value: number): string {
+	if (value < 10_000) return count.format(value)
+	if (value < 999_500) return `${Math.round(value / 1000)}k`
+	if (value < 999_950_000) return `${oneDecimal(value / 1_000_000)}M`
+	return `${oneDecimal(value / 1_000_000_000)}B`
+}
+
+const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+
+/** Dollars to the cent: '$0.12', '$1,612.40'. A real but sub-cent spend reads '<$0.01', not '$0.00'. */
+export function formatCost(usd: number): string {
+	if (usd > 0 && usd < 0.005) return '<$0.01'
+	return dollars.format(usd)
+}
+
+/** What a cell's tooltip says for a day with activity but no usage-ledger rows. */
+export const NO_TOKEN_DATA = 'No token data recorded'
+
+/** '2.1M tokens: 1.9M cache read · 140k cache write · 12k input · 48k output'. */
+export function tokenSummary(tokens: TokenBreakdown): string {
+	const total = totalTokens(tokens)
+	const parts = [
+		`${formatTokenCount(tokens.cacheRead)} cache read`,
+		`${formatTokenCount(tokens.cacheWrite)} cache write`,
+		`${formatTokenCount(tokens.input)} input`,
+		`${formatTokenCount(tokens.output)} output`,
+	]
+	return `${formatTokenCount(total)} ${total === 1 ? 'token' : 'tokens'}: ${parts.join(' · ')}`
+}
+
 /** 'Wed, Nov 18, 2026' for a day key, whatever the browser's time zone. */
 export function formatDayLong(key: string): string {
 	return new Date(parseDayKey(key) ?? 0).toLocaleDateString('en-US', {
@@ -142,11 +194,22 @@ function formatDayShort(key: string): string {
 	})
 }
 
-/** What a cell's tooltip leads with: '14 activities: 1 task, 3 sessions, 10 messages', or 'No activity'. */
+/**
+ * What a cell's tooltip leads with, under each lens:
+ * - Activity: '14 activities: 1 task, 3 sessions, 10 messages'
+ * - Tokens: '2.1M tokens: 1.9M cache read · 140k cache write · 12k input · 48k output'
+ * - Cost: '$0.12 spent'
+ * A day with activity but no ledger rows says 'No token data recorded' rather than suggesting it was
+ * free, and a day with nothing at all says 'No activity'.
+ */
 export function cellSummary(day: DayUsage, lens: UsageLens): string {
-	const total = lensValue(day, lens)
-	if (total === 0) return 'No activity'
-	return `${plural(total, 'activity', 'activities')}: ${plural(day.tasks, 'task')}, ${plural(day.sessions, 'session')}, ${plural(day.messages, 'message')}`
+	const activity = lensValue(day, 'activity')
+	if (lens === 'activity') {
+		if (activity === 0) return 'No activity'
+		return `${plural(activity, 'activity', 'activities')}: ${plural(day.tasks, 'task')}, ${plural(day.sessions, 'session')}, ${plural(day.messages, 'message')}`
+	}
+	if (day.tokens === null || day.costUsd === null) return activity === 0 ? 'No activity' : NO_TOKEN_DATA
+	return lens === 'tokens' ? tokenSummary(day.tokens) : `${formatCost(day.costUsd)} spent`
 }
 
 /** The cell's accessible name: the summary and the date. */
@@ -164,5 +227,17 @@ export function headline(days: readonly DayUsage[], lens: UsageLens): { total: s
 	const first = days[firstActive]
 	const span =
 		firstActive < 0 || firstActive < 7 || !first ? 'in the last year' : `since ${formatDayShort(first.date)}`
-	return { total: plural(total, 'activity', 'activities'), span }
+	return { total: formatTotal(total, lens), span }
+}
+
+/** The headline's figure: '1,284 activities', '48.2M tokens', '$612.40 spent'. */
+function formatTotal(total: number, lens: UsageLens): string {
+	if (lens === 'tokens') return `${formatTokenCount(total)} ${total === 1 ? 'token' : 'tokens'}`
+	if (lens === 'cost') return `${formatCost(total)} spent`
+	return plural(total, 'activity', 'activities')
+}
+
+/** Nothing to show under any lens: no activity, and no recorded usage either. */
+export function isEmptyYear(days: readonly DayUsage[]): boolean {
+	return days.every((day) => lensValue(day, 'activity') === 0 && day.tokens === null)
 }

@@ -1,5 +1,6 @@
-// Pieces the usage page's visuals share: one tooltip and one legend, so the year grid and the cost
-// chart read the same way.
+// Pieces the usage page's visuals share: one tooltip, one legend and one switch, so the year grid and
+// the cost chart read the same way.
+import { selectWithArrows } from '@/minimalist/lib/roving'
 
 /** Where a tooltip points, in pixels from its positioned container's top-left corner. */
 export type TooltipAnchor = { left: number; top: number; align: 'start' | 'center' | 'end' }
@@ -48,5 +49,39 @@ export function UsageLegend({ items, before, after }: { items: LegendItem[]; bef
 			))}
 			{after ? <span>{after}</span> : null}
 		</span>
+	)
+}
+
+/**
+ * A segmented control for a small set of views, such as the grid's Activity / Tokens / Cost lenses.
+ * A radio group: one tab stop, arrow keys move the choice.
+ */
+export function UsageSwitch<T extends string>({
+	label,
+	value,
+	options,
+	onChange,
+}: {
+	label: string
+	value: T
+	options: ReadonlyArray<{ value: T; label: string }>
+	onChange: (value: T) => void
+}) {
+	return (
+		<div className="seg usage-switch" role="radiogroup" aria-label={label} onKeyDown={selectWithArrows}>
+			{options.map((option) => (
+				<button
+					key={option.value}
+					type="button"
+					role="radio"
+					aria-checked={value === option.value}
+					tabIndex={value === option.value ? 0 : -1}
+					className={value === option.value ? 'on' : undefined}
+					onClick={() => onChange(option.value)}
+				>
+					{option.label}
+				</button>
+			))}
+		</div>
 	)
 }

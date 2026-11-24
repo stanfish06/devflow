@@ -22,7 +22,7 @@ export function UsagePage() {
 			</div>
 			<div className="usage-body">
 				<div className="usage-content">
-					{year.data ? <UsageGrid days={year.data.days} lens="activity" /> : null}
+					{year.data ? <UsageGrid days={year.data.days} /> : null}
 					{!year.data && year.isError ? (
 						<div className="usage-card usage-failed" role="alert">
 							<span>Couldn't load your usage.</span>

@@ -5,11 +5,12 @@
  * reassignable `resource_owner_user_id`, so handing a task to someone else
  * moves nothing between their grids:
  *
- * | Counts as       | Source                | Actor column                         | Time column  |
- * |-----------------|-----------------------|--------------------------------------|--------------|
- * | task created    | `tasks`               | `created_by`                         | `created_at` |
- * | session started | `sessions`            | `created_by`                         | `created_at` |
- * | message sent    | `conversation_events` | `user_id`, user prompts only         | `created_at` |
+ * | Counts as       | Source                 | Actor column                 | Time column   |
+ * |-----------------|------------------------|------------------------------|---------------|
+ * | task created    | `tasks`                | `created_by`                 | `created_at`  |
+ * | session started | `sessions`             | `created_by`                 | `created_at`  |
+ * | message sent    | `conversation_events`  | `user_id`, user prompts only | `created_at`  |
+ * | tokens / cost   | `session_usage_events` | `session_creator_user_id`    | `occurred_at` |
  *
  * The user and organization come from authentication (see {@link UsageScope}),
  * never from the request body.
@@ -104,5 +105,32 @@ export function myActivityEvents(scope: UsageScope, window: EpochWindow): SQL {
 			AND ce.event_type = 'message'
 			AND ce.created_at BETWEEN ${startMs} AND ${endMs}
 			AND NOT (es.forked_from_session_id IS NOT NULL AND ce.created_at < es.created_at)
+	`
+}
+
+/**
+ * Every usage-ledger row of the caller inside the window, one per run and model:
+ * `(at, day, model, task_id, session_id, cache_read, cache_write, input, output, cost_usd)`.
+ *
+ * "Mine" is the session's creator, copied from `sessions.created_by` when the row
+ * was recorded and never reassigned. Those are exactly the sessions whose badges
+ * the user sees, so the dashboard and the badges talk about the same runs.
+ * Served by `session_usage_events_org_creator_occurred_idx`.
+ *
+ * `input` is uncached input only (Anthropic semantics); the cache columns are
+ * separate, so the four token columns add up to the badge's total.
+ */
+export function myUsageRows(scope: UsageScope, window: EpochWindow): SQL {
+	const { organizationId, userId, offsetMinutes } = scope
+	const { startMs, endMs } = window
+	return sql`
+		SELECT sue.occurred_at AS at, ${dayKeySql(sql`sue.occurred_at`, offsetMinutes)} AS day,
+			sue.model, sue.task_id, sue.session_id,
+			sue.cache_read_tokens AS cache_read, sue.cache_creation_tokens AS cache_write,
+			sue.input_tokens AS input, sue.output_tokens AS output, sue.cost_usd
+		FROM session_usage_events sue
+		WHERE sue.organization_id = ${organizationId}
+			AND sue.session_creator_user_id = ${userId}
+			AND sue.occurred_at BETWEEN ${startMs} AND ${endMs}
 	`
 }

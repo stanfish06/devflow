@@ -6,14 +6,19 @@ import { describe, expect, it } from 'vitest'
 import {
 	cellLabel,
 	cellSummary,
+	formatCost,
+	formatTokenCount,
 	gridLayout,
 	headline,
 	intensityLevel,
 	intensityThresholds,
+	isEmptyYear,
 	lensValue,
 	localDayKey,
 	streaks,
 } from '@/minimalist/lib/usage'
+
+const noUsage = { tokens: null, costUsd: null }
 
 /** A dense run of days ending on `to`, with activity counts (as messages) from `values`. */
 function run(to: string, values: number[]): DayUsage[] {
@@ -22,17 +27,37 @@ function run(to: string, values: number[]): DayUsage[] {
 		tasks: 0,
 		sessions: 0,
 		messages,
+		...noUsage,
 	}))
 }
 
-/** The year grid's days for `today`, all empty unless `active` names some. */
-function year(today: string, active: Record<string, number> = {}): DayUsage[] {
+/** The year grid's days for `today`, all empty unless `active` names some, or `usage` gives some cost. */
+function year(today: string, active: Record<string, number> = {}, usage: Record<string, number> = {}): DayUsage[] {
 	const { from } = yearWindow(today)
 	const length = rangeLengthDays(yearWindow(today)) ?? 0
 	return Array.from({ length }, (_, index) => {
 		const date = addDays(from, index)
-		return { date, tasks: 0, sessions: 0, messages: active[date] ?? 0 }
+		const cost = usage[date]
+		return {
+			date,
+			tasks: 0,
+			sessions: 0,
+			messages: active[date] ?? 0,
+			...(cost === undefined
+				? noUsage
+				: { tokens: { cacheRead: 600, cacheWrite: 100, input: 400, output: 100 }, costUsd: cost }),
+		}
 	})
+}
+
+/** The fixture day: one Claude task, session and prompt, 1,200 tokens for $0.12. */
+const claudeDay: DayUsage = {
+	date: '2026-11-18',
+	tasks: 1,
+	sessions: 1,
+	messages: 1,
+	tokens: { cacheRead: 600, cacheWrite: 100, input: 400, output: 100 },
+	costUsd: 0.12,
 }
 
 describe('localDayKey', () => {
@@ -44,7 +69,50 @@ describe('localDayKey', () => {
 
 describe('lensValue', () => {
 	it('counts tasks, sessions and messages as activities', () => {
-		expect(lensValue({ date: '2026-11-18', tasks: 1, sessions: 3, messages: 10 }, 'activity')).toBe(14)
+		expect(lensValue({ date: '2026-11-18', tasks: 1, sessions: 3, messages: 10, ...noUsage }, 'activity')).toBe(14)
+	})
+
+	it('counts every token kind, cache reads included, to match the session badge', () => {
+		expect(lensValue(claudeDay, 'tokens')).toBe(1200)
+		expect(lensValue(claudeDay, 'cost')).toBe(0.12)
+	})
+
+	it('reads a day without token data as zero, for shading and totals', () => {
+		const codexDay = { ...claudeDay, ...noUsage }
+		expect(lensValue(codexDay, 'tokens')).toBe(0)
+		expect(lensValue(codexDay, 'cost')).toBe(0)
+		expect(lensValue(codexDay, 'activity')).toBe(3)
+	})
+})
+
+describe('formatTokenCount', () => {
+	it('stays exact while small, then shortens', () => {
+		expect(formatTokenCount(0)).toBe('0')
+		expect(formatTokenCount(1200)).toBe('1,200')
+		expect(formatTokenCount(9999)).toBe('9,999')
+		expect(formatTokenCount(12_000)).toBe('12k')
+		expect(formatTokenCount(140_400)).toBe('140k')
+		expect(formatTokenCount(2_100_000)).toBe('2.1M')
+		expect(formatTokenCount(48_240_000)).toBe('48.2M')
+		expect(formatTokenCount(3_400_000_000)).toBe('3.4B')
+	})
+
+	it('never reads as 1000 of a smaller unit', () => {
+		expect(formatTokenCount(999_600)).toBe('1M')
+		expect(formatTokenCount(999_960_000)).toBe('1B')
+	})
+})
+
+describe('formatCost', () => {
+	it('shows dollars to the cent', () => {
+		expect(formatCost(0.12)).toBe('$0.12')
+		expect(formatCost(612.4)).toBe('$612.40')
+		expect(formatCost(1612.399)).toBe('$1,612.40')
+		expect(formatCost(0)).toBe('$0.00')
+	})
+
+	it("doesn't round a real spend down to nothing", () => {
+		expect(formatCost(0.001)).toBe('<$0.01')
 	})
 })
 
@@ -133,7 +201,7 @@ describe('intensity', () => {
 })
 
 describe('words', () => {
-	const day = { date: '2026-11-18', tasks: 1, sessions: 3, messages: 10 }
+	const day = { date: '2026-11-18', tasks: 1, sessions: 3, messages: 10, ...noUsage }
 
 	it('breaks a cell down by kind', () => {
 		expect(cellSummary(day, 'activity')).toBe('14 activities: 1 task, 3 sessions, 10 messages')
@@ -144,6 +212,42 @@ describe('words', () => {
 		expect(cellLabel({ ...day, tasks: 0, sessions: 0, messages: 0 }, 'activity')).toBe(
 			'No activity · Wed, Nov 18, 2026',
 		)
+	})
+
+	it('breaks a day down by token kind under the Tokens lens', () => {
+		expect(cellSummary(claudeDay, 'tokens')).toBe(
+			'1,200 tokens: 600 cache read · 100 cache write · 400 input · 100 output',
+		)
+		expect(
+			cellSummary(
+				{
+					...claudeDay,
+					tokens: { cacheRead: 1_900_000, cacheWrite: 140_000, input: 12_000, output: 48_000 },
+				},
+				'tokens',
+			),
+		).toBe('2.1M tokens: 1.9M cache read · 140k cache write · 12k input · 48k output')
+	})
+
+	it('shows the spend under the Cost lens', () => {
+		expect(cellSummary(claudeDay, 'cost')).toBe('$0.12 spent')
+		expect(cellLabel(claudeDay, 'cost')).toBe('$0.12 spent · Wed, Nov 18, 2026')
+	})
+
+	it('says a day with activity but no ledger rows has no token data, never $0.00', () => {
+		const codexDay = { ...claudeDay, ...noUsage }
+		expect(cellSummary(codexDay, 'tokens')).toBe('No token data recorded')
+		expect(cellSummary(codexDay, 'cost')).toBe('No token data recorded')
+		// A day with nothing at all is plainly empty under every lens.
+		const quiet = { ...codexDay, tasks: 0, sessions: 0, messages: 0 }
+		expect(cellSummary(quiet, 'tokens')).toBe('No activity')
+		expect(cellSummary(quiet, 'cost')).toBe('No activity')
+	})
+
+	it('shows a real zero when ledger rows exist but cost nothing', () => {
+		const free = { ...claudeDay, tokens: { cacheRead: 0, cacheWrite: 0, input: 0, output: 0 }, costUsd: 0 }
+		expect(cellSummary(free, 'cost')).toBe('$0.00 spent')
+		expect(cellSummary(free, 'tokens')).toBe('0 tokens: 0 cache read · 0 cache write · 0 input · 0 output')
 	})
 
 	it('totals the year in the headline', () => {
@@ -158,5 +262,25 @@ describe('words', () => {
 
 	it('reads zero with no history at all', () => {
 		expect(headline(year('2026-11-24'), 'activity')).toEqual({ total: '0 activities', span: 'in the last year' })
+	})
+
+	it('totals tokens and cost in the headline', () => {
+		const days = year('2026-11-24', { '2025-11-25': 3, '2026-11-18': 3 }, { '2025-11-25': 0.3, '2026-11-18': 0.12 })
+		expect(headline(days, 'tokens')).toEqual({ total: '2,400 tokens', span: 'in the last year' })
+		expect(headline(days, 'cost')).toEqual({ total: '$0.42 spent', span: 'in the last year' })
+	})
+
+	it('dates a short token history from its first recorded day', () => {
+		const days = year('2026-11-24', { '2026-01-05': 1, '2026-10-03': 1 }, { '2026-10-03': 0.12 })
+		expect(headline(days, 'activity').span).toBe('since Jan 5')
+		expect(headline(days, 'tokens')).toEqual({ total: '1,200 tokens', span: 'since Oct 3' })
+	})
+})
+
+describe('isEmptyYear', () => {
+	it('is empty only with no activity and no recorded usage', () => {
+		expect(isEmptyYear(year('2026-11-24'))).toBe(true)
+		expect(isEmptyYear(year('2026-11-24', { '2026-11-18': 1 }))).toBe(false)
+		expect(isEmptyYear(year('2026-11-24', {}, { '2026-11-18': 0 }))).toBe(false)
 	})
 })

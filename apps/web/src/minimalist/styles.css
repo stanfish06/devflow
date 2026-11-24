@@ -4756,6 +4756,17 @@
 		min-height: 24px;
 		margin-bottom: 10px;
 	}
+	/* The grid's lens switch: the shared segmented control, kept to one line at the head's right. */
+	.usage-switch {
+		flex-shrink: 0;
+		margin-left: auto;
+	}
+	.usage-switch button {
+		white-space: nowrap;
+	}
+	:scope.dark .usage-switch button.on {
+		background: #3a3a3a;
+	}
 	.usage-total {
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;

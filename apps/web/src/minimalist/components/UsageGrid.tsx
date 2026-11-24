@@ -2,7 +2,13 @@ import type { DayUsage } from '@devflow/api-contract/api/usage/year'
 import { Link } from '@tanstack/react-router'
 import { type KeyboardEvent, useRef, useState } from 'react'
 
-import { anchorAbove, type TooltipAnchor, UsageLegend, UsageTooltip } from '@/minimalist/components/UsageParts'
+import {
+	anchorAbove,
+	type TooltipAnchor,
+	UsageLegend,
+	UsageSwitch,
+	UsageTooltip,
+} from '@/minimalist/components/UsageParts'
 import {
 	cellLabel,
 	cellSummary,
@@ -11,8 +17,10 @@ import {
 	headline,
 	intensityLevel,
 	intensityThresholds,
+	isEmptyYear,
 	lensValue,
 	streaks,
+	USAGE_LENSES,
 	type UsageLens,
 } from '@/minimalist/lib/usage'
 
@@ -35,10 +43,12 @@ function scrollToToday(element: HTMLDivElement | null) {
 
 /**
  * The last 52 weeks as a contribution grid: one cell per local day, Monday-first columns, shaded by
- * the quartiles of your own year. A headline and your streaks sit above it, the scale below it.
+ * the quartiles of your own year. A headline and your streaks sit above it, the scale below it. The
+ * Activity / Tokens / Cost switch repaints the same cells from the same days; the layout never moves.
  */
-export function UsageGrid({ days, lens = 'activity' }: { days: DayUsage[]; lens?: UsageLens }) {
+export function UsageGrid({ days }: { days: DayUsage[] }) {
 	const frame = useRef<HTMLElement>(null)
+	const [lens, setLens] = useState<UsageLens>('activity')
 	const [hover, setHover] = useState<{ day: DayUsage; anchor: TooltipAnchor } | null>(null)
 	const [focusIndex, setFocusIndex] = useState(days.length - 1)
 
@@ -46,7 +56,7 @@ export function UsageGrid({ days, lens = 'activity' }: { days: DayUsage[]; lens?
 	const thresholds = intensityThresholds(days.map((day) => lensValue(day, lens)))
 	const streak = streaks(days)
 	const head = headline(days, lens)
-	const empty = days.every((day) => lensValue(day, lens) === 0)
+	const empty = isEmptyYear(days)
 	const tabStop = Math.min(focusIndex, days.length - 1)
 
 	const show = (day: DayUsage, target: HTMLElement) => {
@@ -73,19 +83,22 @@ export function UsageGrid({ days, lens = 'activity' }: { days: DayUsage[]; lens?
 						</Link>
 					</>
 				) : (
-					<div>
-						<span className="usage-total">{head.total}</span>{' '}
-						<span className="usage-sub">
-							{head.span}
-							{streak.current > 0 ? (
-								<>
-									{' · '}
-									<b>{streak.current}-day streak</b>
-								</>
-							) : null}
-							{streak.longest > 0 ? ` · longest ${streak.longest}` : null}
-						</span>
-					</div>
+					<>
+						<div>
+							<span className="usage-total">{head.total}</span>{' '}
+							<span className="usage-sub">
+								{head.span}
+								{streak.current > 0 ? (
+									<>
+										{' · '}
+										<b>{streak.current}-day streak</b>
+									</>
+								) : null}
+								{streak.longest > 0 ? ` · longest ${streak.longest}` : null}
+							</span>
+						</div>
+						<UsageSwitch label="Grid shows" value={lens} options={USAGE_LENSES} onChange={setLens} />
+					</>
 				)}
 			</div>
 			<div className="usage-scroll" ref={scrollToToday}>
