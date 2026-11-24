@@ -4,6 +4,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
 	assignColumn,
+	assignStage,
 	buildKanbanColumns,
 	type KanbanSessionInput,
 	type KanbanTaskInput,
@@ -69,6 +70,49 @@ describe('assignColumn', () => {
 	test('uses the highest-ranked label within the winning session', () => {
 		const sessions = [session({ labels: [label('rpi:research'), label('rpi:plan')], last_activity_at: 10n })]
 		expect(assignColumn({}, sessions)).toBe('planning')
+	})
+})
+
+describe('assignStage', () => {
+	test('is null without a labeled, non-archived session', () => {
+		expect(assignStage([])).toBeNull()
+		expect(
+			assignStage([session({ archived: true, labels: [label('rpi:implementation')], last_activity_at: 10n })]),
+		).toBeNull()
+		expect(assignStage([session({ labels: null, last_activity_at: 10n }), session({ labels: [] })])).toBeNull()
+	})
+
+	test('is null when the winning session has only rpi:todo or unknown labels', () => {
+		expect(assignStage([session({ labels: [label('rpi:todo')], last_activity_at: 10n })])).toBeNull()
+		expect(assignStage([session({ labels: [label('custom:thing')], last_activity_at: 10n })])).toBeNull()
+		// Unknown labels on the newest session do not fall back to an older, staged one.
+		expect(
+			assignStage([
+				session({ labels: [label('rpi:plan')], last_activity_at: 10n }),
+				session({ labels: [label('custom:thing')], last_activity_at: 20n }),
+			]),
+		).toBeNull()
+	})
+
+	test('maps every non-todo RPI label to its LABEL_TO_COLUMN group', () => {
+		for (const rpiLabel of RPI_LABELS) {
+			if (rpiLabel.name === 'rpi:todo') continue
+			const stage = assignStage([session({ labels: [rpiLabel], last_activity_at: 10n })])
+			expect(stage, `label ${rpiLabel.name}`).toBe(LABEL_TO_COLUMN[rpiLabel.name])
+		}
+	})
+
+	test('a newer session at an earlier stage wins over an older, further-along one', () => {
+		const sessions = [
+			session({ labels: [label('rpi:implementation')], last_activity_at: 30n }),
+			session({ labels: [label('rpi:research')], last_activity_at: 90n }),
+		]
+		expect(assignStage(sessions)).toBe('research-design')
+	})
+
+	test('uses the highest-ranked label within the winning session', () => {
+		const sessions = [session({ labels: [label('rpi:plan'), label('rpi:describe-pr')], last_activity_at: 10n })]
+		expect(assignStage(sessions)).toBe('in-review')
 	})
 })
 
