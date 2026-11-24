@@ -30,6 +30,13 @@
 		--warn: #9a6700;
 		--warn-bg: color-mix(in oklab, #9a6700 10%, transparent);
 		--info: #1f6fcf;
+		/* Workflow stage tags on the board (BoardPage StageTag). The light blue, green and amber are a
+		   little darker than --info / --add / --warn so the text holds 5:1 on its --stage-tint fill. */
+		--stage-research: #6250d6;
+		--stage-planning: #1a62bd;
+		--stage-implementation: #08704b;
+		--stage-review: #875a00;
+		--stage-tint: 10%;
 		--shadow: 0 0 0 0.5px color-mix(in oklab, #171717 15%, transparent), 0 8px 24px rgba(0, 0, 0, 0.08);
 		/* Dims what a drawer or overlaid panel covers. */
 		--scrim: rgba(0, 0, 0, 0.16);
@@ -68,6 +75,11 @@
 		--warn: #e0a10a;
 		--warn-bg: color-mix(in oklab, #e0a10a 12%, transparent);
 		--info: #5b9cec;
+		--stage-research: #9085e9;
+		--stage-planning: #5b9cec;
+		--stage-implementation: #2bb886;
+		--stage-review: #e0a10a;
+		--stage-tint: 14%;
 		--shadow: 0 0 0 0.5px oklch(1 0 0 / 15%), 0 10px 30px rgba(0, 0, 0, 0.5);
 		--scrim: rgba(0, 0, 0, 0.45);
 	}

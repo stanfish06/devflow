@@ -15,7 +15,7 @@ import { ChevronRight, Plus } from 'lucide-react'
 import { useState } from 'react'
 
 import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
-import { assignColumn, KANBAN_COLUMN_DEFS } from '@/lib/kanban/columnEngine'
+import { assignStage, type StageId } from '@/lib/kanban/columnEngine'
 import { cn } from '@/lib/utils'
 import { AgentStateLabel, CardActionButton } from '@/minimalist/components/CardAction'
 import { Segmented } from '@/minimalist/components/SettingsControls'
@@ -42,7 +42,13 @@ const LAYOUTS: Array<{ value: BoardLayout; label: string }> = [
 	{ value: 'board', label: 'Board' },
 	{ value: 'list', label: 'List' },
 ]
-const PHASE_TITLES = new Map(KANBAN_COLUMN_DEFS.map((column) => [column.id, column.title]))
+/** Each workflow stage's tag text and color; the colors are minimalist theme variables (styles.css). */
+const STAGES: Record<StageId, { label: string; color: string }> = {
+	'research-design': { label: 'Research & Design', color: 'var(--stage-research)' },
+	planning: { label: 'Planning', color: 'var(--stage-planning)' },
+	implementation: { label: 'Implementation', color: 'var(--stage-implementation)' },
+	'in-review': { label: 'In Review', color: 'var(--stage-review)' },
+}
 
 type ViewProps = {
 	rows: TaskRow[]
@@ -102,17 +108,15 @@ function statusGroups(rows: TaskRow[]) {
 	return TASK_STATUSES.map((status) => ({ status, rows: rows.filter((row) => row.task.status === status) }))
 }
 
-/** The RPI phase a task's sessions have reached, as the old board placed it. */
-function phaseTitle(row: TaskRow): string {
-	const id = assignColumn(
-		row.task,
+/** The workflow stage of a task's latest-active labeled session, or null when it has none. */
+function stageOf(row: TaskRow): StageId | null {
+	return assignStage(
 		row.sessions.map((session) => ({
 			archived: session.archived,
 			labels: session.labels,
 			last_activity_at: session.last_activity_at,
 		})),
 	)
-	return PHASE_TITLES.get(id) ?? id
 }
 
 function shortDate(ms: number): string {
@@ -148,6 +152,26 @@ function Chip(props: { children: string }) {
 	return (
 		<span className="max-w-full truncate rounded-full border px-2 py-0.5 text-[0.6875rem] text-muted-foreground">
 			{props.children}
+		</span>
+	)
+}
+
+/** The task's workflow stage as a colored tag; nothing when it has none. */
+export function StageTag(props: { stage: StageId | null }) {
+	if (props.stage === null) return null
+	const { label, color } = STAGES[props.stage]
+	return (
+		<span
+			data-stage={props.stage}
+			className="inline-flex max-w-full shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border py-0.5 pr-2 pl-[7px] text-[0.6875rem] font-medium"
+			style={{
+				color,
+				backgroundColor: `color-mix(in oklab, ${color} var(--stage-tint), transparent)`,
+				borderColor: `color-mix(in oklab, ${color} 35%, transparent)`,
+			}}
+		>
+			<span aria-hidden className="size-1.5 shrink-0 rounded-full bg-current" />
+			{label}
 		</span>
 	)
 }
@@ -268,7 +292,7 @@ function Card(props: { row: TaskRow; onOpen: (row: TaskRow) => void; controls: C
 			<button type="button" onClick={() => props.onOpen(props.row)} className="min-w-0 flex-1 text-left">
 				<span className="line-clamp-2 text-[0.8125rem] font-medium">{task.name}</span>
 				<span className="mt-2 flex flex-wrap gap-1.5">
-					<Chip>{phaseTitle(props.row)}</Chip>
+					<StageTag stage={stageOf(props.row)} />
 					<Chip>{props.row.projectName}</Chip>
 				</span>
 				<span className="mt-2 flex flex-wrap items-center gap-1 text-[0.6875rem] text-muted-foreground">
@@ -361,9 +385,12 @@ function ListRow(props: { row: TaskRow; onOpen: (row: TaskRow) => void; controls
 				className="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
 			>
 				<span className="min-w-0 flex-1 truncate">{row.task.name}</span>
-				<span className="hidden shrink-0 items-center gap-1.5 md:flex">
-					<Chip>{phaseTitle(row)}</Chip>
-					<Chip>{row.projectName}</Chip>
+				{/* The stage tag stays at every width; below md the project chip makes room for it. */}
+				<span className="flex shrink-0 items-center gap-1.5">
+					<StageTag stage={stageOf(row)} />
+					<span className="hidden md:contents">
+						<Chip>{row.projectName}</Chip>
+					</span>
 				</span>
 				<AgentStateLabel state={agent.state} className="shrink-0 text-xs" />
 				<span className="min-w-14 shrink-0 text-right text-xs text-muted-foreground">
