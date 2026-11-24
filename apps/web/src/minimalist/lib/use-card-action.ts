@@ -80,6 +80,14 @@ export function useCardAction(): (row: { task: Task }, action: NonNullable<CardA
 			case 'resume':
 				return send(action.sessionId, RESUME_TEXT, 'card_resume', 'Could not resume the agent. Try again.')
 			case 'retry':
+				if (action.relaunch) {
+					try {
+						await api.sessions.relaunch({ sessionId: action.sessionId }, { context: { silent: true } })
+					} catch {
+						showToast('Could not retry the agent. Try again.')
+					}
+					return
+				}
 				return send(action.sessionId, RETRY_TEXT, 'card_retry', 'Could not retry the agent. Try again.')
 		}
 	}

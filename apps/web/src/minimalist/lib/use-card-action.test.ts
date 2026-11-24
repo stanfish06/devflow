@@ -13,7 +13,7 @@ const { api, showToast, projects } = vi.hoisted(() => ({
 		projects: { v2: { repositorySources: { get: vi.fn(), upsert: vi.fn() } } },
 		tasks: { v2: { create: vi.fn() }, launchDraft: vi.fn(), update: vi.fn() },
 		ai: { generateTitle: vi.fn() },
-		sessions: { interrupt: vi.fn(), v2: { continue: vi.fn() } },
+		sessions: { interrupt: vi.fn(), relaunch: vi.fn(), v2: { continue: vi.fn() } },
 	},
 	showToast: vi.fn(),
 	projects: { data: [] as Array<{ id: string; name: string; repositories: unknown[] }> },
@@ -85,6 +85,7 @@ beforeEach(() => {
 	api.tasks.launchDraft.mockResolvedValue({})
 	api.ai.generateTitle.mockResolvedValue({ title: 'Agent title' })
 	api.sessions.interrupt.mockResolvedValue({ success: true, transactionId: '1' })
+	api.sessions.relaunch.mockResolvedValue({ success: true, transactionId: '1' })
 	api.sessions.v2.continue.mockResolvedValue({ kind: 'continued', transactionId: '1' })
 	projects.data = [{ id: projectId, name: 'app', repositories: [repository] }]
 })
@@ -189,6 +190,24 @@ describe("a card's Resume and Retry", () => {
 			{ context: { silent: true } },
 		)
 		expect(RETRY_TEXT).toBe('Try again.')
+		expect(api.sessions.relaunch).not.toHaveBeenCalled()
+	})
+
+	it('Retry relaunches a session whose agent never started without sending another message', async () => {
+		await run(started, { kind: 'retry', sessionId: 'never-started', relaunch: true })
+		expect(api.sessions.relaunch).toHaveBeenCalledExactlyOnceWith(
+			{ sessionId: 'never-started' },
+			{ context: { silent: true } },
+		)
+		expect(api.sessions.v2.continue).not.toHaveBeenCalled()
+		expect(showToast).not.toHaveBeenCalled()
+	})
+
+	it('reports a failed relaunch once without falling back to a continuation message', async () => {
+		api.sessions.relaunch.mockRejectedValueOnce(new ORPCError('BAD_REQUEST'))
+		await run(started, { kind: 'retry', sessionId: 'never-started', relaunch: true })
+		expect(showToast).toHaveBeenCalledExactlyOnceWith('Could not retry the agent. Try again.')
+		expect(api.sessions.v2.continue).not.toHaveBeenCalled()
 	})
 
 	it('reports a rejected or failed message', async () => {
