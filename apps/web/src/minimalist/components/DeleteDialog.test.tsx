@@ -16,14 +16,23 @@ HTMLDialogElement.prototype.close ??= function (this: HTMLDialogElement) {
 
 const { api, queries, navigate, showToast, open } = vi.hoisted(() => {
 	const api = {
-		tasks: { delete: vi.fn() },
+		tasks: { delete: vi.fn(), deleteArchived: vi.fn(), deleteArchivedPreview: vi.fn() },
 		projects: { v2: { delete: vi.fn(), deletePreview: vi.fn() } },
 	}
-	// The oRPC query helpers, down to the one preview the dialog reads.
+	// The oRPC query helpers, down to the previews the dialogs read.
 	const queries = {
+		tasks: {
+			deleteArchivedPreview: {
+				queryOptions: () => ({
+					queryKey: ['tasks', 'deleteArchivedPreview'],
+					queryFn: () => api.tasks.deleteArchivedPreview({}),
+				}),
+			},
+		},
 		projects: {
 			v2: {
 				deletePreview: {
+					key: () => ['projects', 'v2', 'deletePreview'],
 					queryOptions: ({ input }: { input: { projectId: string } }) => ({
 						queryKey: ['projects', 'v2', 'deletePreview', input.projectId],
 						queryFn: () => api.projects.v2.deletePreview(input),
@@ -67,6 +76,8 @@ beforeEach(() => {
 	api.tasks.delete.mockResolvedValue({ taskId: 'task-1' })
 	api.projects.v2.deletePreview.mockResolvedValue({ taskCount: 12, otherPeoplesTaskCount: 3 })
 	api.projects.v2.delete.mockResolvedValue({ deletedTaskCount: 12 })
+	api.tasks.deleteArchivedPreview.mockResolvedValue({ deletableCount: 2, skippedSharedCount: 1 })
+	api.tasks.deleteArchived.mockResolvedValue({ deletedCount: 2 })
 	open.taskId = undefined
 })
 
@@ -230,5 +241,101 @@ describe('DeleteDialog for a project', () => {
 		)
 		expect(onClose).not.toHaveBeenCalled()
 		expect(api.projects.v2.deletePreview).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('DeleteDialog for all archived tasks', () => {
+	function renderArchivedDialog() {
+		const onClose = vi.fn()
+		renderWithQueries(<DeleteDialog target={{ kind: 'archived-tasks' }} onClose={onClose} />)
+		return { onClose }
+	}
+
+	const deleteButton = (label = 'Delete 2 tasks') => screen.getByRole('button', { name: label }) as HTMLButtonElement
+	const typePhrase = (value: string) =>
+		fireEvent.change(screen.getByLabelText('Type to confirm'), { target: { value } })
+	const counted = (text: string) =>
+		screen.findByText((_, element) => element?.tagName === 'P' && element.textContent?.includes(text) === true)
+
+	it('states the server’s exact count and the shared tasks it skips', async () => {
+		renderArchivedDialog()
+		expect(await screen.findByRole('heading', { name: 'Delete 2 archived tasks?' })).toBeTruthy()
+		expect(await counted('every archived task you own, 2 tasks')).toBeTruthy()
+		expect(await counted('1 archived task shared with you is skipped.')).toBeTruthy()
+		expect(
+			screen.getByText('Worktrees and branches on your hosts are kept. Nothing on GitHub changes.'),
+		).toBeTruthy()
+		expect(screen.getByLabelText('Type to confirm').getAttribute('placeholder')).toBe('delete 2 tasks')
+	})
+
+	it('stays inert, ⌘↵ included, until `delete N tasks` is typed for that count', async () => {
+		const { onClose } = renderArchivedDialog()
+		await counted('2 tasks')
+		expect(deleteButton().disabled).toBe(true)
+		pressCommandEnter()
+		typePhrase('delete 2')
+		expect(deleteButton().disabled).toBe(true)
+		typePhrase('delete 3 tasks')
+		expect(deleteButton().disabled).toBe(true)
+		pressCommandEnter()
+		expect(api.tasks.deleteArchived).not.toHaveBeenCalled()
+
+		typePhrase('delete 2 tasks')
+		expect(deleteButton().disabled).toBe(false)
+		const invalidate = vi.spyOn(queryClient, 'invalidateQueries')
+		pressCommandEnter()
+		await waitFor(() => expect(onClose).toHaveBeenCalled())
+		expect(api.tasks.deleteArchived).toHaveBeenCalledWith({ expectedCount: 2 }, { context: { silent: true } })
+		expect(showToast).toHaveBeenCalledWith('Deleted 2 tasks')
+		// Archived projects' task counts included the deleted tasks.
+		expect(invalidate).toHaveBeenCalledWith({ queryKey: ['projects', 'v2', 'deletePreview'] })
+	})
+
+	it('counts again when the server finds a different number, and needs the new phrase', async () => {
+		api.tasks.deleteArchived.mockRejectedValueOnce(
+			new ORPCError('COUNT_CHANGED', { defined: true, status: 409, data: { expected: 2, actual: 3 } }),
+		)
+		const { onClose } = renderArchivedDialog()
+		await counted('2 tasks')
+		api.tasks.deleteArchivedPreview.mockResolvedValue({ deletableCount: 3, skippedSharedCount: 0 })
+		typePhrase('delete 2 tasks')
+		pressCommandEnter()
+
+		expect(await counted('every archived task you own, 3 tasks')).toBeTruthy()
+		expect(screen.getByRole('alert').textContent).toBe(
+			'Your archived tasks changed since this opened. Check the new count, then delete again.',
+		)
+		expect(onClose).not.toHaveBeenCalled()
+		// The old phrase no longer confirms the new count.
+		expect(deleteButton('Delete 3 tasks').disabled).toBe(true)
+		typePhrase('delete 3 tasks')
+		fireEvent.click(deleteButton('Delete 3 tasks'))
+		await waitFor(() => expect(onClose).toHaveBeenCalled())
+		expect(api.tasks.deleteArchived).toHaveBeenLastCalledWith({ expectedCount: 3 }, { context: { silent: true } })
+	})
+
+	it('says "1 task" for a single task', async () => {
+		api.tasks.deleteArchivedPreview.mockResolvedValue({ deletableCount: 1, skippedSharedCount: 2 })
+		renderArchivedDialog()
+		expect(await screen.findByRole('heading', { name: 'Delete 1 archived task?' })).toBeTruthy()
+		expect(await counted('2 archived tasks shared with you are skipped.')).toBeTruthy()
+		expect(screen.getByLabelText('Type to confirm').getAttribute('placeholder')).toBe('delete 1 task')
+	})
+
+	it('offers nothing to delete when you own no archived tasks', async () => {
+		api.tasks.deleteArchivedPreview.mockResolvedValue({ deletableCount: 0, skippedSharedCount: 1 })
+		renderArchivedDialog()
+		expect(await counted('You have no archived tasks of your own to delete.')).toBeTruthy()
+		expect(screen.queryByLabelText('Type to confirm')).toBeNull()
+		expect(deleteButton('Delete tasks').disabled).toBe(true)
+	})
+
+	it('shows a failed count inside the dialog and never offers Delete', async () => {
+		api.tasks.deleteArchivedPreview.mockRejectedValue(new Error('UNAVAILABLE'))
+		renderArchivedDialog()
+		await waitFor(() =>
+			expect(screen.getByRole('alert').textContent).toBe('Could not count your archived tasks. Try again.'),
+		)
+		expect(deleteButton('Delete tasks').disabled).toBe(true)
 	})
 })

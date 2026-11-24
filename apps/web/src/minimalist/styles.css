@@ -1361,6 +1361,17 @@
 		font-weight: 600;
 		margin: 0 0 8px;
 	}
+	/* A settings group title with a control for the whole group at its end. */
+	.group-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		margin: 0 0 6px;
+	}
+	.group-head .h2 {
+		margin: 0;
+	}
 	.h1 {
 		font-size: 22px;
 		font-weight: 500;

@@ -22,7 +22,7 @@ import { sessionName } from '@/minimalist/lib/session-name'
 import { SHORTCUTS } from '@/minimalist/lib/shortcuts'
 import { type ThemePreference, useUi } from '@/minimalist/lib/ui-state'
 import { useAction } from '@/minimalist/lib/use-action'
-import { projectDeletePreviewQuery } from '@/minimalist/lib/use-delete'
+import { type DeleteTarget, projectDeletePreviewQuery } from '@/minimalist/lib/use-delete'
 import { useApi } from '@/orpc/client'
 import { archivedProjectsV2ListQuery, invalidateProjectsV2 } from '@/queries/projects-v2'
 
@@ -319,9 +319,13 @@ export function ArchivedSettingsPage() {
 	)
 	const { showToast } = useUi()
 	const action = useAction()
+	const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
 	const tasks = groups
 		.flatMap((group) => group.tasks.map((row) => ({ row, project: group.name })))
 		.sort((a, b) => b.row.lastActivity - a.row.lastActivity)
+	// Only the owner can delete a task. Shared ones (you ran a session in them) list here too, unarchive-only.
+	const owns = (row: (typeof tasks)[number]['row']) => Boolean(user && row.task.resource_owner_user_id === user.id)
+	const ownsAny = tasks.some(({ row }) => owns(row))
 	const archivedTaskIds = new Set(tasks.map(({ row }) => row.task.id))
 	// Sessions in an archived task come back with it, so only those in open tasks list on their own.
 	const sessions = [
@@ -346,13 +350,27 @@ export function ArchivedSettingsPage() {
 				</SettingsGroup>
 			) : null}
 			{tasks.length > 0 ? (
-				<SettingsGroup title="Tasks">
+				<SettingsGroup
+					title="Tasks"
+					action={
+						ownsAny ? (
+							<button
+								type="button"
+								className="btn sm ghost-danger"
+								onClick={() => setDeleting({ kind: 'archived-tasks' })}
+							>
+								Delete all archived tasks…
+							</button>
+						) : null
+					}
+				>
 					{tasks.map(({ row, project }) => (
 						<div key={row.task.id} className="srow">
 							<Link className="l" to="/tasks/$taskId" params={{ taskId: row.task.id }}>
 								<b>{row.task.name || 'Untitled task'}</b>
 								<span>
-									{project} · {formatAgo(row.lastActivity)}
+									{project}
+									{owns(row) ? '' : ' · shared with you'} · {formatAgo(row.lastActivity)}
 								</span>
 							</Link>
 							<button
@@ -372,6 +390,17 @@ export function ArchivedSettingsPage() {
 							>
 								Unarchive
 							</button>
+							{owns(row) ? (
+								<button
+									type="button"
+									className="btn ghost-danger"
+									onClick={() =>
+										setDeleting({ kind: 'task', taskId: row.task.id, title: row.task.name })
+									}
+								>
+									Delete…
+								</button>
+							) : null}
 						</div>
 					))}
 				</SettingsGroup>
@@ -404,6 +433,7 @@ export function ArchivedSettingsPage() {
 					))}
 				</SettingsGroup>
 			) : null}
+			{deleting ? <DeleteDialog target={deleting} onClose={() => setDeleting(null)} /> : null}
 		</>
 	)
 }

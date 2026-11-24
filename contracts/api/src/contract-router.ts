@@ -177,6 +177,8 @@ import { archiveTaskContract } from './api/tasks/archive'
 import { createTaskContract } from './api/tasks/create'
 import { createTaskDraftContract } from './api/tasks/createDraft'
 import { deleteTaskContract } from './api/tasks/delete'
+import { deleteArchivedTasksContract } from './api/tasks/delete-archived'
+import { deleteArchivedTasksPreviewContract } from './api/tasks/delete-archived-preview'
 import { launchTaskDraftContract } from './api/tasks/launch-draft'
 import { listTasksContract } from './api/tasks/list'
 import { reassignTaskOwnerContract } from './api/tasks/reassign-owner'
@@ -355,6 +357,8 @@ export const ApiContract = {
 		reassignOwner: reassignTaskOwnerContract,
 		archive: archiveTaskContract,
 		delete: deleteTaskContract,
+		deleteArchivedPreview: deleteArchivedTasksPreviewContract,
+		deleteArchived: deleteArchivedTasksContract,
 		list: listTasksContract,
 		v2: {
 			create: createTaskV2Contract,

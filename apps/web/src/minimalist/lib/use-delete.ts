@@ -8,13 +8,17 @@ import { useAction } from '@/minimalist/lib/use-action'
 import { useApi } from '@/orpc/client'
 import { invalidateProjectsV2 } from '@/queries/projects-v2'
 
-/** What a delete confirmation is about. Archived tasks in bulk widen this next. */
+/** What a delete confirmation is about. `archived-tasks` is every archived task the caller owns. */
 export type DeleteTarget =
 	| { kind: 'task'; taskId: string; title: string }
 	| { kind: 'project'; projectId: string; name: string }
+	| { kind: 'archived-tasks' }
 
 /** What a project delete takes with it, counted on the server. */
 export type ProjectDeletePreview = { taskCount: number; otherPeoplesTaskCount: number }
+
+/** What deleting all archived tasks takes, and the shared archived tasks it leaves, counted on the server. */
+export type ArchivedTasksDeletePreview = { deletableCount: number; skippedSharedCount: number }
 
 /** `count-changed`: the server counted different tasks than the confirmation showed, and deleted nothing. */
 export type DeleteOutcome = 'deleted' | 'count-changed' | 'failed'
@@ -34,7 +38,22 @@ export function useProjectDeletePreview(projectId: string) {
 	return useQuery(projectDeletePreviewQuery(api, projectId))
 }
 
+/** The server's count of your archived tasks for the bulk delete. Silent, like the project count. */
+export function archivedTasksDeletePreviewQuery(api: ApiQueries) {
+	return api.tasks.deleteArchivedPreview.queryOptions({ input: {}, context: { silent: true } })
+}
+
+export function useArchivedTasksDeletePreview() {
+	const { queryClient: api } = useApi()
+	return useQuery(archivedTasksDeletePreviewQuery(api))
+}
+
 const COUNT_CHANGED_COPY = 'Its tasks changed since this opened. Check the new count, then delete again.'
+const ARCHIVED_COUNT_CHANGED_COPY =
+	'Your archived tasks changed since this opened. Check the new count, then delete again.'
+
+/** "1 task", "12 tasks". */
+export const taskCount = (count: number) => (count === 1 ? '1 task' : `${count} tasks`)
 
 function isCountChanged(error: unknown): boolean {
 	return error instanceof ORPCError && isDefinedError(error) && error.code === 'COUNT_CHANGED'
@@ -46,16 +65,21 @@ function isCountChanged(error: unknown): boolean {
  * come from a query, which is refreshed. A failure is kept in `error` for the confirmation dialog to
  * show, because its backdrop covers toasts.
  *
- * A project delete carries the task count the owner confirmed. When the server counts differently
- * it deletes nothing and the outcome is `count-changed`, for the dialog to count again.
+ * A project delete, and a bulk delete of archived tasks, carries the task count the caller confirmed.
+ * When the server counts differently it deletes nothing and the outcome is `count-changed`, for the
+ * dialog to count again.
  */
 export function useDelete() {
-	const { client: api } = useApi()
+	const { client: api, queryClient: orpc } = useApi()
 	const queryClient = useQueryClient()
 	const { showToast } = useUi()
 	const navigate = useNavigate()
 	const openTaskId = useOpenTaskId()
 	const action = useAction('inline')
+
+	// Sync drops deleted tasks, but a project's task count (Archived page, delete dialog) is a query.
+	const refreshProjectTaskCounts = () =>
+		void queryClient.invalidateQueries({ queryKey: orpc.projects.v2.deletePreview.key() })
 
 	const removeTask = async (target: Extract<DeleteTarget, { kind: 'task' }>): Promise<DeleteOutcome> => {
 		const deleted = await action.run(
@@ -65,6 +89,7 @@ export function useDelete() {
 		if (!deleted) return 'failed'
 		// Leave the page before sync takes the task out from under it.
 		if (openTaskId === target.taskId) void navigate({ to: '/' })
+		refreshProjectTaskCounts()
 		showToast('Task deleted')
 		return 'deleted'
 	}
@@ -92,13 +117,33 @@ export function useDelete() {
 		return 'deleted'
 	}
 
+	const removeArchivedTasks = async (expectedCount: number): Promise<DeleteOutcome> => {
+		const failure = { countChanged: false }
+		const deleted = await action.run(
+			() => api.tasks.deleteArchived({ expectedCount }, { context: { silent: true } }),
+			(error) => {
+				failure.countChanged = isCountChanged(error)
+				return failure.countChanged
+					? ARCHIVED_COUNT_CHANGED_COPY
+					: 'Could not delete your archived tasks. Try again.'
+			},
+		)
+		if (!deleted) return failure.countChanged ? 'count-changed' : 'failed'
+		// Sync takes the tasks off the Archived page.
+		refreshProjectTaskCounts()
+		showToast(`Deleted ${taskCount(expectedCount)}`)
+		return 'deleted'
+	}
+
 	const remove = (target: DeleteTarget, expected?: number): Promise<DeleteOutcome> => {
 		switch (target.kind) {
 			case 'task':
 				return removeTask(target)
+			// The dialogs only offer Delete once the preview has counted.
 			case 'project':
-				// The dialog only offers Delete once the preview has counted.
 				return expected === undefined ? Promise.resolve('failed') : removeProject(target, expected)
+			case 'archived-tasks':
+				return expected === undefined ? Promise.resolve('failed') : removeArchivedTasks(expected)
 		}
 	}
 

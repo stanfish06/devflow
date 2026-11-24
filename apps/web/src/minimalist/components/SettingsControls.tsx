@@ -3,10 +3,27 @@ import type { ReactNode } from 'react'
 import { selectWithArrows } from '@/minimalist/lib/roving'
 
 /** The pieces every settings page is built from: titled groups of label-and-control rows. */
-export function SettingsGroup({ title, children }: { title?: string; children: ReactNode }) {
+export function SettingsGroup({
+	title,
+	action,
+	children,
+}: {
+	title?: string
+	/** A control for the whole group, at the end of its title row. */
+	action?: ReactNode
+	children: ReactNode
+}) {
+	const heading = title ? <h2 className="h2">{title}</h2> : null
 	return (
 		<section>
-			{title ? <h2 className="h2">{title}</h2> : null}
+			{action ? (
+				<div className="group-head">
+					{heading}
+					{action}
+				</div>
+			) : (
+				heading
+			)}
 			<div className="group">{children}</div>
 		</section>
 	)
