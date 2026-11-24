@@ -569,6 +569,11 @@
 		background: transparent;
 		color: var(--fg-2);
 	}
+	.btn.danger {
+		background: var(--del);
+		color: #fff;
+		border-color: transparent;
+	}
 	.btn.sm {
 		height: 24px;
 	}
@@ -1140,6 +1145,10 @@
 	.mi .i {
 		color: var(--fg-2);
 	}
+	.mi.danger,
+	.mi.danger .i {
+		color: var(--del);
+	}
 	.sep {
 		height: 1px;
 		background: var(--line);
@@ -1397,6 +1406,10 @@
 	}
 	.btn.primary:hover {
 		background: var(--accent);
+		opacity: 0.9;
+	}
+	.btn.danger:hover:not(:disabled) {
+		background: var(--del);
 		opacity: 0.9;
 	}
 	.btn:disabled,

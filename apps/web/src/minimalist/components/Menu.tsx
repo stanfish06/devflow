@@ -129,6 +129,7 @@ export function MenuItem({
 	disabled,
 	onSelect,
 	kbd,
+	danger,
 }: {
 	icon?: ReactNode
 	label: ReactNode
@@ -138,11 +139,13 @@ export function MenuItem({
 	onSelect?: () => void
 	/** A shortcut hint on the right, like ⇧⌘A. */
 	kbd?: string
+	/** A destructive action, like Delete, drawn in the destructive colour. */
+	danger?: boolean
 }) {
 	return (
 		<button
 			type="button"
-			className="mi"
+			className={danger ? 'mi danger' : 'mi'}
 			aria-disabled={disabled}
 			disabled={disabled}
 			onClick={() => {

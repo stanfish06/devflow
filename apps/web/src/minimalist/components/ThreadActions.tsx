@@ -4,6 +4,8 @@ import { MoreHorizontal } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 import { useSettingsStore } from '@/hooks/stores/settingsStore'
+import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
+import { DeleteDialog } from '@/minimalist/components/DeleteDialog'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from '@/minimalist/components/Menu'
 import { PromptAccessDialog } from '@/minimalist/components/PromptAccessDialog'
 import { TextDialog } from '@/minimalist/components/TextDialog'
@@ -19,6 +21,7 @@ import { getSessionShareUrl } from '@/utils/sharing-links'
 export function ThreadActions({ session }: { session: Session }) {
 	const taskId = session.task_id
 	const { client: api } = useApi()
+	const { user } = useAuth()
 	const navigate = useNavigate()
 	const { task } = useTask(taskId)
 	const autoAdvance = useTaskAutoAdvance(taskId)
@@ -28,8 +31,10 @@ export function ThreadActions({ session }: { session: Session }) {
 	const [open, setOpen] = useState(false)
 	const [rename, setRename] = useState<'task' | 'session' | null>(null)
 	const [sharing, setSharing] = useState(false)
+	const [deleting, setDeleting] = useState(false)
 	const { canManageSession } = useSessionAccess(session)
 	const sharingEnabled = useSettingsStore((state) => state.orgSettings.multiplayerPromptingEnabled)
+	const canDeleteTask = Boolean(task && user && task.resource_owner_user_id === user.id)
 	const archive = (kind: 'task' | 'session', archived: boolean) => {
 		setOpen(false)
 		void archiver.archive(
@@ -119,8 +124,27 @@ export function ThreadActions({ session }: { session: Session }) {
 						)
 					}}
 				/>
+				{canDeleteTask ? (
+					<>
+						<MenuSeparator />
+						<MenuItem
+							label="Delete task…"
+							danger
+							onSelect={() => {
+								setOpen(false)
+								setDeleting(true)
+							}}
+						/>
+					</>
+				) : null}
 			</Menu>
 			{sharing ? <PromptAccessDialog session={session} onClose={() => setSharing(false)} /> : null}
+			{deleting && task ? (
+				<DeleteDialog
+					target={{ kind: 'task', taskId: task.id, title: task.name }}
+					onClose={() => setDeleting(false)}
+				/>
+			) : null}
 			{rename ? (
 				<TextDialog
 					title={rename === 'task' ? 'Rename task' : 'Rename session'}

@@ -174,6 +174,7 @@ import { upsertTaskUserSettingsContract } from './api/task-user-settings/upsert'
 import { archiveTaskContract } from './api/tasks/archive'
 import { createTaskContract } from './api/tasks/create'
 import { createTaskDraftContract } from './api/tasks/createDraft'
+import { deleteTaskContract } from './api/tasks/delete'
 import { launchTaskDraftContract } from './api/tasks/launch-draft'
 import { listTasksContract } from './api/tasks/list'
 import { reassignTaskOwnerContract } from './api/tasks/reassign-owner'
@@ -351,6 +352,7 @@ export const ApiContract = {
 		update: updateTaskContract,
 		reassignOwner: reassignTaskOwnerContract,
 		archive: archiveTaskContract,
+		delete: deleteTaskContract,
 		list: listTasksContract,
 		v2: {
 			create: createTaskV2Contract,

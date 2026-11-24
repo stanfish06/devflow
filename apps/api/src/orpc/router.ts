@@ -171,6 +171,7 @@ import { upsertTaskUserSettingsProcedure } from './api/task-user-settings/upsert
 import { archiveTaskProcedure } from './api/tasks/archive'
 import { createTaskProcedure } from './api/tasks/create'
 import { createTaskDraftEffectProcedure } from './api/tasks/createDraft.effect'
+import { deleteTaskEffectProcedure } from './api/tasks/delete.effect'
 import { launchTaskDraftProcedure } from './api/tasks/launch-draft'
 import { listTasksProcedure } from './api/tasks/list.effect'
 import { reassignTaskOwnerProcedure } from './api/tasks/reassign-owner'
@@ -348,6 +349,7 @@ export const apiRouter = os.router({
 		update: updateTaskProcedure,
 		reassignOwner: reassignTaskOwnerProcedure,
 		archive: archiveTaskProcedure,
+		delete: deleteTaskEffectProcedure,
 		list: listTasksProcedure,
 		v2: {
 			create: createTaskV2Procedure,
