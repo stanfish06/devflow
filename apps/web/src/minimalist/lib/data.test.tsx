@@ -541,7 +541,15 @@ describe('project/task/session membership', () => {
 		projectsList.mockImplementation(async (archived) => ({
 			projects: archived
 				? []
-				: [{ id: 'actual-project', name: 'Actual project', description: null, repositories: [] }],
+				: [
+						{
+							id: 'actual-project',
+							name: 'Actual project',
+							description: null,
+							repositories: [],
+							checkoutHostIds: [],
+						},
+					],
 		}))
 		workspaceStatus.mockResolvedValue({ workspace: { projectId: 'actual-project' } })
 		const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -615,6 +623,99 @@ describe('project/task/session membership', () => {
 		const everyone = renderHook(() => useTaskTree(false, 'everyone'), { wrapper })
 		await waitFor(() => expect(everyone.result.current.recent).toHaveLength(3))
 		expect(everyone.result.current.groups.map((group) => group.name)).toEqual(['devflow', 'other', 'syncopate'])
+	})
+})
+
+describe('host facts for masking by working host', () => {
+	beforeEach(() => useBrowserAuth.mockReturnValue({ user: { id: 'me' } }))
+
+	const task = (id: string, fields: Record<string, unknown> = {}) => ({
+		id,
+		name: id,
+		workspace_id: null,
+		project_id: null,
+		archived: false,
+		is_draft: false,
+		resource_owner_user_id: 'me',
+		default_working_directory: null,
+		updated_at: 1,
+		...fields,
+	})
+	const session = (id: string, taskId: string, hostId: string, at: number, fields: Record<string, unknown> = {}) => ({
+		id,
+		task_id: taskId,
+		host_id: hostId,
+		created_by: 'me',
+		status: 'ready_for_input',
+		archived: false,
+		created_at: at,
+		updated_at: at,
+		...fields,
+	})
+	const project = (id: string, checkoutHostIds: string[]) => ({
+		id,
+		name: id,
+		description: null,
+		repositories: [],
+		resourceOwnerUserId: 'me',
+		checkoutHostIds,
+	})
+
+	it('binds projects to their checkout hosts, folders to where they ran, and leaves the rest unbound', async () => {
+		const tasks = trackedCollection([
+			task('in-checkout', { project_id: 'checkout' }),
+			task('in-clone', { project_id: 'clone' }),
+			task('folder-a', { default_working_directory: '/code/app' }),
+			task('folder-b', { default_working_directory: '/other/app' }),
+			task('never-ran', { default_working_directory: '/code/idle' }),
+		])
+		const sessions = trackedCollection([
+			// A project's sessions don't bind it: its checkouts do.
+			session('s1', 'in-checkout', 'linux-box', 1),
+			session('s2', 'in-clone', 'linux-box', 1),
+			session('s3', 'folder-a', 'mac-studio', 1),
+			session('s4', 'folder-b', 'linux-box', 2),
+			// A draft never ran anywhere.
+			session('s5', 'never-ran', 'mac-studio', 1, { status: 'draft' }),
+		])
+		useSync.mockReturnValue({ tasksCollection: tasks.collection, sessionsCollection: sessions.collection })
+		projectsList.mockImplementation(async (archived) => ({
+			projects: archived
+				? []
+				: [project('checkout', ['mac-studio']), project('clone', []), project('empty', ['b', 'a'])],
+		}))
+		const { result } = renderHook(() => useTaskTree(), { wrapper: withQueryClient })
+		await waitFor(() => expect(result.current.isReady).toBe(true))
+		await waitFor(() => expect(result.current.groups.find((group) => group.key === 'empty')).toBeDefined())
+		const hostIds = (key: string) => result.current.groups.find((group) => group.key === key)?.hostIds
+
+		expect(hostIds('checkout')).toEqual(['mac-studio'])
+		expect(hostIds('clone')).toBeNull()
+		// A project with no tasks yet is still bound by its checkouts.
+		expect(hostIds('empty')).toEqual(['b', 'a'])
+		// Both folder tasks group under the repository name "app", so the group ran on both hosts.
+		expect(hostIds('dir:app')).toEqual(['linux-box', 'mac-studio'])
+		expect(hostIds('dir:idle')).toBeNull()
+	})
+
+	it('records where each task last ran', async () => {
+		const tasks = trackedCollection([
+			task('moved', { default_working_directory: '/code/app' }),
+			task('idle', { default_working_directory: '/code/app' }),
+		])
+		const sessions = trackedCollection([
+			session('first', 'moved', 'mac-studio', 1),
+			session('latest', 'moved', 'linux-box', 5),
+			session('draft', 'idle', 'mac-studio', 6, { status: 'draft' }),
+		])
+		useSync.mockReturnValue({ tasksCollection: tasks.collection, sessionsCollection: sessions.collection })
+		projectsList.mockResolvedValue({ projects: [] })
+		const { result } = renderHook(() => useTaskTree(), { wrapper: withQueryClient })
+		await waitFor(() => expect(result.current.recent).toHaveLength(2))
+		const latestHost = (id: string) => result.current.recent.find((row) => row.task.id === id)?.latestHostId
+
+		expect(latestHost('moved')).toBe('linux-box')
+		expect(latestHost('idle')).toBeNull()
 	})
 })
 

@@ -41,6 +41,8 @@ export type TaskRow = {
 	lastActivity: number
 	/** The project or repository it sits under in the sidebar. */
 	projectName: string
+	/** Where its latest session that ran (not a draft) ran; null when it has never run. */
+	latestHostId: string | null
 }
 
 export type ProjectGroup = {
@@ -53,6 +55,12 @@ export type ProjectGroup = {
 	mine: boolean
 	/** What a hover shows: a directory group's path, or a project's description and repositories. */
 	detail?: string
+	/**
+	 * The hosts the group is bound to, for masking by working host. A project: your hosts with an
+	 * existing checkout. Any other group: the hosts its tasks' sessions ran on. Null when not bound to
+	 * any host (a clone-on-demand project, or tasks that never ran), so it shows on every host.
+	 */
+	hostIds: string[] | null
 }
 
 /** Mine is what the standard sidebar shows: tasks you own or started a session in. */
@@ -129,6 +137,9 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 	const allProjects = (projects.data ?? []).concat(archivedProjects.data?.projects ?? [])
 	const projectNames = new Map(allProjects.map((project) => [project.id, project.name]))
 	const projectDetails = new Map(allProjects.map((project) => [project.id, projectDetail(project)]))
+	const projectHosts = new Map(allProjects.map((project) => [project.id, checkoutHosts(project)]))
+	// Groups that aren't projects are bound to wherever their tasks' sessions ran.
+	const sessionHosts = new Map<string, Set<string>>()
 	const ownProjects = new Set(
 		allProjects.filter((project) => project.resourceOwnerUserId === user?.id).map((project) => project.id),
 	)
@@ -173,6 +184,7 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 			),
 			lastActivity: Math.max(toMs(task.updated_at), latest ? sessionActivity(latest) : 0),
 			projectName: name,
+			latestHostId: taskSessions.find((session) => session.status !== 'draft')?.host_id ?? null,
 		}
 		const group = groups.get(key) ?? {
 			key,
@@ -182,9 +194,19 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 			workspaceReadFailed: !projectId && failedWorkspaceTasks.has(task.id),
 			mine: !projectId || ownProjects.has(projectId),
 			detail: projectId ? projectDetails.get(projectId) : directory || undefined,
+			hostIds: projectId ? (projectHosts.get(projectId) ?? null) : null,
 		}
 		group.tasks.push(row)
 		groups.set(key, group)
+		if (!projectId) {
+			const ran = sessionHosts.get(key) ?? new Set<string>()
+			for (const session of history) if (session.status !== 'draft' && session.host_id) ran.add(session.host_id)
+			sessionHosts.set(key, ran)
+		}
+	}
+	for (const [key, ran] of sessionHosts) {
+		const group = groups.get(key)
+		if (group && ran.size > 0) group.hostIds = [...ran].sort()
 	}
 	for (const project of archived ? [] : (projects.data ?? [])) {
 		if (!groups.has(project.id))
@@ -195,6 +217,7 @@ export function useTaskTree(archived = false, scope: TaskTreeScope = 'mine') {
 				tasks: [],
 				mine: ownProjects.has(project.id),
 				detail: projectDetail(project),
+				hostIds: checkoutHosts(project),
 			})
 	}
 	// Projects keep their place by name, so starting work doesn't move them; tasks inside go newest first.
@@ -224,6 +247,11 @@ function projectDetail(project: {
 	]
 		.filter(Boolean)
 		.join('\n')
+}
+
+/** A project is bound to the hosts with an existing checkout; with none it clones on demand anywhere. */
+function checkoutHosts(project: { checkoutHostIds: readonly string[] }): string[] | null {
+	return project.checkoutHostIds.length > 0 ? [...project.checkoutHostIds] : null
 }
 
 /** A task whose workspace setup failed isn't running: it waits on a retry. */

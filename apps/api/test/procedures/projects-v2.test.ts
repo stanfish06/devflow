@@ -306,6 +306,141 @@ describe('projects v2', () => {
 		})
 	})
 
+	describe('checkout hosts', () => {
+		async function addHost(actor: { organizationId: string; userId: string }) {
+			const hostId = `host-${randomUUID()}`
+			await db.insert(onlineHosts).values({
+				organization_id: actor.organizationId,
+				user_id: actor.userId,
+				host_id: hostId,
+				status: 'online',
+			})
+			return hostId
+		}
+
+		async function listed(context: ReturnType<typeof createMockApiContext>, projectId: string) {
+			const { projects: listedProjects } = await call(listProjects, { archived: false }, { context })
+			return listedProjects.find((project) => project.id === projectId)
+		}
+
+		test('lists the hosts with an existing checkout, and none for a clone-on-demand project', async () => {
+			const actor = await setupActor()
+			const otherRepository = {
+				...repository,
+				remoteUrl: 'git@github.com:devflow/checkout-only.git',
+				repositoryIdentity: 'github.com/devflow/checkout-only',
+			}
+			const managed = await call(
+				createProject,
+				{ name: 'Clone on demand', private: false, repositories: [repository] },
+				{ context: actor.context },
+			)
+			const checkout = await call(
+				createProject,
+				{
+					name: 'Checkout only',
+					private: false,
+					hostId: actor.hostId,
+					repositories: [otherRepository],
+					repositoryPaths: { [otherRepository.repositoryIdentity]: '/tmp/checkout-only' },
+				},
+				{ context: actor.context },
+			)
+			expect(checkout.project.checkoutHostIds).toEqual([actor.hostId])
+			expect(managed.project.checkoutHostIds).toEqual([])
+
+			// A managed clone on another host is not a checkout; a second checkout is.
+			const cloneHost = await addHost(actor)
+			const secondCheckoutHost = await addHost(actor)
+			await db.insert(repositoryLocationsForUserForHost).values([
+				{
+					organization_id: actor.organizationId,
+					user_id: actor.userId,
+					host_id: cloneHost,
+					repository_identity: repository.repositoryIdentity,
+					source_kind: 'managed_clone',
+					source_path: null,
+				},
+				{
+					organization_id: actor.organizationId,
+					user_id: actor.userId,
+					host_id: secondCheckoutHost,
+					repository_identity: otherRepository.repositoryIdentity,
+					source_kind: 'filesystem',
+					source_path: '/srv/checkout-only',
+				},
+			])
+
+			expect((await listed(actor.context, managed.project.id))?.checkoutHostIds).toEqual([])
+			expect((await listed(actor.context, checkout.project.id))?.checkoutHostIds).toEqual(
+				[actor.hostId, secondCheckoutHost].sort(),
+			)
+			const fetched = await call(getProject, { projectId: checkout.project.id }, { context: actor.context })
+			expect(fetched.project.checkoutHostIds).toEqual([actor.hostId, secondCheckoutHost].sort())
+		})
+
+		test('counts only the caller’s own checkouts on hosts that are still registered', async () => {
+			const owner = await setupActor()
+			const created = await call(
+				createProject,
+				{
+					name: 'Shared checkout',
+					private: false,
+					hostId: owner.hostId,
+					repositories: [repository],
+					repositoryPaths: { [repository.repositoryIdentity]: '/tmp/shared-checkout' },
+				},
+				{ context: owner.context },
+			)
+			const collaboratorId = `user-${randomUUID()}`
+			await db
+				.insert(userSettings)
+				.values({ organization_id: owner.organizationId, user_id: collaboratorId, projects_v2_enabled: true })
+			const collaborator = { organizationId: owner.organizationId, userId: collaboratorId }
+			const collaboratorContext = createMockApiContext({
+				auth: {
+					userId: collaboratorId,
+					organizationId: owner.organizationId,
+					workosOrganizationId: `workos-${owner.organizationId}`,
+					role: '',
+					roles: [],
+					permissions: [],
+					entitlements: [],
+					sessionId: 'session',
+				},
+				services,
+			})
+
+			// The owner's checkout belongs to the owner: the collaborator sees a project that runs anywhere.
+			expect((await listed(collaboratorContext, created.project.id))?.checkoutHostIds).toEqual([])
+			expect((await listed(owner.context, created.project.id))?.checkoutHostIds).toEqual([owner.hostId])
+
+			const collaboratorHost = await addHost(collaborator)
+			await db.insert(repositoryLocationsForUserForHost).values({
+				organization_id: owner.organizationId,
+				user_id: collaboratorId,
+				host_id: collaboratorHost,
+				repository_identity: repository.repositoryIdentity,
+				source_kind: 'filesystem',
+				source_path: '/home/collaborator/syncopate',
+			})
+			expect((await listed(collaboratorContext, created.project.id))?.checkoutHostIds).toEqual([collaboratorHost])
+			expect((await listed(owner.context, created.project.id))?.checkoutHostIds).toEqual([owner.hostId])
+
+			// A deleted host registration no longer pins the project to it.
+			await db
+				.delete(onlineHosts)
+				.where(
+					and(
+						eq(onlineHosts.organization_id, owner.organizationId),
+						eq(onlineHosts.user_id, owner.userId),
+						eq(onlineHosts.host_id, owner.hostId),
+					),
+				)
+			expect((await listed(owner.context, created.project.id))?.checkoutHostIds).toEqual([])
+		})
+	})
+
 	test('archives by tombstone and retains project and location rows', async () => {
 		const actor = await setupActor()
 		const created = await call(

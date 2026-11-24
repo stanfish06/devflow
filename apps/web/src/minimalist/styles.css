@@ -354,6 +354,19 @@
 	.child .meta.draft {
 		color: var(--fg-2);
 	}
+	/* Where a task last ran, when that isn't the working host: muted, so it informs without competing. */
+	.child .host-tag {
+		flex: none;
+		max-width: 88px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 0 6px;
+		border: 1px solid var(--line-2);
+		border-radius: 999px;
+		color: var(--fg-3);
+		font-size: 11px;
+		line-height: 16px;
+	}
 	.more {
 		color: var(--fg-3);
 		padding-left: 29px;

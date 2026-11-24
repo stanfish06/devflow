@@ -19,8 +19,19 @@ import { useTaskUnread, useUnreadActions } from '@/minimalist/lib/use-unread'
 import { useApi } from '@/orpc/client'
 import { getTaskShareUrl } from '@/utils/sharing-links'
 
-/** A task in the sidebar: its name and state, archive on hover, and a menu on right-click or "More". */
-export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean }) {
+/**
+ * A task in the sidebar: its name and state, archive on hover, and a menu on right-click or "More".
+ * `elsewhere` names the host its latest session ran on, when that isn't the working host.
+ */
+export function TaskItem({
+	row,
+	selected,
+	elsewhere = null,
+}: {
+	row: TaskRow
+	selected: boolean
+	elsewhere?: string | null
+}) {
 	const { client: api } = useApi()
 	const { user } = useAuth()
 	const { closeSidebarOnNarrow } = useUi()
@@ -61,6 +72,14 @@ export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean })
 				{/* Someone else's task, which you started a session in, shows whose it is. */}
 				{user && row.task.resource_owner_user_id !== user.id ? (
 					<WiredUserAvatar userId={row.task.resource_owner_user_id} size={16} />
+				) : null}
+				{elsewhere ? (
+					<>
+						<span className="host-tag" title={`Last ran on ${elsewhere}`} aria-hidden="true">
+							{elsewhere}
+						</span>
+						<span className="sr-only">, last ran on {elsewhere}</span>
+					</>
 				) : null}
 				{/* The mark hides while the row has focus, so its meaning goes in the link's name. */}
 				{status ? <span className="sr-only">, {status}</span> : null}

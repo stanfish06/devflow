@@ -23,6 +23,7 @@ import {
 import { projectReadableByActor } from './project-authorization'
 import { generateProjectWorkspaceId } from './project-workspace-id'
 import {
+	readCheckoutHostsWithExecutor,
 	readRepositoryLocationsWithExecutor,
 	repositoryLocationsByIdentity,
 	selectRepositoryLocationsWithExecutor,
@@ -47,7 +48,7 @@ export const listProjects = Effect.fn('project_workspace.list_projects')(functio
 				.orderBy(asc(projects.name), asc(projects.id)),
 		),
 	)
-	return yield* Effect.forEach(rows, parseProject)
+	return yield* projectsForActor(postgres, input.actor, rows)
 })
 
 export const getProject = Effect.fn('project_workspace.get_project')(function* (input: {
@@ -78,7 +79,7 @@ export const getProject = Effect.fn('project_workspace.get_project')(function* (
 		})
 	}
 
-	return { project: yield* parseProject(row), location }
+	return { project: yield* projectForActor(postgres, input.actor, row), location }
 })
 
 export const createProject = Effect.fn('project_workspace.create_project')(function* (input: {
@@ -119,7 +120,7 @@ export const createProject = Effect.fn('project_workspace.create_project')(funct
 				if (!projectRow) return yield* new ProjectPersistenceUnavailable({ operation: 'create_project' })
 
 				if (input.initialLocation === undefined) {
-					return { project: yield* parseProject(projectRow), location: null }
+					return { project: yield* projectForActor(transaction, input.actor, projectRow), location: null }
 				}
 				yield* selectRepositoryLocationsWithExecutor(transaction, {
 					...input.actor,
@@ -131,7 +132,7 @@ export const createProject = Effect.fn('project_workspace.create_project')(funct
 					project: projectRow,
 					hostId: input.initialLocation.hostId,
 				})
-				return { project: yield* parseProject(projectRow), location }
+				return { project: yield* projectForActor(transaction, input.actor, projectRow), location }
 			}),
 		),
 	)
@@ -169,7 +170,7 @@ export const updateProject = Effect.fn('project_workspace.update_project')(funct
 						.returning(),
 				)
 				if (!row) return yield* new ProjectNotFound({ projectId: input.projectId })
-				return yield* parseProject(row)
+				return yield* projectForActor(transaction, input.actor, row)
 			}),
 		),
 	)
@@ -200,7 +201,7 @@ export const archiveProject = Effect.fn('project_workspace.archive_project')(fun
 						.returning(),
 				)
 				if (!row) return yield* new ProjectNotFound({ projectId: input.projectId })
-				return yield* parseProject(row)
+				return yield* projectForActor(transaction, input.actor, row)
 			}),
 		),
 	)
@@ -437,21 +438,53 @@ const parseStoredProject = Effect.fn('project_workspace.parse_stored_project')(f
 	return parsed.data
 })
 
-const parseProject = Effect.fn('project_workspace.parse_project')(function* (row: typeof projects.$inferSelect) {
-	const parsed = yield* parseStoredProject(row)
-	return {
-		id: parsed.id,
-		organizationId: parsed.organization_id,
-		name: parsed.name,
-		description: parsed.description,
-		private: parsed.private,
-		createdBy: parsed.created_by,
-		resourceOwnerUserId: parsed.resource_owner_user_id,
-		repositories: parsed.repositories,
-		archived: parsed.archived,
-		createdAt: Number(parsed.created_at),
-		updatedAt: Number(parsed.updated_at),
-	} satisfies ProjectV2
+/**
+ * Projects as the actor sees them, each with the actor's hosts that hold an existing checkout of
+ * any of its repositories. One location read covers every row.
+ */
+const projectsForActor = Effect.fn('project_workspace.projects_for_actor')(function* (
+	db: PostgresTransaction,
+	actor: ProjectActorContext,
+	rows: readonly (typeof projects.$inferSelect)[],
+) {
+	const parsed = yield* Effect.forEach(rows, parseStoredProject)
+	const checkoutHosts = yield* readCheckoutHostsWithExecutor(db, {
+		...actor,
+		repositoryIdentities: parsed.flatMap((project) =>
+			project.repositories.map((repository) => repository.repositoryIdentity),
+		),
+	})
+	return parsed.map((project) => {
+		const checkoutHostIds = [
+			...new Set(
+				project.repositories.flatMap((repository) => checkoutHosts.get(repository.repositoryIdentity) ?? []),
+			),
+		].sort()
+		return {
+			id: project.id,
+			organizationId: project.organization_id,
+			name: project.name,
+			description: project.description,
+			private: project.private,
+			createdBy: project.created_by,
+			resourceOwnerUserId: project.resource_owner_user_id,
+			repositories: project.repositories,
+			archived: project.archived,
+			createdAt: Number(project.created_at),
+			updatedAt: Number(project.updated_at),
+			checkoutHostIds,
+		} satisfies ProjectV2
+	})
+})
+
+const projectForActor = Effect.fn('project_workspace.project_for_actor')(function* (
+	db: PostgresTransaction,
+	actor: ProjectActorContext,
+	row: typeof projects.$inferSelect,
+) {
+	const [project] = yield* projectsForActor(db, actor, [row])
+	if (!project) return yield* new ProjectPersistenceUnavailable({ operation: 'parse_project' })
+	return project
 })
 
 const projectLocationProjection = Effect.fn('project_workspace.project_location_projection')(function* (
