@@ -261,7 +261,8 @@ export function launchError(error: unknown): string {
 		.join(' ')
 }
 
-function launchFailure(error: unknown): string | null {
+/** The reason a launch failed, when the server gives one you can act on. */
+export function launchFailure(error: unknown): string | null {
 	const known = getTaskConflictMessage(error) ?? getTicketLookupError(error)?.message
 	if (known) return known
 	const code = error instanceof ORPCError ? error.code : null
