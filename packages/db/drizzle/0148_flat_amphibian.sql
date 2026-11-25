@@ -1,0 +1,1 @@
+CREATE INDEX "conversation_events_user_messages_idx" ON "conversation_events" USING btree ("organization_id","user_id","created_at") WHERE "conversation_events"."role" = 'user' AND "conversation_events"."event_type" = 'message' AND "conversation_events"."user_id" IS NOT NULL;

@@ -6,6 +6,7 @@ const IDLE = new Set([
 	'fork',
 	'new',
 	'prs',
+	'usage',
 	'settings',
 	'toggle-minimalist',
 ])

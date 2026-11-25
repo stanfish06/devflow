@@ -10,6 +10,7 @@ describe('minimalist route boundary', () => {
 		'/pull-requests',
 		'/board',
 		'/artifacts',
+		'/usage',
 		'/settings/experiments',
 		'/settings/daemons',
 		'/archive/tasks',
@@ -17,15 +18,12 @@ describe('minimalist route boundary', () => {
 	])('supports %s', (path) => {
 		expect(supportsMinimalistLayout(path)).toBe(true)
 	})
-	it.each([
-		'/auth/signin',
-		'/shared/artifacts/key',
-		'/sessions',
-		'/tasks/new',
-		'/sessions/draft',
-	])('preserves the existing route tree for %s', (path) => {
-		expect(supportsMinimalistLayout(path)).toBe(false)
-	})
+	it.each(['/auth/signin', '/shared/artifacts/key', '/sessions', '/tasks/new', '/sessions/draft'])(
+		'preserves the existing route tree for %s',
+		(path) => {
+			expect(supportsMinimalistLayout(path)).toBe(false)
+		},
+	)
 	it.each(['comment', 'commentId', 'tab'])('preserves %s deep links and task lists', (key) => {
 		expect(supportsMinimalistLayout('/tasks/task-id', { [key]: 'value' })).toBe(false)
 	})

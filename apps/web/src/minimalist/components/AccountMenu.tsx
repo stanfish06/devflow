@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Archive, Building2, LogOut, Settings } from 'lucide-react'
+import { Activity, Archive, Building2, LogOut, Settings } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
@@ -12,7 +12,10 @@ import { shortcutHint } from '@/minimalist/lib/shortcuts'
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useApi } from '@/orpc/client'
 
-/** The sidebar's footer: who you are and which host is online; its menu has usage, settings and organizations. */
+/**
+ * The sidebar's footer: who you are and which host is online. Its menu has the host's plan limits, with
+ * your usage history right under them, then settings and organizations.
+ */
 export function AccountMenu() {
 	const { user, signOut, organizationId, switchOrganization } = useAuth()
 	const { queryClient: orpc } = useApi()
@@ -25,7 +28,7 @@ export function AccountMenu() {
 	const [open, setOpen] = useState(false)
 	const onlineHost = hosts.find((host) => host.online)
 	const usageHost = onlineHost ?? hosts[0]
-	const go = (to: '/settings/general' | '/settings/archived') => {
+	const go = (to: '/usage' | '/settings/general' | '/settings/archived') => {
 		setOpen(false)
 		void navigate({ to })
 	}
@@ -46,9 +49,15 @@ export function AccountMenu() {
 					<>
 						<MenuLabel>Usage on {usageHost.name}</MenuLabel>
 						<UsageBars limits={usageHost.host.coding_agent_usage_limits?.claude} />
-						<MenuSeparator />
 					</>
 				) : null}
+				{/* What you're using right now, then how you've used it over time. */}
+				<MenuItem
+					icon={<Activity className="i sm" strokeWidth={1.6} />}
+					label="Usage history"
+					onSelect={() => go('/usage')}
+				/>
+				<MenuSeparator />
 				<MenuItem
 					icon={<Settings className="i sm" strokeWidth={1.6} />}
 					label="Settings"

@@ -116,6 +116,10 @@ describe('processClaudeEvents', () => {
 		mockSessionsEventsCreate.mockClear()
 		mockSessionsUsageRecord.mockClear()
 		mockSessionsUsageRecord.mockImplementation(async () => ({ recorded: 1 }))
+		mockSessionsUpdate.mockImplementation(async () => ({
+			success: true,
+			transactionId: `mock-txid-${Date.now()}`,
+		}))
 	})
 
 	test('releases an idle publication worker when the SDK output fails', async () => {
@@ -499,6 +503,100 @@ describe('processClaudeEvents', () => {
 					usageReportKey: expect.any(String),
 				}),
 			)
+		})
+
+		describe('an interrupted run', () => {
+			const interruptedResult = {
+				type: 'result',
+				subtype: 'error_during_execution',
+				uuid: 'interrupted-result-uuid',
+				total_cost_usd: 0.12,
+				modelUsage: {
+					'claude-opus-4-5': {
+						inputTokens: 400,
+						outputTokens: 100,
+						cacheReadInputTokens: 600,
+						cacheCreationInputTokens: 100,
+					},
+				},
+			}
+			const usageOnlyUpdates = () =>
+				mockSessionsUpdate.mock.calls
+					.map(([input]) => input as Record<string, unknown>)
+					.filter((input) => input.usageReportKey !== undefined)
+
+			const runInterrupted = async (events: Array<{ type: string; [key: string]: unknown }>) => {
+				const interruptState = await createInterruptState()
+				await Effect.runPromise(interruptState.markInterrupted(null))
+				const session = createTestSession()
+				await processEventsWithTestStreamProducer(
+					createMockEventIterator(events),
+					session,
+					mockOrpc as unknown as SessionORPCClient,
+					undefined,
+					interruptState,
+				)
+				return session
+			}
+
+			test('records the usage first, then adds it to the session badge without a status', async () => {
+				const callOrder: string[] = []
+				mockSessionsUsageRecord.mockImplementation(async () => {
+					callOrder.push('record')
+					return { recorded: 1 }
+				})
+				mockSessionsUpdate.mockImplementation(async (input?: unknown) => {
+					if ((input as { usageReportKey?: string }).usageReportKey !== undefined) callOrder.push('update')
+					return { success: true, transactionId: 'mock-txid' }
+				})
+
+				const session = await runInterrupted([interruptedResult])
+
+				expect(callOrder).toEqual(['record', 'update'])
+				expect(mockSessionsUsageRecord).toHaveBeenCalledWith(
+					expect.objectContaining({ sessionId: session.id, reportKey: 'interrupted-result-uuid' }),
+				)
+				// Same report key as the ledger row, so a retry can't double-count the badge.
+				expect(usageOnlyUpdates()).toEqual([
+					{
+						sessionId: session.id,
+						totalCostUsd: 0.12,
+						modelUsage: {
+							'claude-opus-4-5': {
+								input_tokens: 400,
+								output_tokens: 100,
+								cache_read_input_tokens: 600,
+								cache_creation_input_tokens: 100,
+							},
+						},
+						usageReportKey: 'interrupted-result-uuid',
+					},
+				])
+				// The interrupt stands: nothing reports a terminal status for this result.
+				expect(mockSessionsUpdate).not.toHaveBeenCalledWith(expect.objectContaining({ status: 'failed' }))
+			})
+
+			test('a failing badge update keeps the recorded usage and completes the stream', async () => {
+				mockSessionsUpdate.mockImplementation(async (input?: unknown) => {
+					if ((input as { usageReportKey?: string }).usageReportKey !== undefined) {
+						throw new Error('sessions.update down')
+					}
+					return { success: true, transactionId: 'mock-txid' }
+				})
+
+				// Must not reject even though the usage-only update threw.
+				await runInterrupted([interruptedResult])
+
+				expect(mockSessionsUsageRecord).toHaveBeenCalledTimes(1)
+				expect(usageOnlyUpdates()).toHaveLength(1)
+			})
+
+			test('sends nothing to the badge when the run used nothing', async () => {
+				await runInterrupted([{ type: 'result', subtype: 'error_during_execution', uuid: 'idle-result' }])
+
+				expect(mockSessionsUsageRecord).not.toHaveBeenCalled()
+				expect(usageOnlyUpdates()).toEqual([])
+			})
 		})
 	})
 

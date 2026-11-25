@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router'
-import { Bell, FileText, GitPullRequest, Kanban, PanelLeft, Search, SquarePen } from 'lucide-react'
+import { Activity, Bell, FileText, GitPullRequest, Kanban, PanelLeft, Search, SquarePen } from 'lucide-react'
 import { useSyncExternalStore } from 'react'
 
 import { useSyncInternal } from '@/components/providers/SyncProvider'
@@ -69,6 +69,10 @@ export function Sidebar() {
 				<Link to="/artifacts" onClick={closeSidebarOnNarrow} activeProps={{ className: 'sel' }}>
 					<FileText className="i" strokeWidth={1.6} />
 					Artifacts
+				</Link>
+				<Link to="/usage" onClick={closeSidebarOnNarrow} activeProps={{ className: 'sel' }}>
+					<Activity className="i" strokeWidth={1.6} />
+					Usage
 				</Link>
 			</nav>
 			<div className="list">{attentionView ? <AttentionList {...inbox} /> : <ProjectList />}</div>
