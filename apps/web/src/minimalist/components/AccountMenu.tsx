@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { Archive, Building2, LogOut, Settings } from 'lucide-react'
+import { Activity, Archive, Building2, LogOut, Settings } from 'lucide-react'
 import { useRef, useState } from 'react'
 
 import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
@@ -23,7 +23,7 @@ export function AccountMenu() {
 	const navigate = useNavigate()
 	const anchor = useRef<HTMLButtonElement>(null)
 	const [open, setOpen] = useState(false)
-	const go = (to: '/settings/general' | '/settings/archived') => {
+	const go = (to: '/usage' | '/settings/general' | '/settings/archived') => {
 		setOpen(false)
 		void navigate({ to })
 	}
@@ -34,6 +34,13 @@ export function AccountMenu() {
 				<span className="ell">{user?.firstName ?? user?.email}</span>
 			</button>
 			<Menu anchor={anchor} open={open} onClose={() => setOpen(false)} placement="above-start" width={260}>
+				{/* Live usage per host is in the working-host switcher; this is how you've used it over time. */}
+				<MenuItem
+					icon={<Activity className="i sm" strokeWidth={1.6} />}
+					label="Usage history"
+					onSelect={() => go('/usage')}
+				/>
+				<MenuSeparator />
 				<MenuItem
 					icon={<Settings className="i sm" strokeWidth={1.6} />}
 					label="Settings"

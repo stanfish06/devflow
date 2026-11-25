@@ -711,20 +711,8 @@ export const processClaudeEvents = (input: ProcessClaudeEventsInput) =>
 													(cause) => new ClaudeSessionDataError({ sessionId, cause }),
 												),
 											)
-								if (!(yield* input.interruptState.wasInterrupted)) {
-									yield* api.updateSession({
-										sessionId,
-										status: event.subtype === 'success' ? 'ready_for_input' : 'failed',
-										errorMessage: event.subtype === 'success' ? undefined : event.subtype,
-										totalCostUsd: usage.totalCostUsd,
-										modelUsage: usage.modelUsage,
-										usageReportKey: reportKey,
-									})
-								}
-								if (input.closeInputOnResult) {
-									yield* input.sdkSession.input.close
-								}
-								if (usage.entries.length > 0) {
+								const recordUsageIfAny = Effect.gen(function* () {
+									if (usage.entries.length === 0) return
 									const occurredAt = yield* Clock.currentTimeMillis
 									yield* api
 										.recordUsage({
@@ -739,6 +727,40 @@ export const processClaudeEvents = (input: ProcessClaudeEventsInput) =>
 												Effect.logError('Failed to record Claude usage').pipe(
 													Effect.annotateLogs({ sessionId, error }),
 												),
+											),
+										)
+								})
+								const wasInterrupted = yield* input.interruptState.wasInterrupted
+								if (!wasInterrupted) {
+									yield* api.updateSession({
+										sessionId,
+										status: event.subtype === 'success' ? 'ready_for_input' : 'failed',
+										errorMessage: event.subtype === 'success' ? undefined : event.subtype,
+										totalCostUsd: usage.totalCostUsd,
+										modelUsage: usage.modelUsage,
+										usageReportKey: reportKey,
+									})
+								}
+								if (input.closeInputOnResult) {
+									yield* input.sdkSession.input.close
+								}
+								yield* recordUsageIfAny
+								// An interrupted run still spent tokens. Its usage goes to the session badge too, so the
+								// badge agrees with the usage ledger, but without a status: the interrupt must stand. The
+								// ledger row is written first, so a failing badge update can't cost the dashboard its row.
+								if (wasInterrupted && (usage.entries.length > 0 || (usage.totalCostUsd ?? 0) > 0)) {
+									yield* api
+										.updateSession({
+											sessionId,
+											totalCostUsd: usage.totalCostUsd,
+											modelUsage: usage.modelUsage,
+											usageReportKey: reportKey,
+										})
+										.pipe(
+											Effect.catchTag('DaemonSessionUpdateError', (error) =>
+												Effect.logError(
+													'Failed to add interrupted run usage to the session',
+												).pipe(Effect.annotateLogs({ sessionId, error })),
 											),
 										)
 								}

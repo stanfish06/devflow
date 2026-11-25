@@ -4847,6 +4847,623 @@
 			padding: 3px 6px;
 		}
 	}
+
+	/* usage: a personal year grid. The greens are their own single-hue ramp, separate from --add, and
+	   validated per surface: lightness steps monotone and >= 0.06 apart, the palest data step >= 2:1
+	   against the page. Level 0 is the neutral "nothing that day" fill. */
+	:scope {
+		--usage-l0: #ebebeb;
+		--usage-l1: #74c49b;
+		--usage-l2: #3fa87c;
+		--usage-l3: #1c875e;
+		--usage-l4: #0a5f40;
+	}
+	:scope.dark {
+		--usage-l0: #1c1c1c;
+		--usage-l1: #175c42;
+		--usage-l2: #1d7f5b;
+		--usage-l3: #26a476;
+		--usage-l4: #4fcf9c;
+	}
+	.usage-body {
+		flex: 1;
+		min-height: 0;
+		overflow-y: auto;
+		padding: 8px 24px 48px;
+	}
+	.usage-content {
+		max-width: 920px;
+		margin: 0 auto;
+	}
+	.usage-card {
+		position: relative;
+		border: 1px solid var(--line);
+		border-radius: var(--r);
+		padding: 16px 18px;
+	}
+	.usage-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 12px;
+		flex-wrap: wrap;
+		min-height: 24px;
+		margin-bottom: 10px;
+	}
+	/* The grid's lens switch: the shared segmented control, kept to one line at the head's right. */
+	.usage-switch {
+		flex-shrink: 0;
+		margin-left: auto;
+	}
+	.usage-switch button {
+		white-space: nowrap;
+	}
+	:scope.dark .usage-switch button.on {
+		background: #3a3a3a;
+	}
+	.usage-total {
+		font-weight: 600;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-sub {
+		color: var(--fg-2);
+		font-size: 12.5px;
+	}
+	.usage-sub b {
+		color: var(--fg);
+		font-weight: 500;
+	}
+	.usage-failed {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		color: var(--fg-2);
+	}
+	/* Wider than a narrow page, the grid scrolls sideways; the padding keeps focus rings unclipped. */
+	.usage-scroll {
+		overflow-x: auto;
+		padding: 3px;
+		margin: -3px;
+	}
+	.usage-year {
+		--usage-cell: 11px;
+		--usage-gap: 3px;
+		display: flex;
+		gap: 6px;
+		width: max-content;
+	}
+	.usage-weekdays {
+		display: grid;
+		grid-template-rows: 12px repeat(7, var(--usage-cell));
+		row-gap: var(--usage-gap);
+		font-size: 10.5px;
+		line-height: var(--usage-cell);
+		color: var(--fg-3);
+	}
+	.usage-months {
+		display: grid;
+		grid-auto-columns: var(--usage-cell);
+		column-gap: var(--usage-gap);
+		height: 12px;
+		margin-bottom: var(--usage-gap);
+		font-size: 10.5px;
+		line-height: 12px;
+		color: var(--fg-3);
+	}
+	.usage-months span {
+		grid-row: 1;
+		white-space: nowrap;
+	}
+	.usage-cells {
+		display: grid;
+		grid-template-rows: repeat(7, var(--usage-cell));
+		grid-auto-columns: var(--usage-cell);
+		gap: var(--usage-gap);
+	}
+	.usage-cell {
+		width: var(--usage-cell);
+		height: var(--usage-cell);
+		padding: 0;
+		border: 0;
+		border-radius: 2px;
+		background: var(--usage-l0);
+		cursor: pointer;
+	}
+	.usage-cell.l1 {
+		background: var(--usage-l1);
+	}
+	.usage-cell.l2 {
+		background: var(--usage-l2);
+	}
+	.usage-cell.l3 {
+		background: var(--usage-l3);
+	}
+	.usage-cell.l4 {
+		background: var(--usage-l4);
+	}
+	.usage-cell:hover {
+		outline: 1px solid var(--fg-2);
+	}
+	/* The selected day gets a ring, never a different fill, so its shade still reads. */
+	.usage-cell:focus-visible,
+	.usage-cell.sel {
+		outline: 2px solid var(--fg);
+		outline-offset: 1px;
+	}
+	.usage-foot {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-top: 8px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+	}
+	.usage-legend {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+	}
+	.usage-legend > span:first-child {
+		margin-right: 3px;
+	}
+	.usage-legend > span:last-child {
+		margin-left: 3px;
+	}
+	.usage-legend .item {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.usage-legend .item + .item:has(> span + span) {
+		margin-left: 9px;
+	}
+	.usage-legend .sw {
+		width: 11px;
+		height: 11px;
+		border-radius: 2px;
+	}
+	.usage-tip {
+		position: absolute;
+		z-index: 5;
+		pointer-events: none;
+		padding: 5px 8px;
+		border-radius: var(--r-sm);
+		background: var(--fg);
+		color: var(--bg);
+		font-size: 12px;
+		white-space: nowrap;
+		transform: translate(-50%, calc(-100% - 6px));
+	}
+	.usage-tip[data-align='start'] {
+		transform: translate(-12px, calc(-100% - 6px));
+	}
+	.usage-tip[data-align='end'] {
+		transform: translate(calc(-100% + 12px), calc(-100% - 6px));
+	}
+	.usage-tip b {
+		font-weight: 600;
+	}
+	/* A breakdown under the tooltip's lead: value strong, name secondary, keyed by a stroke of colour. */
+	.usage-tip .rows {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		margin-top: 4px;
+	}
+	.usage-tip .row {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-tip .key {
+		flex-shrink: 0;
+		width: 10px;
+		height: 2px;
+		border-radius: 1px;
+	}
+	.usage-tip .name {
+		color: color-mix(in oklab, var(--bg) 72%, var(--fg));
+	}
+	/* The selected day's work, under the grid. About five rows show; a busy day scrolls inside the card
+	   so the rest of the page never moves down. */
+	.usage-day {
+		margin-top: 22px;
+	}
+	.usage-day-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.usage-day-head h2 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-day-count {
+		color: var(--fg-3);
+		font-size: 12px;
+		font-weight: 400;
+	}
+	.usage-day-head .btn:hover {
+		color: var(--fg);
+	}
+	.usage-day-note {
+		margin: 0;
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-day-row {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 70px 70px 70px;
+		gap: 12px;
+		align-items: center;
+		padding: 7px 0;
+	}
+	.usage-day-row.th {
+		padding: 0 0 4px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+	}
+	.usage-day-scroll {
+		display: block;
+		max-height: 265px;
+		overflow-y: auto;
+		margin-right: -10px;
+		padding-right: 10px;
+	}
+	.usage-day-scroll .usage-day-row {
+		border-top: 1px solid var(--line);
+	}
+	.usage-day-name {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+	.usage-day-name .t {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.usage-day-name a {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--fg);
+		text-decoration: none;
+	}
+	.usage-day-name a:hover {
+		text-decoration: underline;
+	}
+	.usage-day-name .badge {
+		flex-shrink: 0;
+	}
+	.usage-day-name .meta {
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-day-row .r {
+		text-align: right;
+		font-size: 12px;
+	}
+	.usage-day-row .num {
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-day-row .none {
+		color: var(--fg-3);
+	}
+	/* The period section: Week / Month / Year totals, each against the same stretch of the one before. */
+	.usage-period {
+		margin-top: 28px;
+	}
+	.usage-period-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin-bottom: 10px;
+	}
+	.usage-period-head h2 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-tiles {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 12px;
+	}
+	.usage-tile {
+		min-width: 0;
+		padding: 12px 14px;
+		border: 1px solid var(--line);
+		border-radius: var(--r);
+	}
+	.usage-tile .k {
+		color: var(--fg-2);
+		font-size: 12px;
+	}
+	.usage-tile .v {
+		display: flex;
+		align-items: baseline;
+		min-height: 33px;
+		margin-top: 2px;
+		font-size: 22px;
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-tile .v .of {
+		margin-left: 4px;
+		color: var(--fg-3);
+		font-size: 14px;
+		font-weight: 400;
+	}
+	.usage-tile .v .none {
+		color: var(--fg-3);
+		font-weight: 400;
+	}
+	.usage-tile .d {
+		margin-top: 2px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+	}
+	.usage-tile-skel {
+		display: inline-block;
+		align-self: center;
+		width: 56px;
+		height: 18px;
+		border-radius: var(--r-sm);
+		background: var(--surface-2);
+	}
+	/* What the period's money went on. The chart is hand-built: thin bars (24px at most) growing from one
+	   baseline, square there and rounded at the top, 2px of surface between stacked segments and between
+	   neighbouring bars, one solid hairline at the top value. The colours are the --chart-* slots picked in
+	   lib/usage.ts. */
+	.usage-chart {
+		margin-top: 22px;
+	}
+	.usage-sub-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+		margin-bottom: 10px;
+	}
+	.usage-sub-head h3 {
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.usage-sub-head .hint {
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	.usage-sub-head .usage-legend {
+		color: var(--fg-2);
+		font-size: 12px;
+	}
+	.usage-plot {
+		--usage-axis: 46px;
+		position: relative;
+		display: flex;
+		height: 160px;
+		padding-left: var(--usage-axis);
+	}
+	.usage-axis {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		left: 0;
+		width: calc(var(--usage-axis) - 8px);
+		color: var(--fg-3);
+		font-size: 10.5px;
+		line-height: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-axis span {
+		position: absolute;
+		right: 0;
+	}
+	.usage-axis .top {
+		top: -6px;
+	}
+	.usage-axis .zero {
+		bottom: -6px;
+	}
+	.usage-gridline {
+		position: absolute;
+		top: 0;
+		right: 0;
+		left: var(--usage-axis);
+		border-top: 1px solid var(--line);
+	}
+	.usage-bars {
+		position: relative;
+		display: flex;
+		flex: 1;
+		gap: 2px;
+		min-width: 0;
+		border-bottom: 1px solid var(--line-2);
+	}
+	/* The whole column is the hit target, so a short or empty bar is as easy to hover as a tall one. */
+	.usage-bar {
+		display: flex;
+		flex: 1 1 0;
+		flex-direction: column;
+		align-items: center;
+		justify-content: flex-end;
+		min-width: 0;
+		border-radius: var(--r-sm) var(--r-sm) 0 0;
+		outline: none;
+	}
+	.usage-bar.on,
+	.usage-bar:focus-visible {
+		background: var(--hover);
+	}
+	.usage-bar:focus-visible {
+		box-shadow: inset 0 0 0 1.5px var(--fg-3);
+	}
+	.usage-stack {
+		display: flex;
+		flex-direction: column-reverse;
+		gap: 2px;
+		width: min(24px, 100%);
+		overflow: hidden;
+		border-radius: 4px 4px 0 0;
+	}
+	.usage-stack i {
+		display: block;
+		flex: 0 1 0;
+		min-height: 1px;
+	}
+	.usage-chart-note {
+		position: absolute;
+		inset: 0 0 0 var(--usage-axis);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		margin: 0;
+		color: var(--fg-3);
+		font-size: 12px;
+		pointer-events: none;
+	}
+	.usage-xlab {
+		display: flex;
+		gap: 2px;
+		margin-top: 4px;
+		padding-left: 46px;
+		color: var(--fg-3);
+		font-size: 10.5px;
+	}
+	.usage-xlab span {
+		flex: 1 1 0;
+		min-width: 0;
+		text-align: center;
+		white-space: nowrap;
+		overflow: visible;
+	}
+	.usage-xlab span:empty {
+		visibility: hidden;
+	}
+	.usage-breakdowns {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+		gap: 12px;
+		margin-top: 22px;
+	}
+	.usage-model-list {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.usage-model-row {
+		display: grid;
+		grid-template-columns: minmax(0, 112px) minmax(0, 1fr) 72px;
+		gap: 10px;
+		align-items: center;
+		padding: 5px 0;
+	}
+	.usage-model-row + .usage-model-row {
+		border-top: 1px solid var(--line);
+	}
+	.usage-model-row .name {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.usage-model-row .t {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.usage-model-row .sw {
+		flex-shrink: 0;
+		width: 8px;
+		height: 8px;
+		border-radius: 2px;
+	}
+	.usage-model-row .share {
+		height: 6px;
+		overflow: hidden;
+		border-radius: 3px;
+		background: var(--surface-2);
+	}
+	.usage-model-row .share i {
+		display: block;
+		height: 100%;
+		border-radius: 3px;
+	}
+	.usage-model-row .v {
+		text-align: right;
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-top-table {
+		width: 100%;
+		border-collapse: collapse;
+		table-layout: fixed;
+	}
+	.usage-top-table th {
+		padding: 0 0 6px;
+		color: var(--fg-3);
+		font-size: 11.5px;
+		font-weight: 500;
+		text-align: left;
+	}
+	.usage-top-table th:not(:first-child) {
+		width: 72px;
+	}
+	.usage-top-table td {
+		padding: 5px 0;
+		border-top: 1px solid var(--line);
+		font-size: 12.5px;
+	}
+	.usage-top-table .r {
+		text-align: right;
+	}
+	.usage-top-table .num {
+		font-variant-numeric: tabular-nums;
+	}
+	.usage-top-table .t {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+	}
+	.usage-top-table a {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--fg);
+		text-decoration: none;
+	}
+	.usage-top-table a:hover {
+		text-decoration: underline;
+	}
+	.usage-top-table .badge {
+		flex-shrink: 0;
+	}
+	.usage-footnote {
+		margin: 14px 0 0;
+		color: var(--fg-3);
+		font-size: 12px;
+	}
+	@media (max-width: 720px) {
+		.usage-tiles {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.usage-breakdowns {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
 }
 
 /* Shared settings sections are the standard components; use the minimalist type. */
