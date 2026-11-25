@@ -50,6 +50,8 @@ describe('Effect Claude interruption session', () => {
 					order.push('mark')
 					replacementPrompt = prompt
 				}),
+			failure: Effect.die('unused'),
+			markFailed: () => Effect.die('unused'),
 		}
 
 		return observeLiveSessionControls({

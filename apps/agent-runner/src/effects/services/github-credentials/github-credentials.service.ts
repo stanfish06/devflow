@@ -1,6 +1,8 @@
+import type { GithubRejectionReason } from '@devflow/api-contract/daemon/github-accounts/report-rejection'
 import { Context, Data, type Effect } from 'effect'
 
 import type { GithubEnv } from './credential-files'
+import type { GithubRejectionMatch } from './rejection-signatures'
 
 export type { GithubEnv } from './credential-files'
 
@@ -45,6 +47,18 @@ export interface GithubCredentialsRefresh {
 	readonly outcome: 'applied' | 'restart'
 }
 
+/** GitHub refused the session's account, and the API says to stop the run. */
+export interface GithubRejectionStop {
+	readonly reason: GithubRejectionReason
+	/** The account GitHub refused. */
+	readonly login: string
+}
+
+export interface ReportGithubRejectionInput {
+	readonly sessionId: string
+	readonly rejection: GithubRejectionMatch
+}
+
 export interface GithubCredentialsService {
 	/**
 	 * Ask the API which account the session acts as and write its credential directory. Returns the
@@ -63,12 +77,20 @@ export interface GithubCredentialsService {
 	readonly refresh: (taskId: string) => Effect.Effect<ReadonlyArray<GithubCredentialsRefresh>>
 	/** Drop one hold on the session; the last one removes its directory from disk. Never fails. */
 	readonly release: (sessionId: string) => Effect.Effect<void>
+	/**
+	 * A command in the session failed with a GitHub auth signature. Only a session whose credential
+	 * directory holds an account right now is reported: a host-login session behaves as before, and
+	 * a locked directory (the task just moved off that account) is expected to fail. The excerpt is
+	 * redacted before it is sent. Returns why to stop the run, or null to let it go on (nothing to
+	 * report, the session no longer uses that account, or the API couldn't judge). Never fails.
+	 */
+	readonly reportRejection: (input: ReportGithubRejectionInput) => Effect.Effect<GithubRejectionStop | null>
 }
 
 /**
  * Owns every session's GitHub credential directory on this host (`~/.devflow/run/<sessionId>/github`):
- * writes it when a session starts, rewrites it when the task's account changes mid-run, and removes
- * it when the session ends or the daemon stops.
+ * writes it when a session starts, rewrites it when the task's account changes mid-run, removes it
+ * when the session ends or the daemon stops, and reports GitHub refusing the account it holds.
  */
 export class GithubCredentials extends Context.Service<GithubCredentials, GithubCredentialsService>()(
 	'GithubCredentials',

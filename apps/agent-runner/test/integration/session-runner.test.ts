@@ -110,6 +110,7 @@ describeRealClaude('Session Runner - Real SDK Integration', () => {
 				syncGitHubArtifactBacklink: () => Effect.die('Claude unexpectedly synchronized a GitHub backlink'),
 				updateWorkspaceSetup: () => Effect.die('Claude unexpectedly updated workspace setup'),
 				resolveGithubToken: () => Effect.succeed({ useHostLogin: true as const }),
+				reportGithubRejection: () => Effect.die('Claude unexpectedly reported a GitHub rejection'),
 			})
 			const TestDependencies = Layer.mergeAll(
 				GitRunnerConfigurationLive,

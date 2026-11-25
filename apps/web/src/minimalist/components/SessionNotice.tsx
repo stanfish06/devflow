@@ -6,13 +6,18 @@ import {
 } from '@devflow/schemas/zod/host/usage-limits'
 import { useNavigate } from '@tanstack/react-router'
 import { AlertTriangle, Clock, Eye, Server } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 import { formatUsageReset } from '@/components/usage-limits/format-usage-reset'
+import { useBrowserAuth } from '@/hooks/use-browser-auth'
+import { GithubAccountMenu } from '@/minimalist/components/GithubAccountMenu'
 import { useMemberName } from '@/minimalist/lib/access'
 import { DAEMON_START_COMMAND, type HostView, useHosts, useTask } from '@/minimalist/lib/data'
 import { formatAgo } from '@/minimalist/lib/format'
-import { stopReason } from '@/minimalist/lib/status'
+import { pickOf } from '@/minimalist/lib/github-accounts'
+import { type StopAction, stopReason } from '@/minimalist/lib/status'
 import { useCopy } from '@/minimalist/lib/use-copy'
+import { useTaskGithubAccount } from '@/minimalist/lib/use-task-github-account'
 
 /**
  * Why the agent isn't working, in one block above the composer: the host is
@@ -91,6 +96,14 @@ export function SessionNotice({
 					<b>{stopped.title}</b>
 					<div className="d">{stopped.detail}</div>
 					{stopped.error ? <pre className="log">{stopped.error}</pre> : null}
+					{stopped.actions ? (
+						<GithubAccountActions
+							actions={stopped.actions}
+							session={session}
+							projectId={task?.project_id ?? null}
+							hostName={host?.name ?? null}
+						/>
+					) : null}
 					{command ? (
 						<div className="acts">
 							<button
@@ -128,6 +141,69 @@ export function SessionNotice({
 						: 'The session continues when the limit resets. Messages you send now wait until then.'}
 				</div>
 			</div>
+		</div>
+	)
+}
+
+/**
+ * Fixes for a GitHub account the agent couldn't use: give it a new token in Settings, or switch the
+ * task to another account. Both are the session owner's to make; the account is theirs. Switching
+ * writes the task's choice, so the next message runs as the new account.
+ */
+function GithubAccountActions({
+	actions,
+	session,
+	projectId,
+	hostName,
+}: {
+	actions: StopAction[]
+	session: Session
+	projectId: string | null
+	hostName: string | null
+}) {
+	const navigate = useNavigate()
+	const { user } = useBrowserAuth()
+	const account = useTaskGithubAccount(session, projectId)
+	const anchor = useRef<HTMLButtonElement>(null)
+	const [open, setOpen] = useState(false)
+	if (!user?.id || session.created_by !== user.id) return null
+	const replace = actions.includes('replace-token')
+	const switchable = actions.includes('switch-account') && account.shown
+	if (!replace && !switchable) return null
+	return (
+		<div className="acts">
+			{replace ? (
+				<button
+					type="button"
+					className="btn"
+					onClick={() => void navigate({ to: '/settings/github-accounts' })}
+				>
+					Replace token
+				</button>
+			) : null}
+			{switchable ? (
+				<>
+					<button
+						type="button"
+						ref={anchor}
+						className="btn primary"
+						disabled={account.pending}
+						onClick={() => setOpen(true)}
+					>
+						Switch account
+					</button>
+					<GithubAccountMenu
+						anchor={anchor}
+						open={open}
+						onClose={() => setOpen(false)}
+						placement="above-start"
+						value={pickOf(account.resolved)}
+						projectDefaultId={account.projectDefaultId}
+						hostName={hostName}
+						onPick={account.pick}
+					/>
+				</>
+			) : null}
 		</div>
 	)
 }

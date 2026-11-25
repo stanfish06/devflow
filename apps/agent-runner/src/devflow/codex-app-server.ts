@@ -11,6 +11,8 @@
  * Mapping to devflow's conversation events:
  *   agentMessage -> assistant message; reasoning -> thinking; commandExecution -> `bash` tool call
  *   and result; fileChange -> `apply_patch` call and result per file; mcpToolCall -> `mcp__s__t`.
+ * A commandExecution whose output shows GitHub refusing the session's account stops the turn, and
+ * the session fails with the reason the API gives (see GithubCredentials.reportRejection).
  * The Codex thread id is stored as the session's coding_agent_session_id and resumed from there.
  */
 import type { ChildProcess } from 'node:child_process'
@@ -24,6 +26,8 @@ import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } f
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
 import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github-credentials/credential-files'
 import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
+import { matchGithubRejection } from '@/effects/services/github-credentials/rejection-signatures'
+import { stopRunOnGithubRejection } from '@/effects/services/github-credentials/stop-on-github-rejection'
 import { normalizePath } from '@/lib/utils'
 import logger from '@/logger'
 
@@ -213,6 +217,9 @@ async function prepareCodexGithubCredentials(
 
 type CreateEvent = Parameters<SessionContext['services']['orpc']['sessions']['events']['create']>[0]
 
+/** A notification field that should hold text, or '' when it holds anything else. */
+const textOf = (value: unknown): string => (typeof value === 'string' ? value : '')
+
 export async function executeCodexAppServer(
 	ctx: SessionContext,
 	_resumeSessionId?: string,
@@ -320,6 +327,8 @@ export async function executeCodexAppServer(
 						toolResultContent: `${output}${exit}`,
 					})
 				})
+				// In the same ordered chain, so the turn's outcome waits for the verdict.
+				stopOnGithubRejection(textOf(item.command), textOf(item.aggregatedOutput))
 				break
 			case 'fileChange':
 				enqueue(async () => {
@@ -365,17 +374,33 @@ export async function executeCodexAppServer(
 		}
 	})
 
+	const interruptTurn = async () => {
+		abort.abort()
+		const turnId = currentTurnId
+		if (threadId && turnId) await client.request('turn/interrupt', { threadId, turnId }).catch(() => undefined)
+	}
+
+	/**
+	 * Only a run pointed at a credential directory acts as an account GitHub can refuse; a
+	 * host-login run keeps today's behaviour. On a confirmed refusal the turn is interrupted, and
+	 * the interrupt state already holds why the session fails.
+	 */
+	function stopOnGithubRejection(command: string, output: string) {
+		if (github.githubEnv === null) return
+		const rejection = matchGithubRejection({ command, output })
+		if (rejection === null) return
+		enqueue(async () => {
+			const stop = await services.daemonRuntime.runPromise(
+				stopRunOnGithubRejection({ sessionId: session.id, rejection, interruptState }),
+			)
+			if (stop) await interruptTurn()
+		})
+	}
+
 	const unsubscribeInterrupt = subscribeToSessionInterrupt({
 		sessionId: session.id,
 		interruptState,
-		eventIterator: {
-			interrupt: async () => {
-				abort.abort()
-				const turnId = currentTurnId
-				if (threadId && turnId)
-					await client.request('turn/interrupt', { threadId, turnId }).catch(() => undefined)
-			},
-		},
+		eventIterator: { interrupt: interruptTurn },
 		closeInputStream: undefined,
 		sessionsCollection: services.collections.sessions,
 	})

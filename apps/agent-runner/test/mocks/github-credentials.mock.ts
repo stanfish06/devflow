@@ -14,6 +14,7 @@ export function makeHostLoginGithubCredentials(overrides: Partial<GithubCredenti
 		prepare: () => Effect.succeed(null),
 		refresh: () => Effect.succeed([]),
 		release: () => Effect.void,
+		reportRejection: () => Effect.succeed(null),
 		...overrides,
 	})
 }

@@ -8,6 +8,7 @@ import type {
 	DaemonConversationStreamHydrationError,
 	DaemonContextShardsListError,
 	DaemonApprovalCreateError,
+	DaemonGithubRejectionReportError,
 	DaemonGithubTokenResolveError,
 	DaemonSessionUpdateError,
 	DaemonSettingsGetError,
@@ -46,6 +47,7 @@ type ReportWorkspaceRepositoryResult = ORPCClient['projectWorkspaces']['reportRe
 type GetSessionWorkspaceSetup = ORPCClient['projectWorkspaces']['getSessionWorkspaceSetup']
 type GetTaskWorkspaceContext = ORPCClient['projectWorkspaces']['getTaskWorkspaceContext']
 type ResolveGithubToken = ORPCClient['githubAccounts']['resolveToken']
+type ReportGithubRejection = ORPCClient['githubAccounts']['reportRejection']
 
 export class DaemonApi extends Context.Service<
 	DaemonApi,
@@ -132,5 +134,12 @@ export class DaemonApi extends Context.Service<
 		readonly resolveGithubToken: (
 			input: Parameters<ResolveGithubToken>[0],
 		) => Effect.Effect<Awaited<ReturnType<ResolveGithubToken>>, DaemonGithubTokenResolveError>
+		/**
+		 * GitHub refused one of this daemon's sessions' accounts: the API checks the stored token and
+		 * says whether to stop the run. The excerpt must already be redacted.
+		 */
+		readonly reportGithubRejection: (
+			input: Parameters<ReportGithubRejection>[0],
+		) => Effect.Effect<Awaited<ReturnType<ReportGithubRejection>>, DaemonGithubRejectionReportError>
 	}
 >()('DaemonApi') {}

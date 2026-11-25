@@ -9,10 +9,14 @@ import { call } from '@orpc/server'
 import { eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { Effect, Layer, Redacted } from 'effect'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import * as HttpClient from 'effect/http/HttpClient'
+import type { HttpClientRequest } from 'effect/http/HttpClientRequest'
+import * as HttpClientResponse from 'effect/http/HttpClientResponse'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
 import { tokenCipherContext } from '../../src/effects/github-accounts/github-accounts'
 import { makeTokenCipher, TokenCipher, TokenStorageUnavailable } from '../../src/effects/github-accounts/token-cipher'
+import { reportGithubRejectionProcedure } from '../../src/orpc/daemon/github-accounts/report-rejection.effect'
 import { resolveGithubTokenProcedure } from '../../src/orpc/daemon/github-accounts/resolve-token.effect'
 import { createMockDaemonAuth, createMockDaemonContext } from '../mocks'
 import {
@@ -27,6 +31,9 @@ await requireExternalTestServices()
 
 const WORK_TOKEN = 'github_pat_work_0000000000000000000000000000000000'
 const TEAMMATE_TOKEN = 'ghp_teammate000000000000000000000000000000'
+const REVOKED_TOKEN = 'ghp_revoked0000000000000000000000000000000'
+const FLAKY_TOKEN = 'ghp_flaky000000000000000000000000000000000'
+const PERSONAL_TOKEN = 'ghp_personal000000000000000000000000000000'
 
 describe('daemon githubAccounts.resolveToken', () => {
 	let db: PostgresJsDatabase
@@ -317,6 +324,185 @@ describe('daemon githubAccounts.resolveToken', () => {
 
 		await expect(call(resolveToken, { sessionId }, asDaemon(me))).rejects.toMatchObject({
 			code: 'INTERNAL_SERVER_ERROR',
+		})
+	})
+
+	describe('reportRejection', () => {
+		/** Every `GET /user` the stubbed GitHub received, by the token it carried. */
+		let githubRequests: string[] = []
+		/** Runs just before the stubbed GitHub answers, to race a write against the check. */
+		let beforeGithubAnswers: (() => Promise<void>) | null = null
+		let reportRejection: typeof reportGithubRejectionProcedure
+
+		const jsonResponse = (request: HttpClientRequest, body: unknown, status = 200) =>
+			HttpClientResponse.fromWeb(
+				request,
+				new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }),
+			)
+
+		const transport = Layer.succeed(
+			HttpClient.HttpClient,
+			HttpClient.make((request, url) =>
+				Effect.promise(async () => {
+					const token = (request.headers.authorization ?? '').replace(/^Bearer /, '')
+					githubRequests.push(token)
+					await beforeGithubAnswers?.()
+					if (request.method !== 'GET' || url.pathname !== '/user')
+						return jsonResponse(request, { message: 'Not Found' }, 404)
+					if (token === FLAKY_TOKEN) return jsonResponse(request, { message: 'Server Error' }, 502)
+					if (token === REVOKED_TOKEN) return jsonResponse(request, { message: 'Bad credentials' }, 401)
+					return jsonResponse(request, { id: 1001, login: 'stan-work', name: 'Stan' })
+				}),
+			),
+		)
+
+		beforeAll(() => {
+			const githubRuntime = createRuntimeWithTestPostgresLayer(db, { httpClient: transport })
+			reportRejection = bindProcedureToRuntime(reportGithubRejectionProcedure, githubRuntime)
+			return async () => {
+				await githubRuntime.dispose()
+			}
+		})
+
+		beforeEach(() => {
+			githubRequests = []
+			beforeGithubAnswers = null
+		})
+
+		const EXCERPT =
+			"remote: Permission to acme/api.git denied to stan-work.\nfatal: unable to access 'https://github.com/acme/api.git/': The requested URL returned error: 403"
+
+		const statusOf = async (accountId: string) => {
+			const [row] = await db
+				.select({ status: githubAccounts.status })
+				.from(githubAccounts)
+				.where(eq(githubAccounts.id, accountId))
+			return row?.status
+		}
+
+		/** A daemon whose session acts as its default account, stored with `token`. */
+		const sessionActingAs = async (token: string) => {
+			const me = newDaemon()
+			const accountId = await createAccount(me, { githubUserId: 1001, login: 'stan-work', name: 'Stan', token })
+			await setDefault(me, accountId)
+			const sessionId = await createSession(me)
+			return { me, accountId, sessionId }
+		}
+
+		it('marks the account as needing a new token, and stops the run, when GitHub rejects the token', async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+
+			const result = await call(reportRejection, { sessionId, accountId, excerpt: EXCERPT }, asDaemon(me))
+
+			expect(result).toEqual({ stop: true, reason: 'github_token_rejected', login: 'stan-work' })
+			expect(githubRequests).toEqual([REVOKED_TOKEN])
+			expect(await statusOf(accountId)).toBe('needs_token')
+			expect(JSON.stringify(result)).not.toContain(REVOKED_TOKEN)
+		})
+
+		it('stops the run with no access, and keeps the account usable, when the token is still valid', async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(WORK_TOKEN)
+
+			await expect(
+				call(reportRejection, { sessionId, accountId, excerpt: EXCERPT }, asDaemon(me)),
+			).resolves.toEqual({ stop: true, reason: 'github_no_repo_access', login: 'stan-work' })
+			expect(githubRequests).toEqual([WORK_TOKEN])
+			expect(await statusOf(accountId)).toBe('ok')
+		})
+
+		it('ignores a rejection for an account the session no longer resolves to', async () => {
+			const { me, accountId: oldAccountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+			const newAccountId = await createAccount(me, {
+				githubUserId: 1002,
+				login: 'stan-personal',
+				name: null,
+				token: PERSONAL_TOKEN,
+			})
+			await setDefault(me, newAccountId)
+
+			await expect(
+				call(reportRejection, { sessionId, accountId: oldAccountId, excerpt: EXCERPT }, asDaemon(me)),
+			).resolves.toEqual({ stop: false })
+			expect(githubRequests).toEqual([])
+			expect(await statusOf(oldAccountId)).toBe('ok')
+		})
+
+		it("ignores a rejection once the session is back on the host's own gh login", async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+			await setDefault(me, null)
+
+			await expect(
+				call(reportRejection, { sessionId, accountId, excerpt: EXCERPT }, asDaemon(me)),
+			).resolves.toEqual({ stop: false })
+			expect(githubRequests).toEqual([])
+			expect(await statusOf(accountId)).toBe('ok')
+		})
+
+		it("refuses another user's session with NOT_FOUND, without asking GitHub or touching their account", async () => {
+			const teammate = await sessionActingAs(REVOKED_TOKEN)
+			const me = { ...newDaemon(), hostId: teammate.me.hostId }
+
+			await expect(
+				call(
+					reportRejection,
+					{ sessionId: teammate.sessionId, accountId: teammate.accountId, excerpt: EXCERPT },
+					asDaemon(me),
+				),
+			).rejects.toMatchObject({ code: 'NOT_FOUND' })
+			expect(githubRequests).toEqual([])
+			expect(await statusOf(teammate.accountId)).toBe('ok')
+		})
+
+		it("refuses the user's own session from a daemon on another of their hosts", async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+
+			await expect(
+				call(
+					reportRejection,
+					{ sessionId, accountId, excerpt: EXCERPT },
+					asDaemon({ ...me, hostId: randomUUID() }),
+				),
+			).rejects.toMatchObject({ code: 'NOT_FOUND' })
+			expect(await statusOf(accountId)).toBe('ok')
+		})
+
+		it('leaves a token replaced while GitHub was being asked marked as usable', async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+			beforeGithubAnswers = async () => {
+				const replacement = await Effect.runPromise(
+					makeTokenCipher(TEST_GITHUB_ACCOUNT_TOKEN_KEY).encrypt(
+						Redacted.make(WORK_TOKEN),
+						tokenCipherContext({ organizationId: me.organizationId, userId: me.userId }),
+					),
+				)
+				await db
+					.update(githubAccounts)
+					.set({ token_iv: replacement.iv, token_ciphertext: replacement.ciphertext, status: 'ok' })
+					.where(eq(githubAccounts.id, accountId))
+			}
+
+			await expect(
+				call(reportRejection, { sessionId, accountId, excerpt: EXCERPT }, asDaemon(me)),
+			).resolves.toMatchObject({ stop: true, reason: 'github_token_rejected' })
+			expect(await statusOf(accountId)).toBe('ok')
+		})
+
+		it('reports GITHUB_UNREACHABLE, and changes nothing, when GitHub cannot be asked', async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(FLAKY_TOKEN)
+
+			await expect(
+				call(reportRejection, { sessionId, accountId, excerpt: EXCERPT }, asDaemon(me)),
+			).rejects.toMatchObject({ code: 'GITHUB_UNREACHABLE' })
+			expect(await statusOf(accountId)).toBe('ok')
+		})
+
+		it('refuses an excerpt longer than the contract allows', async () => {
+			const { me, accountId, sessionId } = await sessionActingAs(REVOKED_TOKEN)
+
+			await expect(
+				call(reportRejection, { sessionId, accountId, excerpt: 'x'.repeat(5000) }, asDaemon(me)),
+			).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+			expect(githubRequests).toEqual([])
 		})
 	})
 })

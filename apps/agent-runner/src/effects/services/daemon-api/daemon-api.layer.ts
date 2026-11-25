@@ -9,6 +9,7 @@ import {
 	DaemonConversationEventCreateError,
 	DaemonConversationStreamHydrationError,
 	DaemonContextShardsListError,
+	DaemonGithubRejectionReportError,
 	DaemonGithubTokenResolveError,
 	DaemonSessionUpdateError,
 	DaemonSettingsGetError,
@@ -241,6 +242,15 @@ export const DaemonApiLive = (client: ORPCClient) =>
 				Effect.tryPromise({
 					try: (signal) => client.githubAccounts.resolveToken(input, { signal }),
 					catch: (cause) => new DaemonGithubTokenResolveError({ sessionId: input.sessionId, cause }),
+				}),
+			),
+		),
+		// Only failures are logged, and never the input: its excerpt is command output.
+		reportGithubRejection: Effect.fn('daemon.api.github_accounts.report_rejection')((input) =>
+			reportDaemonApiFailure(
+				Effect.tryPromise({
+					try: (signal) => client.githubAccounts.reportRejection(input, { signal }),
+					catch: (cause) => new DaemonGithubRejectionReportError({ sessionId: input.sessionId, cause }),
 				}),
 			),
 		),

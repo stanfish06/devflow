@@ -216,6 +216,7 @@ import { getDiffCommentsContract } from './daemon/diff-comments/get'
 import { replyToDiffCommentContract } from './daemon/diff-comments/reply'
 import { updateDiffCommentsContract } from './daemon/diff-comments/update'
 import { createEventContract } from './daemon/events/create'
+import { reportGithubRejectionContract } from './daemon/github-accounts/report-rejection'
 import { resolveGithubTokenContract } from './daemon/github-accounts/resolve-token'
 import { heartbeatContract } from './daemon/heartbeat'
 import { shutdownContract } from './daemon/hosts/shutdown'
@@ -614,6 +615,7 @@ export const DaemonApiContract = {
 	},
 	githubAccounts: {
 		resolveToken: resolveGithubTokenContract,
+		reportRejection: reportGithubRejectionContract,
 	},
 	approvals: {
 		create: createApprovalContract,

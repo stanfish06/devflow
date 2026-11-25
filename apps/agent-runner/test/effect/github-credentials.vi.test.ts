@@ -2,13 +2,18 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import type { ReportGithubRejectionOutput } from '@devflow/api-contract/daemon/github-accounts/report-rejection'
 import * as BunServices from '@effect/platform-bun/BunServices'
 import { Effect, Exit, Layer, Scope } from 'effect'
 import { afterAll, describe, expect, it } from 'vitest'
 
-import { DaemonGithubTokenResolveError } from '@/effects/services/daemon-api/daemon-api.errors'
+import {
+	DaemonGithubRejectionReportError,
+	DaemonGithubTokenResolveError,
+} from '@/effects/services/daemon-api/daemon-api.errors'
 import { makeGithubCredentials } from '@/effects/services/github-credentials/github-credentials.layer'
 import type { GithubCredentialsService } from '@/effects/services/github-credentials/github-credentials.service'
+import type { GithubRejectionMatch } from '@/effects/services/github-credentials/rejection-signatures'
 
 import { makeMockDaemonApiLayer } from '../mocks/daemon-api.mock'
 
@@ -39,13 +44,37 @@ const modeOf = (path: string) => statSync(path).mode & 0o777
  * or a function of the session id). Returns the service, the run directory, the API calls it saw,
  * and the scope that stands in for the daemon's lifetime.
  */
+interface RejectionReport {
+	readonly sessionId: string
+	readonly accountId: string
+	readonly excerpt: string
+}
+
 const setup = async (
 	resolve: Resolution | ((sessionId: string) => Resolution | 'fail'),
-	options: { hostGitConfigPaths?: string[] } = {},
+	options: {
+		hostGitConfigPaths?: string[]
+		/** What the API says about a reported rejection; 'fail' for a transport error. */
+		verdict?: ReportGithubRejectionOutput | 'fail'
+	} = {},
 ) => {
 	const runDirectory = join(mkdtempSync(join(scratch, 'daemon-')), 'run')
 	const calls: string[] = []
+	const reports: RejectionReport[] = []
 	const api = makeMockDaemonApiLayer({
+		reportGithubRejection: (input) =>
+			Effect.suspend(() => {
+				reports.push(input)
+				const verdict = options.verdict ?? { stop: true, reason: 'github_token_rejected', login: 'stan-work' }
+				return verdict === 'fail'
+					? Effect.fail(
+							new DaemonGithubRejectionReportError({
+								sessionId: input.sessionId,
+								cause: new Error('GitHub unreachable'),
+							}),
+						)
+					: Effect.succeed(verdict)
+			}),
 		resolveGithubToken: ({ sessionId }) =>
 			Effect.suspend(() => {
 				calls.push(sessionId)
@@ -62,7 +91,7 @@ const setup = async (
 			hostGitConfigPaths: options.hostGitConfigPaths ?? ['/home/me/.gitconfig'],
 		}).pipe(Effect.provide(Layer.mergeAll(api, BunServices.layer)), Scope.provide(scope)),
 	)
-	return { service, runDirectory, calls, scope }
+	return { service, runDirectory, calls, reports, scope }
 }
 
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
@@ -319,6 +348,134 @@ describe('GithubCredentials', () => {
 			expect(existsSync(join(runDirectory, SESSION_ID))).toBe(true)
 			await run(service.release(SESSION_ID))
 			expect(existsSync(join(runDirectory, SESSION_ID))).toBe(false)
+		})
+	})
+
+	describe('a GitHub refusal of the account', () => {
+		const rejection = (overrides: Partial<GithubRejectionMatch> = {}): GithubRejectionMatch => ({
+			signature: 'permission_denied',
+			login: 'stan-work',
+			excerpt: 'remote: Permission to acme/api.git denied to stan-work.',
+			...overrides,
+		})
+		const report = (service: GithubCredentialsService, match = rejection(), sessionId = SESSION_ID) =>
+			run(service.reportRejection({ sessionId, rejection: match }))
+
+		it('reports it against the account the directory holds, and says why the run stops', async () => {
+			const { service, reports } = await setup(account())
+			await run(prepare(service))
+
+			await expect(report(service)).resolves.toEqual({ reason: 'github_token_rejected', login: 'stan-work' })
+			expect(reports).toEqual([
+				{
+					sessionId: SESSION_ID,
+					accountId: '01a20f22-0000-7000-8000-000000000001',
+					excerpt: 'remote: Permission to acme/api.git denied to stan-work.',
+				},
+			])
+		})
+
+		it('never sends the token, or anything shaped like one, in the excerpt', async () => {
+			const { service, reports } = await setup(account())
+			await run(prepare(service))
+
+			await report(
+				service,
+				rejection({
+					signature: 'authentication_failed',
+					login: null,
+					excerpt: [
+						`fatal: Authentication failed for 'https://x-access-token:${TOKEN}@github.com/acme/api.git/'`,
+						`GH_TOKEN=${TOKEN} gh pr create`,
+						`Authorization: token ${ROTATED_TOKEN}`,
+						'x'.repeat(5000),
+					].join('\n'),
+				}),
+			)
+
+			const [sent] = reports
+			expect(sent?.excerpt).not.toContain(TOKEN)
+			expect(sent?.excerpt).not.toContain(ROTATED_TOKEN)
+			expect(sent?.excerpt).not.toContain('github_pat_')
+			expect(sent?.excerpt.length).toBeLessThanOrEqual(2000)
+		})
+
+		it("reports nothing for a session on the host's own gh login", async () => {
+			const { service, reports } = await setup({ useHostLogin: true })
+			await run(prepare(service))
+
+			await expect(report(service)).resolves.toBeNull()
+			expect(reports).toEqual([])
+		})
+
+		it('reports nothing for a directory locked after the task moved to the host login', async () => {
+			let current: Resolution = account()
+			const { service, reports } = await setup(() => current)
+			await run(prepare(service))
+			current = { useHostLogin: true }
+			await run(service.refresh('task-1'))
+
+			await expect(report(service)).resolves.toBeNull()
+			expect(reports).toEqual([])
+		})
+
+		it('reports nothing for a directory locked because the new choice could not be read', async () => {
+			let fail = false
+			const { service, reports } = await setup(() => (fail ? 'fail' : account()))
+			await run(prepare(service))
+			fail = true
+			await run(service.refresh('task-1'))
+
+			await expect(report(service)).resolves.toBeNull()
+			expect(reports).toEqual([])
+		})
+
+		it('reports against the new account after an in-place switch, and ignores the old one named', async () => {
+			let current: Resolution = account()
+			const { service, reports } = await setup(() => current, {
+				verdict: { stop: true, reason: 'github_no_repo_access', login: 'stan-personal' },
+			})
+			await run(prepare(service))
+			current = {
+				accountId: '01a20f22-0000-7000-8000-000000000002',
+				login: 'stan-personal',
+				name: null,
+				email: '1002+stan-personal@users.noreply.github.com',
+				token: ROTATED_TOKEN,
+			}
+			await run(service.refresh('task-1'))
+
+			// A push still in flight as the old account when the switch landed.
+			await expect(report(service, rejection({ login: 'stan-work' }))).resolves.toBeNull()
+			expect(reports).toEqual([])
+
+			await expect(report(service, rejection({ login: 'Stan-Personal' }))).resolves.toEqual({
+				reason: 'github_no_repo_access',
+				login: 'stan-personal',
+			})
+			expect(reports.map((sent) => sent.accountId)).toEqual(['01a20f22-0000-7000-8000-000000000002'])
+		})
+
+		it('reports nothing for a session this host never prepared, or one already released', async () => {
+			const { service, reports } = await setup(account())
+			await expect(report(service)).resolves.toBeNull()
+			await run(prepare(service))
+			await run(service.release(SESSION_ID))
+			await expect(report(service)).resolves.toBeNull()
+			expect(reports).toEqual([])
+		})
+
+		it('lets the run go on when the API says the session no longer uses the account', async () => {
+			const { service } = await setup(account(), { verdict: { stop: false } })
+			await run(prepare(service))
+			await expect(report(service)).resolves.toBeNull()
+		})
+
+		it('lets the run go on when the API cannot judge', async () => {
+			const { service, reports } = await setup(account(), { verdict: 'fail' })
+			await run(prepare(service))
+			await expect(report(service)).resolves.toBeNull()
+			expect(reports).toHaveLength(1)
 		})
 	})
 

@@ -91,6 +91,7 @@ function makeClaudeSessionsTestLayer(
 			syncGitHubArtifactBacklink: () => Effect.die('unused'),
 			updateWorkspaceSetup: () => Effect.die('unused'),
 			resolveGithubToken: () => Effect.die('unused'),
+			reportGithubRejection: () => Effect.die('unused'),
 		}),
 		makeMockTaskWorkspaceContextLayer(),
 		makeHostLoginGithubCredentials(),

@@ -217,6 +217,8 @@ describe('Effect Claude interactive session', () => {
 			wasInterrupted: Effect.succeed(false),
 			resumeWithPrompt: Effect.succeed(null),
 			markInterrupted: () => Effect.void,
+			failure: Effect.succeed(null),
+			markFailed: () => Effect.succeed(false),
 		}
 
 		return observeLiveSessionControls({ sessionId: 'session-1', collections, sdkSession, interruptState }).pipe(

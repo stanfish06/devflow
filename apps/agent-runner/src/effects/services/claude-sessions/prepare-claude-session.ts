@@ -3,13 +3,14 @@ import type { Task } from '@devflow/db/tables/tasks'
 import type { WorkspaceView } from '@devflow/db/utils/workspace-view'
 import type { TaskWorkflowType, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
 import dedent from 'dedent'
-import { Clock, Effect, Option } from 'effect'
+import { Clock, Deferred, Effect, Option } from 'effect'
 import * as Path from 'effect/Path'
 
 import { DEFAULT_EFFECTIVE_SETTINGS } from '@/agents/claudecode/effective-settings'
 import { createArtifactBashSyncHook } from '@/agents/claudecode/hooks/artifact-bash-sync-hook'
 import { createArtifactReadSyncHook } from '@/agents/claudecode/hooks/artifact-read-sync-hook'
 import { createArtifactSyncHook } from '@/agents/claudecode/hooks/artifact-sync-hook'
+import { createGithubRejectionHook } from '@/agents/claudecode/hooks/github-rejection-hook'
 import { createSkillTaskUrlHook } from '@/agents/claudecode/hooks/skill-task-url-hook'
 import { createClaudeTaskDiffCaptureHook } from '@/agents/claudecode/hooks/task-diff-capture-hook'
 import { createWorkflowRoutingHook } from '@/agents/claudecode/hooks/workflow-routing-hook'
@@ -34,6 +35,8 @@ import logger from '@/logger'
 import { DaemonApi } from '../daemon-api/daemon-api.service'
 import { DaemonCollections } from '../daemon-collections/daemon-collections.service'
 import { DaemonTaskSync } from '../daemon-task-sync'
+import { GithubCredentials } from '../github-credentials/github-credentials.service'
+import { stopRunOnGithubRejection } from '../github-credentials/stop-on-github-rejection'
 import type { GitCommandRunnerRequirements } from '../task-diff/git-command-runner.service'
 import { TaskDiffServiceRegistry } from '../task-diff/task-diff-service-registry.service'
 import { resolveSessionWorkspaceView } from '../task-workspace-context/resolve-session-workspace-view'
@@ -55,6 +58,11 @@ export interface PreparedClaudeRun {
 	readonly session: Session
 	readonly interruptState: InterruptStateService
 	readonly sdk: OpenClaudeSdkSessionInput
+	/**
+	 * Completed when the daemon itself stops the run (GitHub refused the session's account). The
+	 * reason is already on `interruptState`; whoever holds the SDK session interrupts and closes it.
+	 */
+	readonly stopRequested: Deferred.Deferred<void>
 }
 
 export interface ClaudeSessionConfiguration {
@@ -345,6 +353,28 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 			taskId: session.task_id,
 			scope: isDockerSandboxEnabled() ? 'sandbox' : 'host',
 		})
+		// Only a run pointed at a credential directory acts as an account GitHub can refuse; a
+		// host-login run keeps today's behaviour.
+		const stopRequested = yield* Deferred.make<void>()
+		const githubCredentialsContext = yield* Effect.context<GithubCredentials>()
+		const githubRejectionHook =
+			githubEnv === null
+				? undefined
+				: createGithubRejectionHook({
+						sessionId,
+						onRejection: (rejection) =>
+							Effect.runPromiseWith(githubCredentialsContext)(
+								stopRunOnGithubRejection({
+									sessionId,
+									rejection,
+									interruptState: input.context.interruptState,
+								}).pipe(
+									Effect.tap((stop) =>
+										stop ? Deferred.succeed(stopRequested, undefined) : Effect.void,
+									),
+								),
+							),
+					})
 		const appServer = createMcpServer(toolsApi, {
 			taskId: session.task_id,
 			enableLibraryResearcher: effectiveSettings.experimentalSubagentsEnabled,
@@ -378,6 +408,16 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 		}
 		if (artifactBashSyncHook) {
 			postToolUseHooks.push({ matcher: 'Bash' as const, timeout: 60, hooks: [artifactBashSyncHook] })
+		}
+		if (githubRejectionHook) {
+			postToolUseHooks.push({ matcher: 'Bash' as const, timeout: 60, hooks: [githubRejectionHook] })
+		}
+		const hooks: NonNullable<ReturnType<typeof buildClaudeQueryOptions>['hooks']> = {
+			PostToolUse: postToolUseHooks,
+		}
+		if (githubRejectionHook) {
+			// A failing command (non-zero exit, as a refused `git push` is) skips PostToolUse.
+			hooks.PostToolUseFailure = [{ matcher: 'Bash' as const, timeout: 60, hooks: [githubRejectionHook] }]
 		}
 		const queryOptions = buildClaudeQueryOptions({
 			session,
@@ -413,13 +453,14 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 						agentID: options.agentID,
 					}),
 				),
-			hooks: { PostToolUse: postToolUseHooks },
+			hooks,
 		})
 
 		return {
 			session,
 			interruptState: input.context.interruptState,
 			sdk: { sessionId: session.id, prompt: session.prompt ?? '', options: queryOptions },
+			stopRequested,
 		}
 	})
 }

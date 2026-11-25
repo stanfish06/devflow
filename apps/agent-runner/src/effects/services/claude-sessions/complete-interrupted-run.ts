@@ -14,6 +14,21 @@ export function finalizeInterruptedRun(input: ExecuteClaudeSessionInput) {
 		if (!snapshot.wasInterrupted || services.shutdown.isDaemonShuttingDown()) return
 
 		const sessionId = session.id
+		// The daemon stopped the run itself (GitHub refused the session's account): the session fails
+		// with that reason, and nothing resumes until the user sends a message.
+		const failure = yield* interruptState.failure
+		if (failure !== null) {
+			yield* Effect.logInfo('Session stopped by the daemon, setting status to failed').pipe(
+				Effect.annotateLogs({ sessionId, reason: failure.reason }),
+			)
+			yield* api.updateSession({
+				sessionId,
+				status: 'failed',
+				errorReason: failure.reason,
+				errorMessage: failure.message,
+			})
+			return
+		}
 		if (!snapshot.resumeWithPrompt) {
 			yield* Effect.logInfo('Session interrupted, setting status to interrupted').pipe(
 				Effect.annotateLogs({ sessionId }),

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 
+import { githubRejectionExcerpt } from '@devflow/api-contract/daemon/github-accounts/report-rejection'
 import { Config, Effect, Layer, Option, Redacted, Semaphore } from 'effect'
 import * as FileSystem from 'effect/FileSystem'
 import * as Path from 'effect/Path'
@@ -27,11 +28,16 @@ import {
 	type GithubCredentialScope,
 	type GithubCredentialsRefresh,
 	type GithubCredentialsService,
+	type GithubRejectionStop,
 	type PrepareGithubCredentialsInput,
+	type ReportGithubRejectionInput,
 } from './github-credentials.service'
 
 const PRIVATE_DIRECTORY = 0o700
 const PRIVATE_FILE = 0o600
+
+/** The account a session's credential directory holds, as the API resolved it. */
+type ResolvedAccount = GithubAccountCredentials & { readonly accountId: string }
 
 /** A session prepared on this host, and how many of its runs still hold it. */
 interface CredentialEntry {
@@ -45,6 +51,11 @@ interface CredentialEntry {
 	mode: 'account' | 'host'
 	/** The credential directory, once one has been written; removed with the last hold. */
 	paths: CredentialPaths | null
+	/**
+	 * The account the directory holds right now, which a GitHub rejection is reported against. Null
+	 * when it holds none: a host-login run, or a directory locked after the task moved off it.
+	 */
+	active: ResolvedAccount | null
 	holds: number
 }
 
@@ -173,7 +184,8 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 			)
 			if ('useHostLogin' in resolution) return null
 
-			const account: GithubAccountCredentials = {
+			const account: ResolvedAccount = {
+				accountId: resolution.accountId,
 				login: resolution.login,
 				name: resolution.name,
 				email: resolution.email,
@@ -219,11 +231,13 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 								scope: input.scope,
 								mode: 'host',
 								paths: null,
+								active: null,
 								holds: 1,
 							})
 						} else {
 							existing.holds += 1
 							existing.mode = 'host'
+							existing.active = null
 							if (existing.paths !== null)
 								yield* lockCredentialFiles(sessionId, existing.paths, existing.scope)
 						}
@@ -256,6 +270,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 							scope: input.scope,
 							mode: 'account',
 							paths,
+							active: account,
 							holds: 1,
 						})
 					} else {
@@ -263,6 +278,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 						existing.mode = 'account'
 						existing.scope = input.scope
 						existing.paths = paths
+						existing.active = account
 					}
 					yield* Effect.logInfo('Prepared the GitHub account for a session').pipe(
 						Effect.annotateLogs({
@@ -281,7 +297,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 	const refreshSession = (sessionId: string) =>
 		Effect.gen(function* () {
 			// The new account, null for the host's own gh login, or undefined when it can't be read.
-			const account: GithubAccountCredentials | null | undefined = yield* resolveAccount(sessionId).pipe(
+			const account: ResolvedAccount | null | undefined = yield* resolveAccount(sessionId).pipe(
 				Effect.catch((error) =>
 					Effect.logWarning("Could not read a session's new GitHub account; locking it").pipe(
 						Effect.annotateLogs({ sessionId, reason: error.reason, error: error.message }),
@@ -297,10 +313,12 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 					if (account !== null && account !== undefined && entry.mode === 'account' && entry.paths !== null) {
 						const paths = entry.paths
 						outcome = yield* writeCredentialFiles(paths, account, entry.scope).pipe(
+							Effect.tap(() => Effect.sync(() => (entry.active = account))),
 							Effect.as('applied' as const),
 							Effect.catch((error) =>
 								Effect.logError('Could not rewrite a session GitHub credential directory').pipe(
 									Effect.annotateLogs({ sessionId, login: account.login, error: error.message }),
+									Effect.andThen(Effect.sync(() => (entry.active = null))),
 									Effect.andThen(lockCredentialFiles(sessionId, paths, entry.scope)),
 									Effect.as('restart' as const),
 								),
@@ -309,6 +327,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 					} else {
 						// The host login (null), an account for an agent started without a directory, or
 						// a choice that couldn't be read: nothing the running agent reads can carry it.
+						entry.active = null
 						if (entry.paths !== null) yield* lockCredentialFiles(sessionId, entry.paths, entry.scope)
 						outcome = account === null && entry.mode === 'host' ? 'applied' : 'restart'
 					}
@@ -334,6 +353,54 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 			const results = yield* Effect.forEach(sessionIds, refreshSession)
 			return results.filter((result) => result !== undefined)
 		}).pipe(Effect.withSpan('github_credentials.refresh', { attributes: { task_id: taskId } }))
+
+	const reportRejection = (input: ReportGithubRejectionInput) =>
+		Effect.gen(function* () {
+			const { sessionId, rejection } = input
+			// Read once: a switch that lands while the API is asked changes what's on disk, not this report.
+			const active = entries.get(sessionId)?.active ?? null
+			if (active === null) {
+				// The host's own gh login, a locked directory, or a session this host doesn't hold: the
+				// failure isn't about an account devflow put in place.
+				yield* Effect.logDebug('Ignoring a GitHub auth failure in a session without an active account').pipe(
+					Effect.annotateLogs({ sessionId, signature: rejection.signature }),
+				)
+				return null
+			}
+			if (rejection.login !== null && rejection.login.toLowerCase() !== active.login.toLowerCase()) {
+				// GitHub named someone else: an earlier account's push, still in flight when the task switched.
+				yield* Effect.logInfo('Ignoring a GitHub refusal of an account the session no longer uses').pipe(
+					Effect.annotateLogs({ sessionId, login: active.login, refusedLogin: rejection.login }),
+				)
+				return null
+			}
+			const verdict = yield* api
+				.reportGithubRejection({
+					sessionId,
+					accountId: active.accountId,
+					excerpt: githubRejectionExcerpt(rejection.excerpt, [Redacted.value(active.token)]),
+				})
+				.pipe(
+					Effect.catch((error) =>
+						Effect.logWarning(
+							"Could not report a GitHub refusal of a session's account; the run goes on",
+						).pipe(
+							Effect.annotateLogs({ sessionId, login: active.login, error: error.message }),
+							Effect.as(null),
+						),
+					),
+				)
+			if (verdict === null || !verdict.stop) return null
+			yield* Effect.logWarning("GitHub refused a session's account; stopping the run").pipe(
+				Effect.annotateLogs({
+					sessionId,
+					login: verdict.login,
+					reason: verdict.reason,
+					signature: rejection.signature,
+				}),
+			)
+			return { reason: verdict.reason, login: verdict.login } satisfies GithubRejectionStop
+		}).pipe(Effect.withSpan('github_credentials.report_rejection', { attributes: { session_id: input.sessionId } }))
 
 	const release = (sessionId: string) =>
 		lock.withPermits(1)(
@@ -363,7 +430,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 		),
 	)
 
-	return { prepare, refresh, release } satisfies GithubCredentialsService
+	return { prepare, refresh, release, reportRejection } satisfies GithubCredentialsService
 })
 
 /** Directories under `$DEVFLOW_HOME/run` (default `~/.devflow/run`), like the sandbox's own state. */

@@ -2,24 +2,14 @@ import type { Session } from '@devflow/db/tables/sessions'
 import { Copy, FolderGit2, GitBranch, House, Laptop, Server } from 'lucide-react'
 import { useRef, useState } from 'react'
 
-import { useBrowserAuth } from '@/hooks/use-browser-auth'
 import { Avatar } from '@/minimalist/components/Avatar'
 import { GithubAccountMenu } from '@/minimalist/components/GithubAccountMenu'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from '@/minimalist/components/Menu'
 import { type HostView, taskBranch, useHosts, useTask } from '@/minimalist/lib/data'
 import { basename, formatAgo, shortPath } from '@/minimalist/lib/format'
-import {
-	type GithubAccountPick,
-	githubAccountLabel,
-	pickOf,
-	type ResolvedGithubAccount,
-	useGithubAccounts,
-	useResolvedGithubAccount,
-} from '@/minimalist/lib/github-accounts'
-import { useUi } from '@/minimalist/lib/ui-state'
-import { useAction } from '@/minimalist/lib/use-action'
+import { githubAccountLabel, pickOf, type ResolvedGithubAccount } from '@/minimalist/lib/github-accounts'
 import { useCopy } from '@/minimalist/lib/use-copy'
-import { useApi } from '@/orpc/client'
+import { useTaskGithubAccount } from '@/minimalist/lib/use-task-github-account'
 
 /**
  * Where the session runs, as one quiet chip: host, branch and, in your own sessions, the GitHub
@@ -38,7 +28,7 @@ export function EnvironmentMenu({ session, host }: { session: Session; host: Hos
 	const state = !host && !hostsReady ? 'loading' : online ? 'online' : 'offline'
 	const hostName = host?.name ?? (state === 'loading' ? 'Host' : 'Unknown host')
 	const HostIcon = host?.host.distribution === 'cli' ? Server : Laptop
-	const account = useTaskAccount(session, task?.project_id ?? null)
+	const account = useTaskGithubAccount(session, task?.project_id ?? null)
 	const close = () => setOpen(null)
 	return (
 		<>
@@ -141,46 +131,6 @@ export function EnvironmentMenu({ session, host }: { session: Session; host: Hos
 			) : null}
 		</>
 	)
-}
-
-/**
- * The account your own sessions in this task push as, and a way to change it for the task. A
- * teammate's session follows their own choices, which aren't yours to show or change, and a
- * session outside a task has no task to pick for. Without any accounts there is nothing to show.
- */
-function useTaskAccount(session: Session, projectId: string | null) {
-	const { user } = useBrowserAuth()
-	const { client: api } = useApi()
-	const { showToast } = useUi()
-	const action = useAction()
-	const { projectDefaults } = useGithubAccounts()
-	const resolved = useResolvedGithubAccount({ taskId: session.task_id, projectId })
-	const mine = Boolean(user?.id) && session.created_by === user?.id && session.task_id !== null
-	const shown = mine && resolved.isReady && (resolved.accounts.length > 0 || resolved.source === 'task')
-	const pick = (next: GithubAccountPick) => {
-		const taskId = session.task_id
-		// Picking the account the task already inherits still pins it, so later default changes pass it by.
-		if (!taskId || (resolved.source === 'task' && next === pickOf(resolved))) return
-		const login = resolved.accounts.find((account) => account.id === next)?.login
-		void action
-			.run(
-				() => api.tasks.setGithubAccount({ taskId, accountId: next }, { context: { silent: true } }),
-				'Could not change the GitHub account. Try again.',
-			)
-			.then((saved) => {
-				if (saved)
-					showToast(
-						login ? `This task now pushes as ${login}` : "This task now pushes as each host's own gh login",
-					)
-			})
-	}
-	return {
-		shown,
-		resolved,
-		pending: action.pending,
-		projectDefaultId: projectId ? projectDefaults[projectId] : undefined,
-		pick,
-	}
 }
 
 function sourceCopy(resolved: ResolvedGithubAccount): string {

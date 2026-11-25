@@ -449,6 +449,7 @@ describe('a mid-run GitHub account switch', () => {
 			const credentials = Layer.succeed(GithubCredentials, {
 				prepare: () => Effect.die('Unexpected prepare'),
 				release: () => Effect.die('Unexpected release'),
+				reportRejection: () => Effect.die('Unexpected reportRejection'),
 				refresh: (taskId) => Effect.sync(() => refreshes.push(taskId)).pipe(Effect.as(refreshed)),
 			})
 			const process = (change: TaskUserSettingsChangeMessage) =>

@@ -18,6 +18,13 @@ export function getSessionErrorDisplayMessage(
 	errorReason: SessionErrorReason | null | undefined,
 	errorMessage: string | null | undefined,
 ): string | null | undefined {
-	if (resolveSessionErrorReason(errorReason, errorMessage) === 'start_failed') return CLAUDE_CODE_START_FAILED_MESSAGE
+	const reason = resolveSessionErrorReason(errorReason, errorMessage)
+	if (reason === 'start_failed') return CLAUDE_CODE_START_FAILED_MESSAGE
+	// For the GitHub reasons the message is only the refused account's login.
+	const account = errorMessage?.trim() || 'the account'
+	if (reason === 'github_token_rejected')
+		return `GitHub rejected ${account}'s token. Replace it in Settings, or switch the task's GitHub account, then send a message to try again.`
+	if (reason === 'github_no_repo_access')
+		return `${account} can't push to this repository. Switch the task's GitHub account, then send a message to try again.`
 	return errorMessage
 }

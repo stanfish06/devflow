@@ -83,6 +83,12 @@ export class DaemonGithubTokenResolveError extends Data.TaggedError('DaemonGithu
 	readonly cause: unknown
 }> {}
 
+/** The API couldn't judge a GitHub rejection a session reported (GitHub unreachable, or a transport error). */
+export class DaemonGithubRejectionReportError extends Data.TaggedError('DaemonGithubRejectionReportError')<{
+	readonly sessionId: string
+	readonly cause: unknown
+}> {}
+
 export type DaemonApiError =
 	| DaemonSettingsGetError
 	| DaemonContextShardsListError
@@ -101,3 +107,4 @@ export type DaemonApiError =
 	| DaemonTaskWorkspaceContextNotFound
 	| DaemonTaskWorkspaceContextError
 	| DaemonGithubTokenResolveError
+	| DaemonGithubRejectionReportError

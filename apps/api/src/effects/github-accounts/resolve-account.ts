@@ -36,6 +36,8 @@ export type GithubAccountResolution = Data.TaggedEnum<{
 		readonly name: string | null
 		readonly email: string
 		readonly token: Redacted.Redacted<string>
+		/** The stored token's IV: fresh on every write, so it tells this token apart from a replacement. */
+		readonly tokenIv: Uint8Array
 	}
 	HostLogin: {}
 }>
@@ -118,6 +120,7 @@ export const resolveGithubAccountForSession = Effect.fn('github_accounts.resolve
 		name: account.name,
 		email: account.noreplyEmail,
 		token,
+		tokenIv: account.tokenIv,
 	})
 })
 
