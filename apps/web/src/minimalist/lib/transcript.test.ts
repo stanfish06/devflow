@@ -5,6 +5,7 @@ import {
 	buildTurns,
 	type EventRow,
 	groupSteps,
+	noticeText,
 	readDenial,
 	skillPromptName,
 	type ToolStep,
@@ -113,6 +114,61 @@ describe('buildTurns', () => {
 		if (agent?.kind !== 'agent') throw new Error('expected an agent turn')
 		expect(agent.answer).toBeNull()
 		expect(summarizeStep(agent.steps[0] as ToolStep).verb).toBe('Running')
+	})
+})
+
+describe('GitHub account notices', () => {
+	const notice = (login: unknown) =>
+		row({
+			event_type: 'system',
+			role: 'system',
+			content: JSON.stringify({ kind: 'github_account_changed', login }),
+		})
+
+	it.each([
+		['an account', 'stan-personal', 'Account changed to stan-personal'],
+		["the host's own gh login", null, "Account changed to the host's own gh login"],
+	])('names %s', (_label, login, text) => {
+		expect(noticeText(notice(login))).toBe(text)
+	})
+
+	it.each([
+		[
+			'compaction',
+			row({ event_type: 'system', role: 'system', content: JSON.stringify({ kind: 'context_compaction' }) }),
+		],
+		[
+			'an unknown system event',
+			row({ event_type: 'system', role: 'system', content: JSON.stringify({ kind: 'other' }) }),
+		],
+		['a system prompt', row({ event_type: 'system', role: 'system', content: 'You are an agent' })],
+		[
+			'a message that looks like one',
+			row({ role: 'user', content: JSON.stringify({ kind: 'github_account_changed', login: 'x' }) }),
+		],
+	])('ignores %s', (_label, event) => {
+		expect(noticeText(event)).toBeNull()
+	})
+
+	it('shows a switch between turns, splitting the run it happened in', () => {
+		const turns = buildTurns([
+			row({ role: 'user', content: 'Open a PR' }),
+			row({
+				event_type: 'tool_call',
+				tool_call_id: 'p1',
+				tool_name: 'Bash',
+				tool_input_json: { command: 'git push' },
+			}),
+			notice('stan-personal'),
+			row({
+				event_type: 'tool_call',
+				tool_call_id: 'p2',
+				tool_name: 'Bash',
+				tool_input_json: { command: 'gh pr create' },
+			}),
+		])
+		expect(turns.map((turn) => turn.kind)).toEqual(['user', 'agent', 'notice', 'agent'])
+		expect(turns[2]).toMatchObject({ kind: 'notice', text: 'Account changed to stan-personal' })
 	})
 })
 

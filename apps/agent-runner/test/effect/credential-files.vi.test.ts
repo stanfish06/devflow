@@ -14,6 +14,8 @@ import {
 	renderGhConfigYml,
 	renderGhHostsYml,
 	renderGitconfig,
+	renderLockedGhHostsYml,
+	renderLockedGitconfig,
 	renderTokenFile,
 	withGithubEnvironment,
 	type GithubAccountCredentials,
@@ -182,6 +184,47 @@ describe('renderGitconfig', () => {
 			env: { PATH: process.env.PATH, HOME: directory, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1' },
 		})
 		expect(pushUrl.stdout.trim()).toBe('https://github.com/org/repo.git')
+	})
+})
+
+describe('the locked directory', () => {
+	it.each([
+		{ scope: 'sandboxed', includePaths: [] as string[] },
+		{ scope: 'non-sandboxed', includePaths: ['/home/me/.gitconfig'] },
+	])(
+		'$scope: names no account and keeps only the include, the SSH rewrite and a refusing helper',
+		({ includePaths }) => {
+			const rendered = renderLockedGitconfig({ includePaths })
+			expect(rendered).not.toContain('[user]')
+			expect(rendered.includes('[include]\n\tpath = "/home/me/.gitconfig"\n')).toBe(includePaths.length > 0)
+			expect(rendered).toContain('[url "https://github.com/"]\n\tinsteadOf = "git@github.com:"\n')
+			expect(rendered).toContain('[credential "https://github.com"]\n\thelper = ""\n')
+		},
+	)
+
+	it("refuses every GitHub credential request, even with the user's own helper included", () => {
+		const directory = mkdtempSync(join(scratch, 'locked-'))
+		const userConfig = join(directory, 'user-gitconfig')
+		writeFileSync(
+			userConfig,
+			'[user]\n\tname = Host User\n\temail = me@example.com\n[credential]\n\thelper = "!echo password=host-secret; :"\n',
+		)
+		const gitconfig = join(directory, 'gitconfig')
+		writeFileSync(gitconfig, renderLockedGitconfig({ includePaths: [userConfig] }))
+
+		const filled = git(gitconfig, ['credential', 'fill'], 'protocol=https\nhost=github.com\npath=org/repo.git\n\n')
+		expect(filled.status).not.toBe(0)
+		expect(filled.stdout).not.toContain('password=')
+		expect(filled.stdout).not.toContain('host-secret')
+		// On the host, commits fall back to the user's own identity, like the host login they switched to.
+		expect(git(gitconfig, ['config', 'user.name']).stdout.trim()).toBe('Host User')
+	})
+
+	it('leaves gh with no login and no token', () => {
+		const rendered = renderLockedGhHostsYml()
+		expect(rendered).not.toContain('oauth_token')
+		expect(rendered).not.toContain('user:')
+		expect(rendered.split('\n').every((line) => line === '' || line.startsWith('#'))).toBe(true)
 	})
 })
 

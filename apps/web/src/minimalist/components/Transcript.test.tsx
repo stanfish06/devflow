@@ -48,3 +48,20 @@ describe('minimalist end-of-turn edits summary', () => {
 		expect(container.querySelector('.del')).toHaveTextContent(`\u2212${removed}`)
 	})
 })
+
+describe('minimalist transcript notices', () => {
+	const notice: Turn = { kind: 'notice', id: 'notice', text: 'Account changed to stan-personal', at: 1500 }
+
+	it('shows the notice as a divider', () => {
+		turnWrites.mockReturnValue({ docs: [], files: [] })
+		render(<Transcript turns={[turn, notice]} running={false} />)
+		expect(screen.getByRole('note')).toHaveTextContent('Account changed to stan-personal')
+	})
+
+	it('keeps the run it was recorded in live, rather than showing a new start', () => {
+		turnWrites.mockReturnValue({ docs: [], files: [] })
+		const { container } = render(<Transcript turns={[turn, notice]} running />)
+		expect(screen.queryByText('Starting…')).toBeNull()
+		expect(container.querySelector('.worked.flush')).toBeNull()
+	})
+})

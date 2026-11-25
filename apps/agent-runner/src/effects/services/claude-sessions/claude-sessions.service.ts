@@ -55,7 +55,8 @@ export interface DeliverClaudeFollowUpMessageInput {
 
 export interface StopClaudeSessionInput {
 	readonly sessionId: string
-	readonly reason?: 'archive' | 'delete' | 'explicit'
+	/** `github_account_changed`: the task's account moved to or from the host login, which needs a new process. */
+	readonly reason?: 'archive' | 'delete' | 'explicit' | 'github_account_changed'
 }
 
 export type StopClaudeSessionOutcome = 'not-active' | 'already-stopping' | 'stopped' | 'timed-out'

@@ -41,6 +41,10 @@ const createDefaultCollections = (): DaemonServices['collections'] => ({
 	tasks: { toArray: [] } as unknown as DaemonServices['collections']['tasks'],
 	workspaceSetup: { toArray: [] } as unknown as DaemonServices['collections']['workspaceSetup'],
 	providerLoginRequests: { toArray: [] } as unknown as DaemonServices['collections']['providerLoginRequests'],
+	taskUserSettings: {
+		toArray: [],
+		subscribeChanges: () => ({ unsubscribe: () => {} }),
+	} as unknown as DaemonServices['collections']['taskUserSettings'],
 })
 
 /**

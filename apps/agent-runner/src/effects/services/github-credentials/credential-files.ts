@@ -205,6 +205,46 @@ export function renderGitconfig(input: {
 }
 
 /**
+ * A credential helper that answers every request with `quit`, so git stops at once: it asks no
+ * other helper and never prompts. GitHub access fails instead of going out as anyone.
+ */
+export const LOCKED_CREDENTIAL_HELPER = '!f() { cat >/dev/null; echo quit=1; }; f'
+
+/**
+ * The directory's contents when it can no longer act as any account, while an agent that started
+ * with it is still running: its environment points `gh` and `git` here and can't be changed until
+ * the agent restarts, so this is what they read until then.
+ *
+ * - gh has no login (and the env token it would otherwise fall back to was never passed).
+ * - git has no `[user]` (on the host it inherits the user's own identity through `includePaths`),
+ *   SSH GitHub remotes still go over HTTPS, and every credential request is refused.
+ */
+export function renderLockedGitconfig(input: { readonly includePaths: readonly string[] }): string {
+	const lines = [
+		'# Written by devflow for one agent session, and removed when it ends.',
+		"# This session's GitHub account changed; GitHub access stays closed until its agent restarts.",
+	]
+	if (input.includePaths.length > 0) {
+		lines.push('[include]', ...input.includePaths.map((path) => `\tpath = ${gitConfigString(path)}`))
+	}
+	lines.push(
+		'[url "https://github.com/"]',
+		`\tinsteadOf = ${gitConfigString('git@github.com:')}`,
+		`\tinsteadOf = ${gitConfigString('ssh://git@github.com/')}`,
+		'[credential "https://github.com"]',
+		`\thelper = ""`,
+		`\thelper = ${gitConfigString(LOCKED_CREDENTIAL_HELPER)}`,
+		'',
+	)
+	return lines.join('\n')
+}
+
+/** gh's `hosts.yml` with no login at all: an empty document. */
+export function renderLockedGhHostsYml(): string {
+	return "# This session's GitHub account changed; gh stays logged out until its agent restarts.\n"
+}
+
+/**
  * The host user's own global git config files, in the order git reads them, for a non-sandboxed
  * agent to include. `GIT_CONFIG_GLOBAL` in the daemon's environment replaces both defaults.
  */

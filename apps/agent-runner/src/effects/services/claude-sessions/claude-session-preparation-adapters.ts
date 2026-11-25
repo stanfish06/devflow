@@ -72,14 +72,13 @@ export const readCommitAttributionEnvironment = (input: {
 
 /**
  * The env fragment that makes the agent act as the session's GitHub account, or null to keep the
- * host's own gh login. The credential directory is held for as long as the enclosing scope (the run)
- * stays open, then released, which removes it once no run of the session holds it. A failure fails
- * the preparation: the session must not start as some other GitHub identity.
+ * host's own gh login. The session is held for as long as the enclosing scope (the run) stays open,
+ * then released, which removes its directory once no run of the session holds it. A host-login
+ * session is held too, so a mid-run switch to an account knows this run can't follow it. A failure
+ * fails the preparation: the session must not start as some other GitHub identity.
  */
 export const readGithubCredentialEnvironment = (input: PrepareGithubCredentialsInput) =>
 	Effect.gen(function* () {
 		const credentials = yield* GithubCredentials
-		return yield* Effect.acquireRelease(credentials.prepare(input), (githubEnv) =>
-			githubEnv === null ? Effect.void : credentials.release(input.sessionId),
-		)
+		return yield* Effect.acquireRelease(credentials.prepare(input), () => credentials.release(input.sessionId))
 	}).pipe(Effect.withSpan('claude.preparation.github_credentials'))

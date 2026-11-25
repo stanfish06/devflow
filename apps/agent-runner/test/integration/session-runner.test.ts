@@ -125,6 +125,7 @@ describeRealClaude('Session Runner - Real SDK Integration', () => {
 					approvalChanges: Stream.never,
 					workspaceSetupChanges: Stream.never,
 					providerLoginChanges: Stream.never,
+					taskUserSettingsChanges: Stream.never,
 					workspaceSetups: Stream.never,
 					workspaceSetupSessions: Stream.never,
 					streamSessionChanges: () => Stream.never,

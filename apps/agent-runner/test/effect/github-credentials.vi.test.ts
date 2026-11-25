@@ -68,8 +68,12 @@ const setup = async (
 const run = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(effect)
 const runExit = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromiseExit(effect)
 
-const prepare = (service: GithubCredentialsService, sessionId = SESSION_ID, scope: 'host' | 'sandbox' = 'host') =>
-	service.prepare({ sessionId, taskId: 'task-1', scope })
+const prepare = (
+	service: GithubCredentialsService,
+	sessionId = SESSION_ID,
+	scope: 'host' | 'sandbox' = 'host',
+	taskId = 'task-1',
+) => service.prepare({ sessionId, taskId, scope })
 
 describe('GithubCredentials', () => {
 	it('writes a private credential directory and points gh and git at it', async () => {
@@ -109,6 +113,7 @@ describe('GithubCredentials', () => {
 		await expect(run(prepare(service))).resolves.toBeNull()
 		expect(calls).toEqual([SESSION_ID])
 		expect(existsSync(runDirectory)).toBe(false)
+		await run(service.release(SESSION_ID))
 		// A release without a hold is harmless.
 		await run(service.release(SESSION_ID))
 	})
@@ -193,6 +198,128 @@ describe('GithubCredentials', () => {
 		mkdirSync(runDirectory, { recursive: true, mode: 0o755 })
 		await run(prepare(service))
 		expect(modeOf(runDirectory)).toBe(0o700)
+	})
+
+	describe("a mid-run switch of the task's account", () => {
+		const personal = (): Resolution => ({
+			accountId: '01a20f22-0000-7000-8000-000000000002',
+			login: 'stan-personal',
+			name: 'Stan P',
+			email: '1002+stan-personal@users.noreply.github.com',
+			token: ROTATED_TOKEN,
+		})
+		const read = (runDirectory: string, file: string, sessionId = SESSION_ID) =>
+			readFileSync(join(runDirectory, sessionId, 'github', file), 'utf8')
+
+		it("rewrites another account's files in place, for that task's sessions only", async () => {
+			let current = account()
+			const { service, runDirectory, calls } = await setup(() => current)
+			const env = await run(prepare(service, SESSION_ID, 'host', 'task-1'))
+			await run(prepare(service, OTHER_SESSION_ID, 'host', 'task-2'))
+			calls.length = 0
+
+			current = personal()
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'applied' },
+			])
+
+			expect(calls).toEqual([SESSION_ID])
+			expect(read(runDirectory, 'token')).toBe(`${ROTATED_TOKEN}\n`)
+			expect(read(runDirectory, 'gh/hosts.yml')).toContain('user: "stan-personal"')
+			expect(read(runDirectory, 'gh/hosts.yml')).not.toContain(TOKEN)
+			expect(read(runDirectory, 'gitconfig')).toContain('email = "1002+stan-personal@users.noreply.github.com"')
+			// Still the user's own config underneath: the session was prepared on the host.
+			expect(read(runDirectory, 'gitconfig')).toContain('path = "/home/me/.gitconfig"')
+			expect(modeOf(join(runDirectory, SESSION_ID, 'github', 'token'))).toBe(0o600)
+			// The same paths the running agent's env already points at.
+			expect(env).toEqual({
+				GH_CONFIG_DIR: join(runDirectory, SESSION_ID, 'github', 'gh'),
+				GIT_CONFIG_GLOBAL: join(runDirectory, SESSION_ID, 'github', 'gitconfig'),
+			})
+			expect(read(runDirectory, 'token', OTHER_SESSION_ID)).toBe(`${TOKEN}\n`)
+		})
+
+		it("locks the directory when the task moves to the host's own gh login, and asks for a restart", async () => {
+			let current: Resolution = account()
+			const { service, runDirectory } = await setup(() => current)
+			await run(prepare(service))
+
+			current = { useHostLogin: true }
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'restart' },
+			])
+
+			expect(read(runDirectory, 'token')).toBe('')
+			expect(read(runDirectory, 'gh/hosts.yml')).not.toContain('oauth_token')
+			const gitconfig = read(runDirectory, 'gitconfig')
+			expect(gitconfig).not.toContain('[user]')
+			expect(gitconfig).toContain('quit=1')
+			expect(modeOf(join(runDirectory, SESSION_ID, 'github', 'gitconfig'))).toBe(0o600)
+
+			// Switching back before the agent restarts opens it again as the account.
+			current = account()
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'applied' },
+			])
+			expect(read(runDirectory, 'token')).toBe(`${TOKEN}\n`)
+			expect(read(runDirectory, 'gitconfig')).toContain('[user]')
+		})
+
+		it('locks the directory, rather than keep the old account, when the new choice cannot be read', async () => {
+			let fail = false
+			const { service, runDirectory } = await setup(() => (fail ? 'fail' : account()))
+			await run(prepare(service))
+
+			fail = true
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'restart' },
+			])
+			expect(read(runDirectory, 'token')).toBe('')
+		})
+
+		it('asks for a restart, writing nothing, when a host-login session moves to an account', async () => {
+			let current: Resolution = { useHostLogin: true }
+			const { service, runDirectory } = await setup(() => current)
+			await expect(run(prepare(service))).resolves.toBeNull()
+
+			current = account()
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'restart' },
+			])
+			expect(existsSync(runDirectory)).toBe(false)
+		})
+
+		it('leaves a host-login session as it is when the task stays on the host login', async () => {
+			const { service } = await setup({ useHostLogin: true })
+			await run(prepare(service))
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([
+				{ sessionId: SESSION_ID, outcome: 'applied' },
+			])
+		})
+
+		it('forgets released sessions, so a later switch asks the API nothing', async () => {
+			const { service, calls } = await setup(account())
+			await run(prepare(service))
+			await run(service.release(SESSION_ID))
+			calls.length = 0
+
+			await expect(run(service.refresh('task-1'))).resolves.toEqual([])
+			expect(calls).toEqual([])
+		})
+
+		it('locks the directory an earlier run still uses when a later run of the session starts on the host login', async () => {
+			let current: Resolution = account()
+			const { service, runDirectory } = await setup(() => current)
+			await run(prepare(service))
+			current = { useHostLogin: true }
+			await expect(run(prepare(service))).resolves.toBeNull()
+
+			expect(read(runDirectory, 'token')).toBe('')
+			await run(service.release(SESSION_ID))
+			expect(existsSync(join(runDirectory, SESSION_ID))).toBe(true)
+			await run(service.release(SESSION_ID))
+			expect(existsSync(join(runDirectory, SESSION_ID))).toBe(false)
+		})
 	})
 
 	it('removes every remaining directory when the daemon stops', async () => {

@@ -198,7 +198,8 @@ async function prepareCodexGithubCredentials(
 	return {
 		githubEnv,
 		release: async () => {
-			if (githubEnv === null || released) return
+			// Host-login sessions are held too, so release every prepared session.
+			if (released) return
 			released = true
 			await services.daemonRuntime.runPromise(
 				Effect.gen(function* () {

@@ -39,6 +39,9 @@ export function Transcript({
 	const firstUser = turns.findIndex((turn) => turn.kind === 'user')
 	const { task } = useTask(taskId)
 	const reviewable = task !== null && canReview(task)
+	// A notice recorded mid-run (an account switch) sits after the running turn without ending it.
+	let current = turns.length - 1
+	while (current >= 0 && turns[current]?.kind === 'notice') current -= 1
 	return (
 		<>
 			{turns.map((turn, index) => {
@@ -58,7 +61,13 @@ export function Transcript({
 							Earlier messages summarized to save context
 						</div>
 					)
-				const live = running && index === turns.length - 1
+				if (turn.kind === 'notice')
+					return (
+						<div key={turn.id} className="compact-divider" role="note">
+							{turn.text}
+						</div>
+					)
+				const live = running && index === current
 				return (
 					<AgentTurn
 						key={turn.id}
@@ -70,7 +79,7 @@ export function Transcript({
 					/>
 				)
 			})}
-			{running && turns.at(-1)?.kind !== 'agent' ? (
+			{running && turns[current]?.kind !== 'agent' ? (
 				<div className="worked flush">
 					<span className="spin" /> Starting…
 				</div>

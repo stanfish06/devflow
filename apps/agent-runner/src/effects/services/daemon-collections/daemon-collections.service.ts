@@ -12,6 +12,7 @@ export type ApprovalChangeMessage = CollectionChange<CollectionRow<'approvals'>>
 export type TaskChangeMessage = CollectionChange<CollectionRow<'tasks'>>
 export type WorkspaceSetupChangeMessage = CollectionChange<CollectionRow<'workspaceSetup'>>
 export type ProviderLoginChangeMessage = CollectionChange<CollectionRow<'providerLoginRequests'>>
+export type TaskUserSettingsChangeMessage = CollectionChange<CollectionRow<'taskUserSettings'>>
 
 export interface DaemonCollectionsService {
 	readonly current: Effect.Effect<DaemonServices['collections']>
@@ -20,6 +21,8 @@ export interface DaemonCollectionsService {
 	readonly approvalChanges: Stream.Stream<ApprovalChangeMessage>
 	readonly workspaceSetupChanges: Stream.Stream<WorkspaceSetupChangeMessage>
 	readonly providerLoginChanges: Stream.Stream<ProviderLoginChangeMessage>
+	/** The daemon user's own per-task settings, starting with every row already synced. */
+	readonly taskUserSettingsChanges: Stream.Stream<TaskUserSettingsChangeMessage>
 	readonly workspaceSetups: Stream.Stream<WorkspaceSetupTask>
 	readonly workspaceSetupSessions: Stream.Stream<WorkspaceSetupSession>
 	readonly streamSessionChanges: (sessionId: string) => Stream.Stream<SessionChangeMessage>

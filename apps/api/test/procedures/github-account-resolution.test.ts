@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
+import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { githubAccounts } from '@devflow/db/tables/github-accounts'
 import { onlineHosts } from '@devflow/db/tables/online-hosts'
 import { organizations } from '@devflow/db/tables/organizations'
@@ -13,7 +14,7 @@ import { taskUserSettings } from '@devflow/db/tables/task-user-settings'
 import { tasks } from '@devflow/db/tables/tasks'
 import { userSettings } from '@devflow/db/tables/user-settings'
 import { call } from '@orpc/server'
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { Effect, Redacted } from 'effect'
 import { uuidv7 } from 'uuidv7'
@@ -530,6 +531,76 @@ describe('GitHub account resolution', () => {
 			await expect(call(api.launchDraft, draft, asUser(me))).rejects.toMatchObject({ code: 'NOT_FOUND' })
 			await expect(db.select().from(tasks).where(eq(tasks.id, v2.taskId))).resolves.toEqual([])
 			await expect(db.select().from(tasks).where(eq(tasks.id, draft.draftId))).resolves.toEqual([])
+		})
+	})
+
+	describe('a switch is recorded in the live sessions it reaches', () => {
+		/** The "Account changed to …" notices in a session, oldest first, as their logins (null: host login). */
+		const notices = async (sessionId: string) => {
+			const rows = await db
+				.select({ content: conversationEvents.content, eventType: conversationEvents.event_type })
+				.from(conversationEvents)
+				.where(eq(conversationEvents.session_id, sessionId))
+				.orderBy(asc(conversationEvents.created_at), asc(conversationEvents.id))
+			return rows.flatMap((row) => {
+				if (row.eventType !== 'system' || row.content === null) return []
+				const payload = JSON.parse(row.content) as { kind?: string; login?: string | null }
+				return payload.kind === 'github_account_changed' ? [payload.login ?? null] : []
+			})
+		}
+
+		it('appends one notice per change to each of your live sessions on the task, naming the account', async () => {
+			const { me, bot, taskId, sessionId } = await chain()
+			const secondLive = await createSession(me, taskId)
+
+			await call(api.setTaskAccount, { taskId, accountId: bot }, asUser(me))
+			// Picking the same account again changes nothing, so it records nothing.
+			await call(api.setTaskAccount, { taskId, accountId: bot }, asUser(me))
+			await call(api.setTaskAccount, { taskId, accountId: null }, asUser(me))
+
+			await expect(notices(sessionId)).resolves.toEqual(['stan-bot', null])
+			await expect(notices(secondLive)).resolves.toEqual(['stan-bot', null])
+			await expect(
+				db
+					.select({
+						resourceOwner: conversationEvents.resource_owner_user_id,
+						userId: conversationEvents.user_id,
+					})
+					.from(conversationEvents)
+					.where(eq(conversationEvents.session_id, sessionId)),
+			).resolves.toEqual([
+				{ resourceOwner: me.userId, userId: me.userId },
+				{ resourceOwner: me.userId, userId: me.userId },
+			])
+		})
+
+		it("leaves finished, archived and teammates' sessions alone", async () => {
+			const { me, bot, taskId, sessionId } = await chain()
+			const idle = await createSession(me, taskId)
+			await db.update(sessions).set({ status: 'ready_for_input' }).where(eq(sessions.id, idle))
+			const archived = await createSession(me, taskId)
+			await db.update(sessions).set({ archived: true }).where(eq(sessions.id, archived))
+			const teammate = await newPerson()
+			const teammateSession = await createSession(teammate, taskId)
+			const otherTask = await createTask(me, null)
+			const otherTaskSession = await createSession(me, otherTask)
+
+			await call(api.setTaskAccount, { taskId, accountId: bot }, asUser(me))
+
+			await expect(notices(sessionId)).resolves.toEqual(['stan-bot'])
+			for (const untouched of [idle, archived, teammateSession, otherTaskSession]) {
+				await expect(notices(untouched)).resolves.toEqual([])
+			}
+		})
+
+		it('records nothing when a pick fails', async () => {
+			const { me, taskId, sessionId } = await chain()
+			const teammate = await newPerson()
+			const theirs = await createAccount(teammate, 'ada')
+			await expect(call(api.setTaskAccount, { taskId, accountId: theirs }, asUser(me))).rejects.toMatchObject({
+				code: 'NOT_FOUND',
+			})
+			await expect(notices(sessionId)).resolves.toEqual([])
 		})
 	})
 

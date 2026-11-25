@@ -12,6 +12,7 @@ import {
 export function makeHostLoginGithubCredentials(overrides: Partial<GithubCredentialsService> = {}) {
 	return Layer.succeed(GithubCredentials, {
 		prepare: () => Effect.succeed(null),
+		refresh: () => Effect.succeed([]),
 		release: () => Effect.void,
 		...overrides,
 	})

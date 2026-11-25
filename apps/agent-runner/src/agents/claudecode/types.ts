@@ -4,6 +4,7 @@ import type { ContractRouterClient } from '@orpc/contract'
 import type { ApprovalsCollection } from '@/collections/electric/approvals'
 import type { ProviderLoginRequestsCollection } from '@/collections/electric/provider-login-requests'
 import type { SessionsCollection } from '@/collections/electric/sessions'
+import type { TaskUserSettingsCollection } from '@/collections/electric/task-user-settings'
 import type { TasksCollection } from '@/collections/electric/tasks'
 import type { WorkspaceSetupCollection } from '@/collections/electric/workspace-setup'
 import type { DaemonRuntime } from '@/effects/runtime'
@@ -54,6 +55,8 @@ export interface DaemonServices {
 		tasks: TasksCollection
 		workspaceSetup: WorkspaceSetupCollection
 		providerLoginRequests: ProviderLoginRequestsCollection
+		/** The daemon user's own per-task settings, for mid-run GitHub account switches. */
+		taskUserSettings: TaskUserSettingsCollection
 	}
 
 	/** Shutdown coordination for graceful termination */

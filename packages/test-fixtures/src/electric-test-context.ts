@@ -49,6 +49,7 @@ import {
 	createArtifactsMetadataV2Collection,
 	createArtifactsV2Collection,
 	createDaemonApprovalsCollection,
+	createDaemonTaskUserSettingsCollection,
 	createDaemonWorkspaceSetupCollection,
 	createDiffCommentsV2Collection,
 	createEventsCollection,
@@ -772,6 +773,21 @@ export async function createElectricTestContext(opts: ElectricTestContextOptions
 			onError?: (err: unknown) => void
 		}): Promise<LiveQueryWrapped> => {
 			const electricCollection = createTaskUserSettingsV2Collection({ server, onError })
+			const liveQueryCollection = wrapWithLiveQuery(electricCollection)
+			await setupLiveQuery(electricCollection, liveQueryCollection)
+			sourceCollections.push(electricCollection)
+			liveQueryCollections.push(liveQueryCollection)
+			return liveQueryCollection
+		},
+
+		createDaemonTaskUserSettingsCollection: async ({
+			server,
+			onError,
+		}: {
+			server: ProxyServer
+			onError?: (err: unknown) => void
+		}): Promise<LiveQueryWrapped> => {
+			const electricCollection = createDaemonTaskUserSettingsCollection({ server, onError })
 			const liveQueryCollection = wrapWithLiveQuery(electricCollection)
 			await setupLiveQuery(electricCollection, liveQueryCollection)
 			sourceCollections.push(electricCollection)

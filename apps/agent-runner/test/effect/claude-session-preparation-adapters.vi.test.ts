@@ -82,10 +82,13 @@ describe('readGithubCredentialEnvironment', () => {
 		expect(calls).toEqual([`prepare:${SESSION_ID}:sandbox`, 'run', `release:${SESSION_ID}`])
 	})
 
-	test('releases nothing for a host-login session', async () => {
+	test('holds a host-login session too, so a switch to an account knows this run started without one', async () => {
 		const { calls, layer } = recordingCredentials(null)
-		await Effect.runPromise(readGithubCredentialEnvironment(input).pipe(Effect.scoped, Effect.provide(layer)))
-		expect(calls).toEqual([`prepare:${SESSION_ID}:sandbox`])
+		const githubEnv = await Effect.runPromise(
+			readGithubCredentialEnvironment(input).pipe(Effect.scoped, Effect.provide(layer)),
+		)
+		expect(githubEnv).toBeNull()
+		expect(calls).toEqual([`prepare:${SESSION_ID}:sandbox`, `release:${SESSION_ID}`])
 	})
 
 	test('fails the preparation, rather than run as the host login, when the account is unavailable', async () => {

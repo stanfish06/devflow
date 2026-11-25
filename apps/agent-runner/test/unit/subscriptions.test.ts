@@ -116,6 +116,10 @@ function createServices() {
 			toArray: [],
 			subscribeChanges: () => ({ unsubscribe: () => {} }),
 		} as any,
+		taskUserSettings: {
+			toArray: [],
+			subscribeChanges: () => ({ unsubscribe: () => {} }),
+		} as any,
 	}
 	const services: DaemonServices = createMockDaemonServices({
 		orpc: {

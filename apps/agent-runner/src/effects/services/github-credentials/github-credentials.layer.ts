@@ -15,6 +15,8 @@ import {
 	renderGhConfigYml,
 	renderGhHostsYml,
 	renderGitconfig,
+	renderLockedGhHostsYml,
+	renderLockedGitconfig,
 	renderTokenFile,
 	type CredentialPaths,
 	type GithubAccountCredentials,
@@ -23,6 +25,7 @@ import {
 	GithubCredentials,
 	GithubCredentialsError,
 	type GithubCredentialScope,
+	type GithubCredentialsRefresh,
 	type GithubCredentialsService,
 	type PrepareGithubCredentialsInput,
 } from './github-credentials.service'
@@ -30,23 +33,31 @@ import {
 const PRIVATE_DIRECTORY = 0o700
 const PRIVATE_FILE = 0o600
 
-/** A session whose credential directory is on disk, and how many runs still hold it. */
+/** A session prepared on this host, and how many of its runs still hold it. */
 interface CredentialEntry {
 	readonly taskId: string | null
-	readonly paths: CredentialPaths
+	/** Where the session's agent runs, which decides what its gitconfig may include. */
+	scope: GithubCredentialScope
+	/**
+	 * How the session's latest run started: pointed at the credential directory (`account`), or with
+	 * the host's own gh login and the env untouched (`host`). Fixed for that run's lifetime.
+	 */
+	mode: 'account' | 'host'
+	/** The credential directory, once one has been written; removed with the last hold. */
+	paths: CredentialPaths | null
 	holds: number
 }
 
 export interface GithubCredentialsOptions {
 	/** Parent of every session's directory: `~/.devflow/run`. */
 	readonly runDirectory: string
-	/** The host user's global git config files, included under a non-sandboxed agent's gitconfig. */
+	/** The host user's own global git config files, included under a non-sandboxed agent's gitconfig. */
 	readonly hostGitConfigPaths: readonly string[]
 }
 
 /**
- * Build the service. The map of live directories is what a later task-level account switch will
- * walk to rewrite them; the semaphore keeps a session's write and removal from interleaving.
+ * Build the service. The map of prepared sessions is what a task-level account switch walks to
+ * rewrite their directories; the semaphore keeps a session's writes and removal from interleaving.
  */
 export const makeGithubCredentials = Effect.fn('github_credentials.make')(function* (
 	options: GithubCredentialsOptions,
@@ -56,6 +67,8 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 	const path = yield* Path.Path
 	const entries = new Map<string, CredentialEntry>()
 	const lock = yield* Semaphore.make(1)
+
+	const includePathsFor = (scope: GithubCredentialScope) => (scope === 'host' ? options.hostGitConfigPaths : [])
 
 	const privateDirectory = (directory: string) =>
 		fs
@@ -89,13 +102,46 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 			yield* writePrivateFile(paths.ghConfigFile, renderGhConfigYml())
 			yield* writePrivateFile(
 				paths.gitconfigFile,
-				renderGitconfig({
-					account,
-					tokenFile: paths.tokenFile,
-					includePaths: scope === 'host' ? options.hostGitConfigPaths : [],
-				}),
+				renderGitconfig({ account, tokenFile: paths.tokenFile, includePaths: includePathsFor(scope) }),
 			)
 		})
+
+	/**
+	 * Close GitHub access for an agent still pointed at the directory: no token, gh logged out, and
+	 * git refusing every credential request. If the files can't be rewritten, the token and gh login
+	 * are deleted instead, so the account never stays usable.
+	 */
+	const lockCredentialFiles = (sessionId: string, paths: CredentialPaths, scope: GithubCredentialScope) =>
+		Effect.gen(function* () {
+			yield* writePrivateFile(paths.tokenFile, '')
+			yield* writePrivateFile(paths.ghHostsFile, renderLockedGhHostsYml())
+			yield* writePrivateFile(
+				paths.gitconfigFile,
+				renderLockedGitconfig({ includePaths: includePathsFor(scope) }),
+			)
+		}).pipe(
+			Effect.catch((error) =>
+				Effect.logError('Could not lock a session GitHub credential directory; deleting its token').pipe(
+					Effect.annotateLogs({ sessionId, error: error.message }),
+					Effect.andThen(
+						Effect.forEach(
+							[paths.tokenFile, paths.ghHostsFile],
+							(file) =>
+								fs
+									.remove(file, { force: true })
+									.pipe(
+										Effect.catch((removeError) =>
+											Effect.logError('Could not delete a session GitHub credential file').pipe(
+												Effect.annotateLogs({ sessionId, file, error: removeError.message }),
+											),
+										),
+									),
+							{ discard: true },
+						),
+					),
+				),
+			),
+		)
 
 	const removeSessionDirectory = (sessionId: string, paths: CredentialPaths) =>
 		fs
@@ -108,18 +154,9 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 				),
 			)
 
-	const prepare = (input: PrepareGithubCredentialsInput) =>
+	/** The account the session acts as according to the API, or null for the host's own gh login. */
+	const resolveAccount = (sessionId: string) =>
 		Effect.gen(function* () {
-			const { sessionId } = input
-			if (!isCredentialSessionId(sessionId)) {
-				return yield* Effect.fail(
-					new GithubCredentialsError({
-						sessionId,
-						reason: 'invalid',
-						message: 'Could not set up the GitHub account for this session: its id is not a UUID.',
-					}),
-				)
-			}
 			// The request is interruptible even when the caller holds this in an uninterruptible acquire:
 			// stopping a session must not wait out the client's retries.
 			const resolution = yield* Effect.interruptible(api.resolveGithubToken({ sessionId })).pipe(
@@ -152,16 +189,54 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 					}),
 				)
 			}
+			return account
+		})
 
+	const prepare = (input: PrepareGithubCredentialsInput) =>
+		Effect.gen(function* () {
+			const { sessionId } = input
+			if (!isCredentialSessionId(sessionId)) {
+				return yield* Effect.fail(
+					new GithubCredentialsError({
+						sessionId,
+						reason: 'invalid',
+						message: 'Could not set up the GitHub account for this session: its id is not a UUID.',
+					}),
+				)
+			}
+			const account = yield* resolveAccount(sessionId)
 			const paths = credentialPaths(options.runDirectory, sessionId)
 			return yield* lock.withPermits(1)(
 				Effect.gen(function* () {
 					const existing = entries.get(sessionId)
+					if (account === null) {
+						// Nothing to write, but remember the session: a switch to an account later must
+						// restart its agent. An earlier run still pointed at a directory must stop acting
+						// as the account.
+						if (existing === undefined) {
+							entries.set(sessionId, {
+								taskId: input.taskId,
+								scope: input.scope,
+								mode: 'host',
+								paths: null,
+								holds: 1,
+							})
+						} else {
+							existing.holds += 1
+							existing.mode = 'host'
+							if (existing.paths !== null)
+								yield* lockCredentialFiles(sessionId, existing.paths, existing.scope)
+						}
+						return null
+					}
 					yield* writeCredentialFiles(paths, account, input.scope).pipe(
 						Effect.catch((error) =>
 							// A first write that failed leaves nothing behind; a rewrite keeps the files the
 							// earlier run is using.
-							(existing === undefined ? removeSessionDirectory(sessionId, paths) : Effect.void).pipe(
+							(existing === undefined || existing.paths === null
+								? removeSessionDirectory(sessionId, paths)
+								: Effect.void
+							).pipe(
 								Effect.andThen(
 									Effect.fail(
 										new GithubCredentialsError({
@@ -175,8 +250,20 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 							),
 						),
 					)
-					if (existing === undefined) entries.set(sessionId, { taskId: input.taskId, paths, holds: 1 })
-					else existing.holds += 1
+					if (existing === undefined) {
+						entries.set(sessionId, {
+							taskId: input.taskId,
+							scope: input.scope,
+							mode: 'account',
+							paths,
+							holds: 1,
+						})
+					} else {
+						existing.holds += 1
+						existing.mode = 'account'
+						existing.scope = input.scope
+						existing.paths = paths
+					}
 					yield* Effect.logInfo('Prepared the GitHub account for a session').pipe(
 						Effect.annotateLogs({
 							sessionId,
@@ -190,6 +277,64 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 			)
 		}).pipe(Effect.withSpan('github_credentials.prepare', { attributes: { session_id: input.sessionId } }))
 
+	/** Bring one prepared session in line with the task's new choice; undefined if it ended meanwhile. */
+	const refreshSession = (sessionId: string) =>
+		Effect.gen(function* () {
+			// The new account, null for the host's own gh login, or undefined when it can't be read.
+			const account: GithubAccountCredentials | null | undefined = yield* resolveAccount(sessionId).pipe(
+				Effect.catch((error) =>
+					Effect.logWarning("Could not read a session's new GitHub account; locking it").pipe(
+						Effect.annotateLogs({ sessionId, reason: error.reason, error: error.message }),
+						Effect.as(undefined),
+					),
+				),
+			)
+			return yield* lock.withPermits(1)(
+				Effect.gen(function* () {
+					const entry = entries.get(sessionId)
+					if (entry === undefined) return undefined
+					let outcome: GithubCredentialsRefresh['outcome']
+					if (account !== null && account !== undefined && entry.mode === 'account' && entry.paths !== null) {
+						const paths = entry.paths
+						outcome = yield* writeCredentialFiles(paths, account, entry.scope).pipe(
+							Effect.as('applied' as const),
+							Effect.catch((error) =>
+								Effect.logError('Could not rewrite a session GitHub credential directory').pipe(
+									Effect.annotateLogs({ sessionId, login: account.login, error: error.message }),
+									Effect.andThen(lockCredentialFiles(sessionId, paths, entry.scope)),
+									Effect.as('restart' as const),
+								),
+							),
+						)
+					} else {
+						// The host login (null), an account for an agent started without a directory, or
+						// a choice that couldn't be read: nothing the running agent reads can carry it.
+						if (entry.paths !== null) yield* lockCredentialFiles(sessionId, entry.paths, entry.scope)
+						outcome = account === null && entry.mode === 'host' ? 'applied' : 'restart'
+					}
+					yield* Effect.logInfo("Refreshed a session's GitHub account").pipe(
+						Effect.annotateLogs({
+							sessionId,
+							taskId: entry.taskId,
+							mode: entry.mode,
+							login: account?.login ?? (account === null ? 'host' : 'unknown'),
+							outcome,
+						}),
+					)
+					return { sessionId, outcome } satisfies GithubCredentialsRefresh
+				}),
+			)
+		})
+
+	const refresh = (taskId: string) =>
+		Effect.gen(function* () {
+			const sessionIds = [...entries.entries()]
+				.filter(([, entry]) => entry.taskId === taskId)
+				.map(([sessionId]) => sessionId)
+			const results = yield* Effect.forEach(sessionIds, refreshSession)
+			return results.filter((result) => result !== undefined)
+		}).pipe(Effect.withSpan('github_credentials.refresh', { attributes: { task_id: taskId } }))
+
 	const release = (sessionId: string) =>
 		lock.withPermits(1)(
 			Effect.gen(function* () {
@@ -198,7 +343,7 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 				entry.holds -= 1
 				if (entry.holds > 0) return
 				entries.delete(sessionId)
-				yield* removeSessionDirectory(sessionId, entry.paths)
+				if (entry.paths !== null) yield* removeSessionDirectory(sessionId, entry.paths)
 			}),
 		)
 
@@ -209,14 +354,16 @@ export const makeGithubCredentials = Effect.fn('github_credentials.make')(functi
 				[...entries.entries()],
 				([sessionId, entry]) =>
 					Effect.sync(() => entries.delete(sessionId)).pipe(
-						Effect.andThen(removeSessionDirectory(sessionId, entry.paths)),
+						Effect.andThen(
+							entry.paths === null ? Effect.void : removeSessionDirectory(sessionId, entry.paths),
+						),
 					),
 				{ discard: true },
 			),
 		),
 	)
 
-	return { prepare, release } satisfies GithubCredentialsService
+	return { prepare, refresh, release } satisfies GithubCredentialsService
 })
 
 /** Directories under `$DEVFLOW_HOME/run` (default `~/.devflow/run`), like the sandbox's own state. */
