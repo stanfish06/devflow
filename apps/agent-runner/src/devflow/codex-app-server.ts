@@ -17,12 +17,18 @@
  */
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
+import { existsSync, readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { Effect } from 'effect'
 
 import { handleInterruptOutcome, subscribeToSessionInterrupt } from '@/agents/claudecode/interrupts'
 import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } from '@/agents/shared/run-session'
+import { isVmSandbox, sessionSandbox, waitForTaskSandbox, whileLaunching } from '@/devflow/agent-sandbox'
+import { DEVFLOW_SECRET_ENV, githubCredentialMounts, gitCommonDir } from '@/devflow/docker-sandbox'
+import { vmManager, type VmLease } from '@/devflow/vm-sandbox'
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
 import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github-credentials/credential-files'
 import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
@@ -169,10 +175,76 @@ export class AppServerClient {
  * Start `codex app-server` on the host. Codex sandboxes its own commands (Seatbelt on macOS,
  * Landlock on Linux; `workspace-write` limits writes to the worktree), so it does not use the
  * Docker sandbox: that would need the user's whole CODEX_HOME (auth refresh rewrites auth.json by
- * rename) mounted into the container, including every past Codex session.
+ * rename) mounted into the container, including every past Codex session. A task whose sandbox is
+ * a VM runs it there instead (startVmAppServer), with CODEX_HOME mounted.
  */
 export function startAppServer(cwd: string, env: NodeJS.ProcessEnv = process.env): ChildProcess {
 	return spawn('codex', ['app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+}
+
+const codexHome = (env: NodeJS.ProcessEnv = process.env) => env.CODEX_HOME ?? join(homedir(), '.codex')
+
+/**
+ * What Codex in a VM needs of its task: the whole task workspace (every repository's worktree, not
+ * only the default one it starts in) and each worktree's git directory. Claude Code gets the sibling
+ * worktrees through the SDK's additional directories instead.
+ */
+export function taskWorkspaceMounts(
+	cwd: string,
+	workspacesRoot = join(process.env.DEVFLOW_HOME ?? join(homedir(), '.devflow'), 'workspaces'),
+): string[] {
+	const fromRoot = relative(workspacesRoot, cwd)
+	if (fromRoot.startsWith('..') || isAbsolute(fromRoot) || fromRoot === '')
+		return [cwd, ...optional(gitCommonDir(cwd))]
+	const workspace = join(workspacesRoot, fromRoot.split(sep)[0] ?? '')
+	const worktrees = [
+		workspace,
+		...readdirSync(workspace, { withFileTypes: true })
+			.filter((entry) => entry.isDirectory())
+			.map((entry) => join(workspace, entry.name)),
+	]
+	return [
+		workspace,
+		...worktrees.flatMap((dir) => (existsSync(join(dir, '.git')) ? optional(gitCommonDir(dir)) : [])),
+	]
+}
+
+const optional = (path: string | undefined): string[] => (path ? [path] : [])
+
+/** What a Codex process in a VM gets of the daemon's env: Codex and OpenAI settings, git identity, devflow metadata. */
+const VM_CODEX_ENV_ALLOW = /^(CODEX_|OPENAI_|DEVFLOW_|GIT_(AUTHOR|COMMITTER)_|GH_TOKEN$|RUST_LOG$)/
+
+export function vmCodexEnvironment(
+	githubEnv: GithubEnv | null,
+	env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+	const allowed: Record<string, string> = {}
+	for (const [key, value] of Object.entries(env)) {
+		if (value !== undefined && VM_CODEX_ENV_ALLOW.test(key) && !DEVFLOW_SECRET_ENV.test(key)) allowed[key] = value
+	}
+	const result: Record<string, string> = {}
+	for (const [key, value] of Object.entries(withGithubEnvironment(allowed, githubEnv))) {
+		if (value !== undefined) result[key] = value
+	}
+	// The guest's HOME differs from the host's; point Codex at the mounted host login.
+	result.CODEX_HOME = codexHome(env)
+	return result
+}
+
+/** Start `codex app-server` in the leased VM; killing the returned process also stops it in the guest. */
+export function startVmAppServer(lease: VmLease, cwd: string, githubEnv: GithubEnv | null): ChildProcess {
+	const { child, stop } = lease.run({
+		label: 'Codex',
+		cwd,
+		env: vmCodexEnvironment(githubEnv),
+		command: ['codex', 'app-server'],
+	})
+	const kill = child.kill.bind(child)
+	child.kill = (signal?: NodeJS.Signals | number) => {
+		stop()
+		return kill(signal)
+	}
+	return child
 }
 
 /**
@@ -191,11 +263,12 @@ export function codexEnvironment(githubEnv: GithubEnv | null, env: NodeJS.Proces
 async function prepareCodexGithubCredentials(
 	session: Pick<SessionForExecution, 'id' | 'task_id'>,
 	services: SessionContext['services'],
+	scope: 'host' | 'sandbox',
 ): Promise<{ readonly githubEnv: GithubEnv | null; readonly release: () => Promise<void> }> {
 	const githubEnv = await services.daemonRuntime.runPromise(
 		Effect.gen(function* () {
 			const credentials = yield* GithubCredentials
-			return yield* credentials.prepare({ sessionId: session.id, taskId: session.task_id, scope: 'host' })
+			return yield* credentials.prepare({ sessionId: session.id, taskId: session.task_id, scope })
 		}),
 	)
 	let released = false
@@ -232,12 +305,41 @@ export async function executeCodexAppServer(
 	const bypass = session.permissions_mode === 'bypass'
 	const prompt = session.prompt ?? ''
 
+	// Codex sandboxes itself on the host; only a VM task moves it (the Docker sandbox is Claude's).
+	const sandbox = sessionSandbox(
+		session.task_id ? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id) : null,
+	)
+	const inVm = isVmSandbox(sandbox)
 	// Fails the session rather than start Codex as some other GitHub identity.
-	const github = await prepareCodexGithubCredentials(session, services)
+	const github = await prepareCodexGithubCredentials(session, services, inVm ? 'sandbox' : 'host')
+	let lease: VmLease | null = null
 	let client: AppServerClient
 	try {
-		client = new AppServerClient(startAppServer(cwd, codexEnvironment(github.githubEnv)))
+		if (inVm) {
+			lease = await whileLaunching(
+				vmManager.acquire({
+					scope: sandbox === 'vm-task' ? 'task' : 'shared',
+					taskId: session.task_id,
+					paths: [...taskWorkspaceMounts(cwd), codexHome(), ...githubCredentialMounts(github.githubEnv)],
+				}),
+				// Only while still launching: a stop request must not be overwritten.
+				() =>
+					services.collections.sessions.get(session.id)?.status === 'launching'
+						? orpc.sessions.update({ sessionId: session.id, status: 'launching' })
+						: Promise.resolve(),
+			)
+		}
+		// A stop requested while the VM was starting wins over starting the agent.
+		if (lease && services.collections.sessions.get(session.id)?.status !== 'launching') {
+			throw new Error('The session stopped while its VM was starting')
+		}
+		client = new AppServerClient(
+			lease
+				? startVmAppServer(lease, cwd, github.githubEnv)
+				: startAppServer(cwd, codexEnvironment(github.githubEnv)),
+		)
 	} catch (error) {
+		lease?.release()
 		await github.release()
 		throw error
 	}
@@ -413,7 +515,8 @@ export async function executeCodexAppServer(
 			cwd,
 			model: session.model ?? null,
 			approvalPolicy: bypass ? 'never' : 'on-request',
-			sandbox: bypass ? 'danger-full-access' : 'workspace-write',
+			// In a VM the VM is the boundary, and Codex's own sandbox would keep commands off its Docker socket.
+			sandbox: bypass || inVm ? 'danger-full-access' : 'workspace-write',
 			// Agents install dependencies and fetch docs, so the workspace sandbox keeps network access.
 			config: { sandbox_workspace_write: { network_access: true } },
 		}
@@ -457,6 +560,7 @@ export async function executeCodexAppServer(
 	} finally {
 		unsubscribeInterrupt()
 		client.close()
+		lease?.release()
 		await github.release()
 	}
 

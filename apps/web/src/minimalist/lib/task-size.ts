@@ -1,4 +1,5 @@
 import type { ResolvedTaskWorkflow } from '@devflow/schemas/effect/taskconfiguration'
+import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { useLocalStorage } from '@uidotdev/usehooks'
 
 export type TaskSize = 'small' | 'medium' | 'large' | 'unknown'
@@ -57,4 +58,12 @@ export function useSmallTaskAutoAdvance() {
 export function taskSizeWorkflow(size: TaskSize, smallAutoAdvance: boolean): ResolvedTaskWorkflow {
 	const { workflow } = taskSizeOption(size)
 	return size === 'small' ? { workflowType: workflow.workflowType, autoAdvance: smallAutoAdvance } : workflow
+}
+
+/**
+ * The VM a task of a `vm` project runs in unless the composer picks: quick small work shares the
+ * host's VM; anything that may grow into a feature gets its own.
+ */
+export function defaultVmScope(size: TaskSize): VmScope {
+	return size === 'small' ? 'shared' : 'task'
 }

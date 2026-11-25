@@ -1,4 +1,5 @@
 import type { ProjectRepositories } from '@devflow/schemas/effect/project-workspace'
+import { type ProjectSandbox, ProjectSandboxSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { ProjectRepositoriesSchema } from '@devflow/schemas/zod/project-workspace'
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core'
@@ -41,6 +42,8 @@ export const projects = pgTable(
 		resource_owner_user_id: text().notNull(),
 		repositories: jsonb().$type<ProjectRepositories>().notNull(),
 		archived: boolean().notNull().default(false),
+		/** Where the project's agents run (see PROJECT_SANDBOXES); copied onto each task at launch. */
+		sandbox: text().$type<ProjectSandbox>().notNull().default('default'),
 	},
 	(t) => [
 		index('projects_organization_id_index').on(t.organization_id),
@@ -50,6 +53,7 @@ export const projects = pgTable(
 
 export const projectSelectSchema = createSelectSchema(projects, {
 	repositories: jsonbParser(ProjectRepositoriesSchema),
+	sandbox: ProjectSandboxSchema,
 })
 export const projectInsertSchema = createInsertSchema(projects, {
 	repositories: ProjectRepositoriesSchema,

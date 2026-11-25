@@ -10,8 +10,9 @@ import { diffCommentSideToPierre, pierreSideToDiffComment } from '@devflow/ui/li
 import type { AnnotationSide, DiffLineAnnotation, FileDiffOptions } from '@pierre/diffs'
 import { FileDiff } from '@pierre/diffs/react'
 import { Check, ChevronRight, GitBranch, MessageSquare, X } from 'lucide-react'
-import { type ReactNode, useMemo, useState } from 'react'
+import { type ReactNode, use, useMemo, useState } from 'react'
 
+import { TaskDiffContext } from '@/components/diffs/task-diff-context'
 import { useTaskDiffComparisons } from '@/hooks/diffs/useTaskDiffComparisons'
 import { useTaskDiffFiles } from '@/hooks/diffs/useTaskDiffFiles'
 import { useTaskDiffReviewedState } from '@/hooks/diffs/useTaskDiffReviewedState'
@@ -75,7 +76,15 @@ export function useDiffTotals(task: Task): { added: number; removed: number } | 
 	}
 }
 
+/**
+ * Outside a TaskDiffScope (the scope found no diff for the task yet, e.g. while its first session
+ * is still launching) there is nothing to count, and the diff hooks would throw.
+ */
 export function DiffStat({ task, onOpen }: { task: Task; onOpen: () => void }) {
+	return use(TaskDiffContext) ? <ScopedDiffStat task={task} onOpen={onOpen} /> : null
+}
+
+function ScopedDiffStat({ task, onOpen }: { task: Task; onOpen: () => void }) {
 	const totals = useDiffTotals(task)
 	if (!totals) return null
 	const { added, removed } = totals

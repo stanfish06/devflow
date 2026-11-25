@@ -272,6 +272,31 @@ describe('projects v2', () => {
 		).rejects.toMatchObject({ code: 'FORBIDDEN' })
 	})
 
+	test('creates projects on the host default sandbox and lets the owner pick another', async () => {
+		const actor = await setupActor()
+		const created = await call(
+			createProject,
+			{ name: 'Sandboxed', private: false, repositories: [repository] },
+			{ context: actor.context },
+		)
+		expect(created.project.sandbox).toBe('default')
+		const updated = await call(
+			updateProject,
+			{ projectId: created.project.id, sandbox: 'vm' },
+			{ context: actor.context },
+		)
+		expect(updated.project.sandbox).toBe('vm')
+		const [row] = await db.select().from(projects).where(eq(projects.id, created.project.id))
+		expect(row?.sandbox).toBe('vm')
+		await expect(
+			call(
+				updateProject,
+				{ projectId: created.project.id, sandbox: 'qemu' as never },
+				{ context: actor.context },
+			),
+		).rejects.toBeInstanceOf(ORPCError)
+	})
+
 	test('lets organization members read shared projects', async () => {
 		const owner = await setupActor()
 		const created = await call(

@@ -20,6 +20,7 @@ import { RepositorySourceSetupDialogWired } from '../RepositorySourceSetupDialog
 import { ProjectArchiveConfirmDialog } from './ProjectArchiveConfirmDialog'
 import { ProjectEditDialog } from './ProjectEditDialog'
 import { ProjectGithubAccountSelect } from './ProjectGithubAccountSelect'
+import { ProjectSandboxSelect } from './ProjectSandboxSelect'
 import { RepositorySetupDialog } from './RepositorySetupDialog'
 
 type Project = ApiOutputs['projects']['v2']['list']['projects'][number]
@@ -268,6 +269,7 @@ function ProjectRow({
 			{expanded && (
 				<div className="px-3 pb-2.5 pl-9">
 					<ProjectGithubAccountSelect projectId={project.id} projectName={project.name} />
+					<ProjectSandboxSelect project={project} canEdit={canEdit} onSaved={onRefresh} />
 					{project.repositories.map((repo, index) => (
 						<div
 							key={repo.repositoryIdentity}

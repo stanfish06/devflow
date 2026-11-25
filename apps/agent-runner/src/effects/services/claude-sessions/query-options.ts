@@ -5,7 +5,8 @@ import { getBundledAgents } from '@/agents/claudecode/bundled-agents'
 import type { EffectiveSettings } from '@/agents/claudecode/effective-settings'
 import { mapToSdkPermissionMode } from '@/agents/claudecode/permission-mode'
 import type { ForkMeta } from '@/agents/shared/run-session'
-import { createDockerSandboxSpawner, isDockerSandboxEnabled } from '@/devflow/docker-sandbox'
+import { createDockerSandboxSpawner } from '@/devflow/docker-sandbox'
+import { createVmSandboxSpawner, type VmLease } from '@/devflow/vm-sandbox'
 
 import { withGithubEnvironment, type GithubEnv } from '../github-credentials/credential-files'
 
@@ -58,6 +59,30 @@ export interface BuildClaudeQueryOptionsInput {
 	 */
 	readonly githubEnv?: GithubEnv | null
 	readonly inheritedEnv: NodeJS.ProcessEnv
+	/** Where the Claude Code process runs: on the host, in a Docker container, or in a leased VM. */
+	readonly sandbox: ClaudeSandbox
+}
+
+export type ClaudeSandbox =
+	| { readonly kind: 'none' }
+	| { readonly kind: 'docker' }
+	| { readonly kind: 'vm'; readonly lease: VmLease }
+
+/** The SDK spawn hook for the session's sandbox; undefined runs Claude Code on the host. */
+function sandboxSpawner(input: BuildClaudeQueryOptionsInput): Options['spawnClaudeCodeProcess'] {
+	const launch = {
+		cwd: input.cwd,
+		mountPaths: [...input.additionalDirectories, input.rpiPluginPath, input.appPluginPath],
+		githubEnv: input.githubEnv ?? null,
+	}
+	switch (input.sandbox.kind) {
+		case 'docker':
+			return createDockerSandboxSpawner(launch)
+		case 'vm':
+			return createVmSandboxSpawner(input.sandbox.lease, launch)
+		case 'none':
+			return undefined
+	}
 }
 
 /** Models that reject `budget_tokens` thinking and only run adaptive thinking. */
@@ -130,13 +155,6 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Op
 		canUseTool: input.canUseTool,
 		plugins,
 		hooks: input.hooks,
-		// Run the Claude Code process in a Docker container when DEVFLOW_AGENT_SANDBOX=docker.
-		spawnClaudeCodeProcess: isDockerSandboxEnabled()
-			? createDockerSandboxSpawner({
-					cwd: input.cwd,
-					mountPaths: [...input.additionalDirectories, input.rpiPluginPath, input.appPluginPath],
-					githubEnv: input.githubEnv ?? null,
-				})
-			: undefined,
+		spawnClaudeCodeProcess: sandboxSpawner(input),
 	}
 }

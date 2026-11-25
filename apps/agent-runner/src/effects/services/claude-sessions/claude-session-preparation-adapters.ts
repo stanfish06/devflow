@@ -1,5 +1,7 @@
 import { Data, Effect } from 'effect'
 
+import { whileLaunching } from '@/devflow/agent-sandbox'
+import { vmManager, type VmLease } from '@/devflow/vm-sandbox'
 import { loadConfiguredRepoContext } from '@/lib/configured-repos/service'
 import { commitAttributionEnv } from '@/lib/git/commit-attribution'
 import { ensureRpiPluginOnDisk } from '@/plugins/ensure-plugin'
@@ -13,6 +15,8 @@ export class ClaudePreparationAdapterError extends Data.TaggedError('ClaudePrepa
 		| 'artifact-paths'
 		| 'configured-repositories'
 		| 'commit-attribution'
+		| 'vm-sandbox'
+		| 'task-sandbox'
 	readonly cause: unknown
 }> {}
 
@@ -82,3 +86,16 @@ export const readGithubCredentialEnvironment = (input: PrepareGithubCredentialsI
 		const credentials = yield* GithubCredentials
 		return yield* Effect.acquireRelease(credentials.prepare(input), () => credentials.release(input.sessionId))
 	}).pipe(Effect.withSpan('claude.preparation.github_credentials'))
+
+/**
+ * Start the session's VM (creating it on first use) and hold it until the run's scope closes.
+ * `bump` keeps the launching session active meanwhile.
+ */
+export const acquireVmLease = (input: Parameters<typeof vmManager.acquire>[0], bump: () => Promise<unknown>) =>
+	Effect.acquireRelease(
+		adaptPreparationPromise('vm-sandbox', () => whileLaunching(vmManager.acquire(input), bump)),
+		(lease: VmLease) => Effect.sync(() => lease.release()),
+	)
+
+/** Read the session's task sandbox (waiting for its row), as a preparation failure when it never syncs. */
+export const adaptTaskSandbox = <A>(operation: () => Promise<A>) => adaptPreparationPromise('task-sandbox', operation)

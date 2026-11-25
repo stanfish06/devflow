@@ -28,6 +28,7 @@ const row: OnlineHost = {
 	machine: null,
 	stats: null,
 	coding_agent_usage_limits: null,
+	sandbox_vms: null,
 }
 
 describe('online host collections', () => {

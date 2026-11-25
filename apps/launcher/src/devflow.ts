@@ -25,6 +25,7 @@ import { join, resolve } from 'node:path'
 
 import { Effect, Layer } from 'effect'
 
+import { formatBytes, parseCleanArgs, planClean } from './lib/clean'
 import { renderStackEnvLines, type StackEnvProjection } from './lib/env-block'
 import { ensureEnvFileValue } from './lib/env-file'
 import { OrganizationSeed, OrganizationSeedLive, OrganizationSeedPersistenceLive } from './lib/seed'
@@ -251,8 +252,8 @@ function buildEnv(config: DevflowConfig): Record<string, string> {
 		// Helper model calls (titles, next steps) run through Claude Code on the subscription.
 		DEVFLOW_AI_PROVIDER: 'claude-code',
 		DEVFLOW_HOME,
-		// Agents run in Docker containers (apps/agent-runner/src/devflow/docker-sandbox.ts);
-		// set DEVFLOW_AGENT_SANDBOX=none in .env to run them on the host.
+		// Default for projects that do not pick a sandbox: Docker containers (docker-sandbox.ts), the
+		// shared Lima VM (`vm`, vm-sandbox.ts) or the host (`none`).
 		DEVFLOW_AGENT_SANDBOX: process.env.DEVFLOW_AGENT_SANDBOX ?? 'docker',
 		DEVFLOW_AGENT_IMAGE: AGENT_IMAGE,
 		S3_ARTIFACTS_REGION: 'us-east-1',
@@ -274,8 +275,10 @@ function buildEnv(config: DevflowConfig): Record<string, string> {
 		GITHUB_APP_PRIVATE_KEY: keys.githubPlaceholder,
 	}
 	for (const [key, value] of Object.entries(githubApp)) env[key] = process.env[key] ?? value
-	// Sandboxed agents push branches and open PRs with gh; give them the host's gh login token.
-	if (env.DEVFLOW_AGENT_SANDBOX === 'docker' && !process.env.GH_TOKEN) {
+	// Sandboxed agents push branches and open PRs with gh; give them the host's gh login token. A host
+	// that runs agents unsandboxed by default keeps the token out of its environment (set GH_TOKEN in
+	// .env for its Docker or VM projects).
+	if (env.DEVFLOW_AGENT_SANDBOX !== 'none' && !process.env.GH_TOKEN) {
 		const token = spawnSync('gh', ['auth', 'token'], { encoding: 'utf8' })
 		if (token.status === 0 && token.stdout.trim()) env.GH_TOKEN = token.stdout.trim()
 	}
@@ -323,9 +326,12 @@ function compose(env: Record<string, string>, args: string[]): void {
 
 const CONTAINER_SERVICES = ['postgres', 'electric', 'minio', 'minio-setup', 'durable-streams', 'redis']
 
-/** Build the agent sandbox image (docker/devflow-agent) when the sandbox is on and the image is missing. */
-function ensureAgentImage(env: Record<string, string>): void {
-	if (env.DEVFLOW_AGENT_SANDBOX !== 'docker') return
+/**
+ * Build the agent sandbox image (docker/devflow-agent) when it is missing. Any project can pick the
+ * Docker sandbox whatever the host default, so this runs wherever a Docker daemon answers.
+ */
+function ensureAgentImage(): void {
+	if (spawnSync('docker', ['version'], { stdio: 'ignore' }).status !== 0) return
 	const present = spawnSync('docker', ['image', 'inspect', AGENT_IMAGE], { stdio: 'ignore' }).status === 0
 	if (present) return
 	console.log(`Building the agent sandbox image ${AGENT_IMAGE} (about 1 minute)...`)
@@ -409,7 +415,7 @@ async function setup(): Promise<void> {
 	compose(env, ['up', '-d', '--wait', ...CONTAINER_SERVICES.filter((service) => service !== 'minio-setup')])
 	compose(env, ['up', '-d', 'minio-setup'])
 	await waitForPostgres(env)
-	ensureAgentImage(env)
+	ensureAgentImage()
 	run('bun', ['--bun', 'x', 'drizzle-kit', 'migrate'], env, { cwd: join(REPO_ROOT, 'packages/db') })
 	await Effect.runPromise(
 		Effect.gen(function* () {
@@ -487,7 +493,7 @@ async function up(): Promise<void> {
 	mkdirSync(LOG_DIR, { recursive: true })
 	compose(env, ['up', '-d', '--wait', ...CONTAINER_SERVICES.filter((service) => service !== 'minio-setup')])
 	writeCaddyfile()
-	ensureAgentImage(env)
+	ensureAgentImage()
 	// Bun's fetch trusts only its bundled CAs; the services call each other through Caddy's HTTPS routes.
 	const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env, NODE_EXTRA_CA_CERTS: CADDY_ROOT_CA }
 	const devUi = process.argv.includes('--dev')
@@ -820,7 +826,7 @@ async function host(): Promise<void> {
 		NODE_EXTRA_CA_CERTS: caPath,
 		LOG_BASE: LOG_DIR,
 	}
-	ensureAgentImage(env)
+	ensureAgentImage()
 	let stopping = false
 	let child: ReturnType<typeof spawn> | undefined
 	const stop = () => {
@@ -906,6 +912,103 @@ function trust(): void {
 	}
 }
 
+/**
+ * `clean`: free disk under DEVFLOW_HOME (task worktrees, their node_modules, old logs, task VMs).
+ * Reports what it would free; `--yes` does it. Rules in apps/launcher/src/lib/clean.ts.
+ */
+function clean(): void {
+	const options = parseCleanArgs(process.argv.slice(3))
+	// Reads the stack's existing config; clean never sets a stack up.
+	if (!existsSync(join(DEVFLOW_HOME, 'config.json')))
+		throw new Error(`No devflow stack in ${DEVFLOW_HOME}; nothing to clean.`)
+	const env = buildEnv(loadOrCreateConfig())
+	// The task states decide what may go, so without the database nothing is touched.
+	const query = (sql: string) => {
+		const result = spawnSync(
+			'docker',
+			[
+				'compose',
+				'-f',
+				join(REPO_ROOT, 'docker-compose.yaml'),
+				'exec',
+				'-T',
+				'postgres',
+				'psql',
+				'-U',
+				'postgres',
+				'electric',
+				'-tAc',
+				sql,
+			],
+			{ env: { ...process.env, ...env }, encoding: 'utf8' },
+		)
+		if (result.status !== 0) {
+			const why = (result.stderr ?? '').trim() || result.error?.message || `exit ${result.status}`
+			throw new Error(`Cannot read tasks from Postgres (is the stack up? bun run devflow up): ${why}`)
+		}
+		return result.stdout
+	}
+	console.log(options.useGh ? 'Checking worktrees (git fetch, gh pr list)...' : 'Checking worktrees (git fetch)...')
+	const items = planClean({ devflowHome: DEVFLOW_HOME, options, query })
+	const order = { remove: 0, deps: 1, keep: 2 } as const
+	items.sort((a, b) => order[a.decision.action] - order[b.decision.action] || b.bytes - a.bytes)
+	for (const item of items) {
+		const size = item.decision.action === 'keep' ? '' : formatBytes(item.bytes)
+		console.log(`${item.decision.action.padEnd(6)} ${size.padStart(8)}  ${item.label}  (${item.decision.reason})`)
+	}
+	const freeing = items.filter((item) => item.decision.action !== 'keep')
+	if (!options.apply) {
+		console.log(
+			`\nWould free ${formatBytes(freeing.reduce((sum, item) => sum + item.bytes, 0))}. Run again with --yes to do it.`,
+		)
+		return
+	}
+	let freed = 0
+	for (const item of freeing) {
+		const failure = item.apply()
+		if (failure) console.log(`not done: ${failure}`)
+		else freed += item.bytes
+	}
+	console.log(`\nFreed ${formatBytes(freed)}.`)
+}
+
+const VM_USAGE = 'bun run devflow vm [ls | shell <name> | stop <name> | rm <name>]'
+
+/** The limactl subcommand for a `devflow vm` action on one VM. */
+function vmActionArgs(action: string): string[] | undefined {
+	switch (action) {
+		case 'shell':
+			return ['shell']
+		case 'stop':
+			return ['stop']
+		case 'rm':
+			return ['delete', '--force']
+		default:
+			return undefined
+	}
+}
+
+/**
+ * `vm`: the Lima VMs agents of `vm` projects run in (apps/agent-runner/src/devflow/vm-sandbox.ts).
+ * The daemon creates, stops and deletes them; this lists them and opens or removes one by hand.
+ */
+function vm(): void {
+	requireTool('limactl')
+	const [action = 'ls', name] = process.argv.slice(3)
+	if (action === 'ls') {
+		const listed = spawnSync('limactl', ['list'], { encoding: 'utf8' })
+		if (listed.status !== 0) throw new Error(listed.stderr.trim())
+		const [header = '', ...rows] = listed.stdout.trimEnd().split('\n')
+		const ours = rows.filter((row) => row.startsWith('devflow-'))
+		console.log(ours.length > 0 ? [header, ...ours].join('\n') : 'No devflow VMs.')
+		return
+	}
+	const args = vmActionArgs(action)
+	if (!args || !name?.startsWith('devflow-')) throw new Error(`Usage: ${VM_USAGE}`)
+	const result = spawnSync('limactl', [...args, name], { stdio: 'inherit' })
+	if (result.status !== 0) process.exit(result.status ?? 1)
+}
+
 /** `e2e`: Playwright tests in apps/e2e against the running stack (installed Chrome). */
 function e2e(): void {
 	const result = spawnSync('bun', ['x', 'playwright', 'test', ...process.argv.slice(3)], {
@@ -934,6 +1037,8 @@ const commands: Record<string, () => void | Promise<void>> = {
 	env: printEnv,
 	host,
 	remote,
+	vm,
+	clean,
 }
 /**
  * Every other command goes to devflow's CLI (apps/cli) against this stack, e.g.

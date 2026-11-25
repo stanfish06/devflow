@@ -1,3 +1,4 @@
+import { ProjectSandboxSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { ProjectRepositoriesSchema, ProjectRepositoryPathsSchema } from '@devflow/schemas/zod/project-workspace'
 import z from 'zod/v4'
 
@@ -11,6 +12,8 @@ export const projectV2Schema = z.object({
 	resourceOwnerUserId: z.string(),
 	repositories: ProjectRepositoriesSchema,
 	archived: z.boolean(),
+	/** Where the project's agents run; new tasks copy it at launch. */
+	sandbox: ProjectSandboxSchema,
 	createdAt: z.number().int(),
 	updatedAt: z.number().int(),
 	/**
@@ -35,6 +38,8 @@ export const projectMutationFieldsSchema = z.object({
 	description: z.string().trim().min(1).nullable().optional(),
 	private: z.boolean(),
 	repositories: ProjectRepositoriesSchema,
+	/** Absent on create: `default`. */
+	sandbox: ProjectSandboxSchema.optional(),
 })
 
 export type ProjectV2 = z.infer<typeof projectV2Schema>

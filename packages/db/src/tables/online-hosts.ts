@@ -1,3 +1,4 @@
+import { type SandboxVms, SandboxVmsSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { type CodingAgentUsageLimits, CodingAgentUsageLimitsSchema } from '@devflow/schemas/zod/host/usage-limits'
 import { type HostModelCatalog, HostModelCatalogSchema } from '@devflow/schemas/zod/model-catalog'
 import { sql } from 'drizzle-orm'
@@ -63,6 +64,8 @@ export const onlineHosts = pgTable(
 		 * Null until a daemon that reports them has seen a rate-limit signal.
 		 */
 		coding_agent_usage_limits: jsonb('coding_agent_usage_limits').$type<CodingAgentUsageLimits>(),
+		/** VMs the daemon runs agents in and the ports it forwards from them. Null when it runs none. */
+		sandbox_vms: jsonb('sandbox_vms').$type<SandboxVms>(),
 		last_seen: bigint('last_seen', { mode: 'bigint' })
 			.notNull()
 			.default(sql`(extract(epoch from now()) * 1000)::bigint`)
@@ -89,18 +92,21 @@ export const onlineHostSelectSchema = createSelectSchema(onlineHosts, {
 	machine: jsonbParser(HostMachineSchema.nullable()),
 	stats: jsonbParser(HostStatsSchema.nullable()),
 	coding_agent_usage_limits: jsonbParser(CodingAgentUsageLimitsSchema.nullable()),
+	sandbox_vms: jsonbParser(SandboxVmsSchema.nullable().catch(null)),
 })
 export const onlineHostInsertSchema = createInsertSchema(onlineHosts, {
 	supported_models: HostModelCatalogSchema.nullable().optional(),
 	machine: HostMachineSchema.nullish(),
 	stats: HostStatsSchema.nullish(),
 	coding_agent_usage_limits: CodingAgentUsageLimitsSchema.nullish(),
+	sandbox_vms: SandboxVmsSchema.nullish(),
 })
 export const onlineHostUpdateSchema = createUpdateSchema(onlineHosts, {
 	supported_models: HostModelCatalogSchema.nullable().optional(),
 	machine: HostMachineSchema.nullish(),
 	stats: HostStatsSchema.nullish(),
 	coding_agent_usage_limits: CodingAgentUsageLimitsSchema.nullish(),
+	sandbox_vms: SandboxVmsSchema.nullish(),
 })
 export type OnlineHost = typeof onlineHosts.$inferSelect
 export type OnlineHostRow = z.infer<typeof onlineHostSelectSchema>

@@ -3,6 +3,7 @@ import type { ApiInputs } from '@devflow/api-contract/contract-router'
 import type { Task } from '@devflow/db/tables/tasks'
 import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
 import type { TaskStatus, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
+import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { useState } from 'react'
 
 import type { AttachmentMetadata } from '@/minimalist/lib/attachments'
@@ -10,7 +11,13 @@ import { projectTaskAutoAdvanceFlags } from '@/minimalist/lib/auto-advance-flags
 import { useDraft } from '@/minimalist/lib/drafts'
 import { draftTitle, type LoadedTarget, savedSettings, slugify, type StartTaskInput } from '@/minimalist/lib/launch'
 import type { ComposerSettings } from '@/minimalist/lib/models'
-import { type TaskSize, taskSizeWorkflow, useSmallTaskAutoAdvance, useTaskSize } from '@/minimalist/lib/task-size'
+import {
+	defaultVmScope,
+	type TaskSize,
+	taskSizeWorkflow,
+	useSmallTaskAutoAdvance,
+	useTaskSize,
+} from '@/minimalist/lib/task-size'
 import type { Ticket } from '@/minimalist/lib/tickets'
 import { useAttachments } from '@/minimalist/lib/use-attachments'
 
@@ -29,6 +36,8 @@ export type LaunchFormSeed = {
 	ticket: Ticket | null
 	taskSize: TaskSize
 	smallAutoAdvance: boolean
+	/** A VM picked in the composer; null follows the task size. */
+	vmScope?: VmScope | null
 	attachments: AttachmentMetadata[]
 }
 
@@ -117,6 +126,7 @@ export function fromDraftLaunch(task: Task): { seed: LaunchFormSeed; error: stri
 			ticket,
 			taskSize: snapshot.taskSize,
 			smallAutoAdvance: snapshot.smallAutoAdvance,
+			vmScope: snapshot.vmScope ?? null,
 			attachments: snapshot.attachments,
 		},
 		error: null,
@@ -131,6 +141,8 @@ export function toDraftLaunch(state: {
 	settings: ComposerSettings
 	taskSize: TaskSize
 	smallAutoAdvance: boolean
+	/** Absent or null: follow the task size. */
+	vmScope?: VmScope | null
 	attachments: readonly AttachmentMetadata[]
 }): DraftLaunch {
 	return {
@@ -142,6 +154,7 @@ export function toDraftLaunch(state: {
 		settings: { ...state.settings },
 		taskSize: state.taskSize,
 		smallAutoAdvance: state.smallAutoAdvance,
+		vmScope: state.vmScope ?? undefined,
 	}
 }
 
@@ -216,6 +229,7 @@ export function launchInput(args: {
 		settings: snapshot.settings,
 		workflow: taskSizeWorkflow(snapshot.taskSize, snapshot.smallAutoAdvance),
 		directImplementation: snapshot.taskSize === 'small',
+		vmScope: snapshot.vmScope ?? defaultVmScope(snapshot.taskSize),
 	}
 	if (args.status) input.status = args.status
 	if (args.githubAccount) input.githubAccount = args.githubAccount
@@ -270,6 +284,7 @@ export function useLaunchForm({
 	const [hostId, setHostId] = useState<string | null>(seed?.hostId ?? requestedHostId ?? null)
 	const [settings, setSettings] = useState<ComposerSettings>(() => seed?.settings ?? savedSettings())
 	const [ticket, setTicket] = useState<Ticket | null>(seed?.ticket ?? null)
+	const [vmScope, setVmScope] = useState<VmScope | null>(seed?.vmScope ?? null)
 	const attachments = useAttachments(uploads.taskId, uploads.existing, seed?.attachments)
 	const persisted = seed === null
 	return {
@@ -287,6 +302,8 @@ export function useLaunchForm({
 		setTaskSize: persisted ? setStoredSize : setDraftSize,
 		smallAutoAdvance: persisted ? storedSmallAutoAdvance : draftSmallAutoAdvance,
 		setSmallAutoAdvance: persisted ? setStoredSmallAutoAdvance : setDraftSmallAutoAdvance,
+		vmScope,
+		setVmScope,
 		attachments,
 	}
 }

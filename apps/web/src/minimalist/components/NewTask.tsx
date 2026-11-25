@@ -1,7 +1,9 @@
 import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
+import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import {
+	Box,
 	ChevronDown,
 	Folder,
 	FolderGit2,
@@ -73,7 +75,7 @@ import {
 	useLaunchForm,
 } from '@/minimalist/lib/launch-form'
 import { fitSettings, modelCatalog } from '@/minimalist/lib/models'
-import { TASK_SIZES, type TaskSize, taskSizeOption } from '@/minimalist/lib/task-size'
+import { defaultVmScope, TASK_SIZES, type TaskSize, taskSizeOption } from '@/minimalist/lib/task-size'
 import { githubFullName, type Ticket, ticketLabel } from '@/minimalist/lib/tickets'
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useCopy } from '@/minimalist/lib/use-copy'
@@ -163,8 +165,7 @@ function LaunchPage({
 	// here never changes it. A session in a task keeps the task's host.
 	const working = useWorkingHost()
 	const seedHostId = mode === 'new' && working.id !== 'all' ? working.id : null
-	const seedOffline =
-		form.hostId === null && seedHostId !== null && working.state === 'offline' ? working.host : null
+	const seedOffline = form.hostId === null && seedHostId !== null && working.state === 'offline' ? working.host : null
 	// A draft runs on the host it was saved for, or one picked for it here; never on another by default.
 	const host =
 		mode === 'draft'
@@ -321,6 +322,7 @@ function LaunchPage({
 				settings: mode === 'draft' ? form.settings : settings,
 				taskSize: form.taskSize,
 				smallAutoAdvance: form.smallAutoAdvance,
+				vmScope: form.vmScope,
 				attachments: attachments.metadata,
 			})
 		: null
@@ -371,8 +373,7 @@ function LaunchPage({
 					snapshot: { ...snapshot, settings },
 					ticket,
 					status: mode === 'new' ? status : undefined,
-					githubAccount:
-						mode === 'new' ? { id: pickOf(account), explicit: accountPick !== null } : undefined,
+					githubAccount: mode === 'new' ? { id: pickOf(account), explicit: accountPick !== null } : undefined,
 				}),
 			)
 			if (mode === 'new') {
@@ -529,6 +530,13 @@ function LaunchPage({
 					onSmallAutoAdvance={form.setSmallAutoAdvance}
 				/>
 			)}
+			{!inTask && targetProject?.sandbox === 'vm' ? (
+				<VmScopePicker
+					scope={form.vmScope ?? defaultVmScope(form.taskSize)}
+					picked={form.vmScope !== null}
+					onPick={form.setVmScope}
+				/>
+			) : null}
 		</div>
 	)
 
@@ -605,7 +613,11 @@ function LaunchPage({
 				onClose={() => setMenu(null)}
 				host={host}
 				target={effectiveTarget}
-				onPick={(next) => form.setTarget(draftTarget(next))}
+				onPick={(next) => {
+					// A VM pick belongs to the project it was made for.
+					form.setVmScope(null)
+					form.setTarget(draftTarget(next))
+				}}
 			/>
 			<HostMenu
 				anchor={hostAnchor}
@@ -819,6 +831,72 @@ function OfflineWorkingHostNotice({ name, onPick }: { name: string; onPick: () =
 				</div>
 			</div>
 		</div>
+	)
+}
+
+type VmScopeOption = { value: VmScope; label: string; description: string }
+const OWN_VM: VmScopeOption = {
+	value: 'task',
+	label: 'Own VM',
+	description: "A VM of this task's own, deleted when the task is archived",
+}
+const VM_SCOPES: readonly VmScopeOption[] = [
+	OWN_VM,
+	{ value: 'shared', label: 'Shared VM', description: "The host's shared VM, for quick work" },
+]
+
+/**
+ * Which VM a task of a `vm` project runs in. Until picked it follows the task size (small: shared,
+ * else its own); a pick sticks through size changes until "Follow task size" clears it.
+ */
+function VmScopePicker({
+	scope,
+	picked,
+	onPick,
+}: {
+	scope: VmScope
+	picked: boolean
+	onPick: (scope: VmScope | null) => void
+}) {
+	const anchor = useRef<HTMLButtonElement>(null)
+	const [open, setOpen] = useState(false)
+	const current = VM_SCOPES.find((option) => option.value === scope) ?? OWN_VM
+	const choose = (next: VmScope | null) => {
+		onPick(next)
+		setOpen(false)
+	}
+	return (
+		<>
+			<button
+				type="button"
+				ref={anchor}
+				aria-label={`VM: ${current.label}`}
+				title={current.description}
+				onClick={() => setOpen(true)}
+			>
+				<Box className="i sm" strokeWidth={1.6} />
+				{current.label}
+				<ChevronDown className="i sm" />
+			</button>
+			<Menu anchor={anchor} open={open} onClose={() => setOpen(false)} placement="above-end" width={300}>
+				{VM_SCOPES.map((option) => (
+					<MenuItem
+						key={option.value}
+						label={option.label}
+						detail={option.description}
+						checked={picked && option.value === scope}
+						onSelect={() => choose(option.value)}
+					/>
+				))}
+				<MenuSeparator />
+				<MenuItem
+					label="Follow task size"
+					detail="Small tasks share the host's VM; others get their own"
+					checked={!picked}
+					onSelect={() => choose(null)}
+				/>
+			</Menu>
+		</>
 	)
 }
 

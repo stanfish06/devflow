@@ -82,10 +82,21 @@ type Permission = 'Ask first' | 'Auto-accept edits' | 'Auto' | 'Bypass permissio
 /** Pick size, model and permission mode in the composer, send the prompt, and wait for the task page. */
 export async function startTask(
 	page: Page,
-	input: { prompt: string; size?: Size; model?: string | RegExp; permission?: Permission },
+	input: {
+		prompt: string
+		size?: Size
+		model?: string | RegExp
+		permission?: Permission
+		vm?: 'Own VM' | 'Shared VM'
+	},
 ): Promise<string> {
 	await page.getByRole('button', { name: /^Task size:/ }).click()
 	await page.getByRole('button', { name: new RegExp(`^${input.size ?? 'Small'}`) }).click()
+	// Shown only for a project whose sandbox is `vm`.
+	if (input.vm) {
+		await page.getByRole('button', { name: /^VM:/ }).click()
+		await page.getByRole('button', { name: new RegExp(`^${input.vm}`) }).click()
+	}
 
 	await chooseModel(page, input.model ?? MODEL)
 

@@ -3,6 +3,7 @@ import type { Task } from '@devflow/db/tables/tasks'
 import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
 import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import type { ResolvedTaskWorkflow, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
+import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { findModelOption } from '@devflow/ui/constants/models'
 import { ORPCError } from '@orpc/client'
 
@@ -169,6 +170,8 @@ export type StartTaskInput = {
 	 * task stores nothing and keeps following the project's default and yours, even if they change.
 	 */
 	githubAccount?: { id: GithubAccountPick; explicit: boolean }
+	/** For a project whose sandbox is `vm`: the host's shared VM or the task's own. Ignored otherwise. */
+	vmScope?: VmScope
 }
 
 /**
@@ -233,6 +236,7 @@ export async function startTask(api: ApiClient, input: StartTaskInput): Promise<
 				sessionId: ids.sessionId,
 				eventId: ids.eventId,
 				projectId: target.project.id,
+				vmScope: input.vmScope,
 				repositories,
 				defaultRepositoryIdentity: repositories.find((repository) => repository.default)?.repositoryIdentity,
 				firstSession,

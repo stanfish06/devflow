@@ -17,7 +17,8 @@ import { createWorkflowRoutingHook } from '@/agents/claudecode/hooks/workflow-ro
 import { createMcpServer } from '@/agents/claudecode/mcp/devflow-server'
 import { renderContextShardsPromptBlock } from '@/agents/shared/context-shards'
 import type { InterruptStateService } from '@/agents/shared/interrupt-state.service'
-import { isDockerSandboxEnabled } from '@/devflow/docker-sandbox'
+import { githubCredentialScope, isVmSandbox, sessionSandbox, waitForTaskSandbox } from '@/devflow/agent-sandbox'
+import { sandboxMountPaths } from '@/devflow/docker-sandbox'
 import { getArtifactSymlinkPath } from '@/lib/artifact-paths'
 import { createArtifactSyncLedger } from '@/lib/artifact-sync-ledger'
 import { orgTelemetryCache } from '@/lib/org-telemetry-settings'
@@ -47,10 +48,12 @@ import {
 	readCommitAttributionEnvironment,
 	readConfiguredRepositoryContext,
 	readGithubCredentialEnvironment,
+	acquireVmLease,
+	adaptTaskSandbox,
 } from './claude-session-preparation-adapters'
 import type { ExecuteClaudeSessionInput } from './claude-sessions.service'
 import { MULTIPLAYER_MESSAGE_CONTRACT, sessionHasActiveMultiplayerPrompting } from './multiplayer-message-contract'
-import { buildClaudeQueryOptions } from './query-options'
+import { buildClaudeQueryOptions, type ClaudeSandbox } from './query-options'
 import type { OpenClaudeSdkSessionInput } from './sdk/claude-sdk-session.service'
 import { requestToolApproval } from './workflows/approvals'
 
@@ -347,12 +350,55 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 		if (workspaceSetupProgress) systemPromptAdditions.push(workspaceSetupProgress)
 
 		const commitEnv = yield* readCommitAttributionEnvironment({ sessionId, workingDirectory: cwd })
+		const daemonApiContext = yield* Effect.context<DaemonApi>()
+		const sandboxTaskId = session.task_id
+		const sandbox = sessionSandbox(
+			sandboxTaskId
+				? yield* adaptTaskSandbox(() =>
+						waitForTaskSandbox(
+							(id) => currentCollections.tasks.toArray.find((task) => task.id === id),
+							sandboxTaskId,
+						),
+					)
+				: null,
+		)
 		// Held until the run's scope closes; null keeps the host's own gh login and env untouched.
 		const githubEnv = yield* readGithubCredentialEnvironment({
 			sessionId,
 			taskId: session.task_id,
-			scope: isDockerSandboxEnabled() ? 'sandbox' : 'host',
+			scope: githubCredentialScope(sandbox),
 		})
+		const additionalDirectories = [
+			...configuredRepoContext.additionalDirectories,
+			rpiPluginPath,
+			path.join(configuration.homeDirectory, '.devflow', 'artifacts'),
+		]
+		// The VM is started (created on first use) here and held until the run's scope closes.
+		const claudeSandbox: ClaudeSandbox = isVmSandbox(sandbox)
+			? {
+					kind: 'vm',
+					lease: yield* acquireVmLease(
+						{
+							scope: sandbox === 'vm-task' ? 'task' : 'shared',
+							taskId: session.task_id,
+							paths: sandboxMountPaths({
+								cwd,
+								mountPaths: [...additionalDirectories, rpiPluginPath],
+								githubEnv,
+							}),
+							// The plugin is loaded by later sessions too, on the host as well.
+							readOnlyPaths: [rpiPluginPath],
+						},
+						// Only while still launching: a stop request must not be overwritten.
+						() =>
+							currentCollections.sessions.get(sessionId)?.status === 'launching'
+								? Effect.runPromiseWith(daemonApiContext)(
+										api.updateSession({ sessionId, status: 'launching' }),
+									)
+								: Promise.resolve(),
+					),
+				}
+			: { kind: sandbox === 'docker' ? 'docker' : 'none' }
 		// Only a run pointed at a credential directory acts as an account GitHub can refuse; a
 		// host-login run keeps today's behaviour.
 		const stopRequested = yield* Deferred.make<void>()
@@ -425,11 +471,7 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 			pathToClaudeCodeExecutable: claudePath,
 			cwd: workingDirectory,
 			rpiPluginPath,
-			additionalDirectories: [
-				...configuredRepoContext.additionalDirectories,
-				rpiPluginPath,
-				path.join(configuration.homeDirectory, '.devflow', 'artifacts'),
-			],
+			additionalDirectories,
 			systemPromptAdditions,
 			resumeSessionId: input.resumeSessionId,
 			forkMeta: input.forkMeta,
@@ -437,6 +479,7 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 			commitAttributionEnv: commitEnv,
 			githubEnv,
 			inheritedEnv: configuration.inheritedEnvironment,
+			sandbox: claudeSandbox,
 			stderr: (contents) => {
 				logger.warn({ sessionId, stderr: contents }, 'Claude process STDERR')
 			},

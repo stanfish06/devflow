@@ -7,6 +7,7 @@ import {
 	type WorktreeTiming,
 } from '@devflow/schemas/effect/taskconfiguration'
 import type { WorkspaceSpec, WorkspaceState } from '@devflow/schemas/effect/workspace'
+import { type TaskSandbox, TaskSandboxSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { WorkspaceSpecSchema, WorkspaceStateSchema } from '@devflow/schemas/zod/workspace'
 import { sql } from 'drizzle-orm'
 import { bigint, boolean, index, jsonb, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core'
@@ -94,6 +95,8 @@ export const tasks = pgTable(
 
 		// Auto-advance workflow flags
 		workflow_type: text('workflow_type').$type<TaskWorkflowType>().default('rpi').notNull(),
+		/** Where the task's agents run, fixed at launch from its project. Null: the host's default. */
+		sandbox: text('sandbox').$type<TaskSandbox>(),
 		/** Board status; a launched task starts in progress. */
 		status: text('status').$type<TaskStatus>().default('in_progress').notNull(),
 		worktree_timing: text('worktree_timing').$type<WorktreeTiming>().default('later').notNull(),
@@ -126,6 +129,8 @@ export const taskSelectSchema = createSelectSchema(tasks, {
 	setup_status: z.enum(['pending', 'in_progress', 'completed', 'failed']).nullable(),
 	ticket_provider: z.enum(['linear', 'jira', 'github']).nullable(),
 	workflow_type: z.enum(TASK_WORKFLOW_TYPES),
+	// An unknown value fails the row rather than reading as "host default", which may be no sandbox.
+	sandbox: TaskSandboxSchema.nullable(),
 	status: z.enum(TASK_STATUSES),
 	worktree_timing: z.enum(WORKTREE_TIMINGS),
 	// Electric ships JSONB as strings over the wire

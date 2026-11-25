@@ -28,6 +28,8 @@
             pkgs.openssh
             pkgs.docker-client
             pkgs.docker-compose
+            # Agent VMs for projects whose sandbox is `vm` (apps/agent-runner/src/devflow/vm-sandbox.ts).
+            pkgs.lima
           ];
           shellHook = ''
             [ -f "''${DEVFLOW_HOME:-$HOME/.devflow}/config.json" ] || echo "devflow: run 'bun run devflow setup' first"

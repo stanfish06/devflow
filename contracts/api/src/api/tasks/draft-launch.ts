@@ -1,4 +1,5 @@
 import { permissionsModeSchema } from '@devflow/db/tables/sessions'
+import { VmScopeSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import z from 'zod/v4'
 
 import { LaunchTaskDraftAttachmentInputSchema } from './launch-draft'
@@ -27,6 +28,8 @@ export const DraftLaunchSchema = z.object({
 	}),
 	taskSize: z.enum(['small', 'medium', 'large', 'unknown']),
 	smallAutoAdvance: z.boolean(),
+	/** The VM picked for a `vm` project's task; absent follows the size (small: shared, else its own). */
+	vmScope: VmScopeSchema.optional(),
 })
 
 export type DraftLaunch = z.infer<typeof DraftLaunchSchema>

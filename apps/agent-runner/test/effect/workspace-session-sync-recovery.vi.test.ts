@@ -34,6 +34,7 @@ const task: Task = {
 	organization_id: '00000000-0000-4000-8000-000000000002',
 	workspace_id: workspaceId,
 	project_id: null,
+	sandbox: null,
 	team_id: null,
 	created_by: 'user-1',
 	resource_owner_user_id: 'user-1',

@@ -115,6 +115,7 @@ describe('a draft snapshot', () => {
 			ticket,
 			taskSize: 'small',
 			smallAutoAdvance: false,
+			vmScope: null,
 			attachments: [attachment],
 		})
 		expect(toDraftLaunch({ ...seed, target: seed.target ?? launch.target, hostId: seed.hostId ?? '' })).toEqual(
@@ -194,6 +195,8 @@ describe('starting a draft', () => {
 			settings,
 			workflow: { workflowType: 'oneshot' as const, autoAdvance: false },
 			directImplementation: true,
+			// A small task shares the host's VM unless the composer picked one.
+			vmScope: 'shared' as const,
 		}
 		expect(toStartInput(row, project, ids)).toEqual(composer)
 		expect(launchInput({ ids: { taskId, ...ids }, target: composer.target, snapshot: launch, ticket })).toEqual(
@@ -202,6 +205,14 @@ describe('starting a draft', () => {
 		expect(
 			launchInput({ ids: { taskId, ...ids }, target: composer.target, snapshot: launch, ticket, status: 'todo' }),
 		).toEqual({ ...composer, status: 'todo' })
+	})
+
+	it('keeps the VM picked in the composer, and otherwise gives anything but a small task its own', () => {
+		const picked = snapshot({ vmScope: 'task' })
+		expect(fromDraftLaunch(savedRow(picked, null)).seed.vmScope).toBe('task')
+		expect(toStartInput(savedRow(picked, null), project, ids).vmScope).toBe('task')
+		expect(toStartInput(savedRow(snapshot({ taskSize: 'medium' }), null), project, ids).vmScope).toBe('task')
+		expect(toStartInput(savedRow(snapshot({ taskSize: 'unknown' }), null), project, ids).vmScope).toBe('task')
 	})
 
 	it('runs a directory draft in its directory', () => {

@@ -1,4 +1,5 @@
 import { HostMachineSchema, HostStatsSchema } from '@devflow/db/zodschemas/host-machine-stats'
+import { SandboxVmsSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { CodingAgentUsageLimitsSchema } from '@devflow/schemas/zod/host/usage-limits'
 import { HostModelCatalogSchema } from '@devflow/schemas/zod/model-catalog'
 import z from 'zod/v4'
@@ -65,6 +66,8 @@ export const heartbeatInputSchema = z.object({
 	 * A record this schema cannot parse is dropped rather than failing the beat, which keeps the host online.
 	 */
 	codingAgentUsageLimits: CodingAgentUsageLimitsSchema.optional().catch(undefined),
+	/** VMs the daemon runs agents in, with their forwarded ports. Absent: none (or an older daemon). */
+	sandboxVms: SandboxVmsSchema.optional().catch(undefined),
 })
 
 export const heartbeatOutputSchema = z.object({

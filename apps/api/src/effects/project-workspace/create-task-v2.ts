@@ -12,6 +12,7 @@ import { userSettings } from '@devflow/db/tables/user-settings'
 import { workspaces } from '@devflow/db/tables/workspaces'
 import type { ProjectRepositories, WorkspaceRepositories } from '@devflow/schemas/effect/project-workspace'
 import { hasRepositoryUrlCredentials } from '@devflow/schemas/effect/project-workspace'
+import { taskSandboxFor } from '@devflow/schemas/zod/host/agent-sandbox'
 import { and, eq } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { hash } from 'ohash'
@@ -141,6 +142,7 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				ticket_repository_id: input.ticketRepositoryId ?? null,
 				ticket_repository_full_name: input.ticketRepositoryFullName ?? null,
 				workflow_type: input.workflowType,
+				sandbox: taskSandboxFor(parsedProject.data.sandbox, input.vmScope),
 				// V2 workspaces always materialize before the first session launches.
 				worktree_timing: 'now' as const,
 				workspace_state: null,

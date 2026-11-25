@@ -6,7 +6,7 @@ import { type ReactNode, useRef, useState } from 'react'
 
 import { useSync } from '@/components/providers/SyncProvider'
 import { type OrgMember, useOrgMembers } from '@/hooks/useOrgMembers'
-import { taskBranch, useHost, useProjects, useTask } from '@/minimalist/lib/data'
+import { type HostView, taskBranch, useHost, useProjects, useTask } from '@/minimalist/lib/data'
 import { formatAgo, shortPath, toMs } from '@/minimalist/lib/format'
 import { personName, taskPeople } from '@/minimalist/lib/people'
 import { TASK_WORKFLOWS, useTaskWorkflow, workflowOption } from '@/minimalist/lib/task-workflow'
@@ -44,6 +44,9 @@ export function WiredTaskDetails({ taskId }: { taskId: string }) {
 				</Detail>
 			) : null}
 			{host ? <Detail term="Host">{host.name}</Detail> : null}
+			{host && (task.sandbox === 'vm-task' || task.sandbox === 'vm-shared') ? (
+				<VmDetail taskId={task.id} sandbox={task.sandbox} host={host} />
+			) : null}
 			<WorkflowDetail taskId={taskId} />
 			{task.ticket_id ? <TicketDetail id={task.ticket_id} url={task.ticket_url} /> : null}
 			<Detail term="Owner">
@@ -101,6 +104,43 @@ function useCommentAuthors(taskId: string): Array<string | null> {
 	const diffRows = diffAuthors.data ?? []
 	return rows.concat(diffRows).map((row) => row.userId)
 }
+
+/**
+ * The VM a `vm` task runs in, as its host last reported it, and the guest ports forwarded from it.
+ * Ports listen on the daemon host's loopback, so the links open from that machine; they show only
+ * while the host is online, since an offline host's last report may name ports already gone.
+ */
+function VmDetail({ taskId, sandbox, host }: { taskId: string; sandbox: 'vm-task' | 'vm-shared'; host: HostView }) {
+	const vms = host.host.sandbox_vms ?? []
+	const vm =
+		sandbox === 'vm-task'
+			? vms.find((entry) => entry.taskId === taskId)
+			: vms.find((entry) => entry.kind === 'shared')
+	const label = sandbox === 'vm-task' ? 'Own VM' : 'Shared VM'
+	const live = host.online && vm ? vm : null
+	const ports = live?.status === 'running' ? live.ports : []
+	return (
+		<Detail term="Sandbox">
+			<span className="task-vm" title={vm?.name}>
+				{live ? `${label}, ${live.status}` : label}
+				{ports.map((port) => (
+					<a
+						key={port.guestPort}
+						href={`http://localhost:${port.hostPort}`}
+						target="_blank"
+						rel="noreferrer"
+						title={`localhost:${port.hostPort} on ${host.name}`}
+					>
+						{portLabel(port)}
+					</a>
+				))}
+			</span>
+		</Detail>
+	)
+}
+
+const portLabel = (port: { guestPort: number; hostPort: number }) =>
+	port.guestPort === port.hostPort ? `:${port.hostPort}` : `:${port.guestPort} → :${port.hostPort}`
 
 function Detail({ term, children }: { term: string; children: ReactNode }) {
 	return (

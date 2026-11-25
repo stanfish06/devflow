@@ -28,6 +28,7 @@ export const heartbeatEffectProcedure = effectOrpcDaemonBase.hosts.heartbeat.eff
 		machine,
 		stats,
 		codingAgentUsageLimits,
+		sandboxVms,
 	} = input
 	const { userId, organizationId, hostId: authHostId } = context.auth
 
@@ -82,6 +83,7 @@ export const heartbeatEffectProcedure = effectOrpcDaemonBase.hosts.heartbeat.eff
 							machine: machine ?? null,
 							stats: stats ?? null,
 							coding_agent_usage_limits: codingAgentUsageLimits ?? null,
+							sandbox_vms: sandboxVms?.length ? sandboxVms : null,
 						})
 						.onConflictDoUpdate({
 							target: [onlineHosts.host_id, onlineHosts.organization_id, onlineHosts.user_id],
@@ -112,6 +114,7 @@ export const heartbeatEffectProcedure = effectOrpcDaemonBase.hosts.heartbeat.eff
 								machine: machine ?? null,
 								stats: stats ?? null,
 								coding_agent_usage_limits: codingAgentUsageLimits ?? null,
+								sandbox_vms: sandboxVms?.length ? sandboxVms : null,
 							},
 						})
 						.returning({

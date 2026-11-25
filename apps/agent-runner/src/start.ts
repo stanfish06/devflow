@@ -6,6 +6,7 @@ import { defaultShutdownCoordinator } from './agents/claudecode/shutdown'
 import type { DaemonServices } from './agents/claudecode/types'
 import { executeCodelayerSlot, failUnsupportedAgent } from './devflow/codex-app-server'
 import { removeStaleSandboxContainers } from './devflow/docker-sandbox'
+import { watchTaskVms } from './devflow/vm-sandbox'
 import { createDaemonRuntime } from './effects/runtime'
 import { createClaudeSessionExecutor } from './effects/services/claude-sessions/claude-session-executor'
 import { DaemonCollections } from './effects/services/daemon-collections/daemon-collections.service'
@@ -153,6 +154,8 @@ async function startDaemonInitialized(
 		)
 		syncServiceTarget = new SyncService(orpc, syncOrigin, identity.token, collections.tasks, { daemonRuntime })
 		logger.debug('Collections initialized')
+		// Adopt VMs left by an earlier daemon; delete task VMs once their task is seen archived.
+		const stopTaskVms = watchTaskVms(collections)
 		daemonRuntime.runFork(
 			Effect.gen(function* () {
 				const workspaceSetup = yield* WorkspaceSetup
@@ -271,6 +274,7 @@ async function startDaemonInitialized(
 			stopSubscriptions: () => stopSubscriptions(),
 			stopSelfUpdate: () => Effect.runPromise(Scope.close(selfUpdateScope, Exit.void)),
 			stopCaptureSources: async () => {
+				stopTaskVms()
 				commitWatcher?.stop()
 				repositoryObserver?.stop()
 				await daemonRuntime.runPromise(

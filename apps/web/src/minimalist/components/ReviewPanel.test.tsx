@@ -3,9 +3,10 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { TaskDiffContext } from '@/components/diffs/task-diff-context'
 import { diffLineDraftKey } from '@/minimalist/lib/comment-drafts'
 
-import { ReviewPanel } from './ReviewPanel'
+import { DiffStat, ReviewPanel } from './ReviewPanel'
 
 const { files, entries, setReviewed, add } = vi.hoisted(() => ({
 	files: [
@@ -204,5 +205,20 @@ describe('selected diff review', () => {
 		fireEvent.click(activeFile().getByRole('button', { name: 'Add comment' }))
 		expect(add).toHaveBeenCalledWith(expect.objectContaining({ side: 'new', line: 1 }), 'Ship it')
 		await vi.waitFor(() => expect(sessionStorage.getItem(key)).toBeNull())
+	})
+})
+
+describe('DiffStat', () => {
+	const statTask = { id: 'task', organization_id: 'org', workspace_id: null, workspace_state: null } as Task
+
+	it('renders nothing outside a TaskDiffScope (a launching session), then the totals inside one', () => {
+		const { rerender } = render(<DiffStat task={statTask} onOpen={() => {}} />)
+		expect(screen.queryByRole('button', { name: /Review changes/ })).toBeNull()
+		rerender(
+			<TaskDiffContext value={{} as never}>
+				<DiffStat task={statTask} onOpen={() => {}} />
+			</TaskDiffContext>,
+		)
+		expect(screen.getByRole('button', { name: 'Review changes: 2 lines added, 0 removed' })).toBeTruthy()
 	})
 })

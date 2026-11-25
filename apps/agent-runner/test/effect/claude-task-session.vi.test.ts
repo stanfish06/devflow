@@ -17,6 +17,7 @@ const baseQueryInput = (session: Session) => ({
 	additionalDirectories: ['/workspace/repo-b'],
 	systemPromptAdditions: ['context'],
 	inheritedEnv: { PATH: '/bin' },
+	sandbox: { kind: 'none' as const },
 })
 
 describe('Effect Claude task session preparation', () => {

@@ -4,6 +4,7 @@ import { DAEMON_CAPABILITIES } from '@devflow/api-contract/daemon/heartbeat'
 import type { HostModelCatalog } from '@devflow/schemas/zod/model-catalog'
 import { Data, Duration, Effect, Fiber, type ManagedRuntime, Queue, Schedule, Stream } from 'effect'
 
+import { vmManager } from '@/devflow/vm-sandbox'
 import { HostMachineStats } from '@/effects/services/host-machine-stats/host-machine-stats.service'
 import { BUILD_VERSION } from '@/lib/macros'
 import { HostUsageLimits } from '@/lib/usage-limits/host-usage-limits'
@@ -64,6 +65,12 @@ export class HeartbeatError extends Data.TaggedError('HeartbeatError')<{
 	}
 }
 
+/** The VMs this daemon runs agents in; absent when it runs none, which clears the host's list. */
+const sandboxVmsForHeartbeat = () => {
+	const vms = vmManager.snapshot()
+	return vms.length > 0 ? vms : undefined
+}
+
 interface HeartbeatTarget {
 	readonly hostId: string
 	readonly orpc: ORPCClient
@@ -94,6 +101,7 @@ const sendHeartbeat = (target: HeartbeatTarget, update?: HeartbeatUpdate) =>
 						codingAgentUsageLimits,
 						machine,
 						stats,
+						sandboxVms: sandboxVmsForHeartbeat(),
 					},
 					{ signal },
 				),

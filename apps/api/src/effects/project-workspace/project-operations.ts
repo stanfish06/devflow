@@ -117,6 +117,7 @@ export const createProject = Effect.fn('project_workspace.create_project')(funct
 							created_by: input.actor.userId,
 							resource_owner_user_id: input.actor.userId,
 							repositories: input.project.repositories,
+							sandbox: input.project.sandbox ?? 'default',
 							archived: false,
 						})
 						.returning(),
@@ -163,6 +164,7 @@ export const updateProject = Effect.fn('project_workspace.update_project')(funct
 							description: input.changes.description,
 							private: input.changes.private,
 							repositories: input.changes.repositories,
+							sandbox: input.changes.sandbox,
 							updated_at: BigInt(yield* Clock.currentTimeMillis),
 						})
 						.where(
@@ -608,6 +610,7 @@ const projectsForActor = Effect.fn('project_workspace.projects_for_actor')(funct
 			resourceOwnerUserId: project.resource_owner_user_id,
 			repositories: project.repositories,
 			archived: project.archived,
+			sandbox: project.sandbox,
 			createdAt: Number(project.created_at),
 			updatedAt: Number(project.updated_at),
 			checkoutHostIds,

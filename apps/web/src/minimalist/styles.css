@@ -4402,6 +4402,11 @@
 	.task-detail-pick[aria-expanded='true'] .i {
 		opacity: 1;
 	}
+	.task-vm {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 0 8px;
+	}
 	.task-people {
 		display: grid;
 		gap: 3px;

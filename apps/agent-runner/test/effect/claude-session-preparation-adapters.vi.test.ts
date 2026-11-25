@@ -115,6 +115,7 @@ describe('Claude query options with a GitHub account', () => {
 			GIT_CONFIG_KEY_0: 'core.hooksPath',
 			GIT_CONFIG_VALUE_0: '/hooks',
 		},
+		sandbox: { kind: 'none' as const },
 		inheritedEnv: {
 			PATH: '/bin',
 			GH_TOKEN: 'host-token',

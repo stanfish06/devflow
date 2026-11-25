@@ -320,6 +320,36 @@ describe('tasks v2 create', () => {
 		expect(session?.labels).toEqual(labels)
 	})
 
+	test.each([
+		{ project: 'default' as const, vmScope: undefined, expected: null },
+		{ project: 'docker' as const, vmScope: 'shared' as const, expected: 'docker' },
+		{ project: 'vm' as const, vmScope: undefined, expected: 'vm-task' },
+		{ project: 'vm' as const, vmScope: 'shared' as const, expected: 'vm-shared' },
+	])(
+		"fixes the task's sandbox from the project's $project sandbox (vm scope $vmScope)",
+		async ({ project, vmScope, expected }) => {
+			const actor = await setupActor()
+			await db.update(projects).set({ sandbox: project }).where(eq(projects.id, actor.projectId))
+			const taskId = uuidv7()
+			await call(
+				createTaskV2,
+				{
+					taskId,
+					workspaceId: uuidv7(),
+					projectId: actor.projectId,
+					name: 'Sandboxed task',
+					slug: `sandboxed-${taskId.slice(-6)}`,
+					repositories: [repository],
+					vmScope,
+					firstSession: { ...firstSession, hostId: actor.hostId },
+				},
+				{ context: actor.context },
+			)
+			const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
+			expect(task?.sandbox).toBe(expected)
+		},
+	)
+
 	test('queues the first session on an owned host that is offline', async () => {
 		const actor = await setupActor()
 		await db
