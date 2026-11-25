@@ -147,6 +147,20 @@ export function assignColumn(_task: { is_draft?: boolean }, sessions: KanbanSess
 	return result?.columnId ?? 'todo'
 }
 
+/** A workflow stage a task can be shown in: every column except the `todo` fallback. */
+export type StageId = Exclude<ColumnId, 'todo'>
+
+/**
+ * The task's workflow stage for display, or null when no labeled session places it past todo.
+ *
+ * Same selection as `assignColumn` (latest-active labeled, non-archived session, then its
+ * highest-ranked label), but "no labeled session", `rpi:todo` and unknown labels all give null.
+ */
+export function assignStage(sessions: KanbanSessionInput[]): StageId | null {
+	const columnId = assignColumnInternal(sessions)?.columnId
+	return columnId === undefined || columnId === 'todo' ? null : columnId
+}
+
 /** A task plus the projected data the engine needs to build its card. */
 export interface KanbanTaskInput {
 	id: string

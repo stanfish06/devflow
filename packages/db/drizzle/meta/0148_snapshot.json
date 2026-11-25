@@ -1,6 +1,6 @@
 {
-  "id": "20f3069b-592b-41a6-b061-3adf289a9ab9",
-  "prevId": "eb85d70b-d9d6-4f58-b720-bc8772a81f90",
+  "id": "1003012e-890d-417b-95f5-7ccbeea0ffb5",
+  "prevId": "a50a34a3-c869-4636-84ab-3d53efcd48d8",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3754,106 +3754,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.project_user_settings": {
-      "name": "project_user_settings",
-      "schema": "",
-      "columns": {
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "project_id": {
-          "name": "project_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_account_id": {
-          "name": "github_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(extract(epoch from now()) * 1000)::bigint"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(extract(epoch from now()) * 1000)::bigint"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {
-        "project_user_settings_organization_id_organizations_id_fk": {
-          "name": "project_user_settings_organization_id_organizations_id_fk",
-          "tableFrom": "project_user_settings",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_user_settings_project_id_project_id_fk": {
-          "name": "project_user_settings_project_id_project_id_fk",
-          "tableFrom": "project_user_settings",
-          "tableTo": "project",
-          "columnsFrom": [
-            "project_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "project_user_settings_github_account_id_github_accounts_id_fk": {
-          "name": "project_user_settings_github_account_id_github_accounts_id_fk",
-          "tableFrom": "project_user_settings",
-          "tableTo": "github_accounts",
-          "columnsFrom": [
-            "github_account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "project_user_settings_pk": {
-          "name": "project_user_settings_pk",
-          "columns": [
-            "organization_id",
-            "user_id",
-            "project_id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.project": {
       "name": "project",
       "schema": "",
@@ -6394,19 +6294,6 @@
           "notNull": true,
           "default": false
         },
-        "github_account_id": {
-          "name": "github_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "github_use_host_login": {
-          "name": "github_use_host_login",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "bigint",
@@ -6449,19 +6336,6 @@
           ],
           "onDelete": "cascade",
           "onUpdate": "no action"
-        },
-        "task_user_settings_github_account_id_github_accounts_id_fk": {
-          "name": "task_user_settings_github_account_id_github_accounts_id_fk",
-          "tableFrom": "task_user_settings",
-          "tableTo": "github_accounts",
-          "columnsFrom": [
-            "github_account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -6477,12 +6351,7 @@
         }
       },
       "policies": {},
-      "checkConstraints": {
-        "task_user_settings_github_choice_check": {
-          "name": "task_user_settings_github_choice_check",
-          "value": "\"task_user_settings\".\"github_account_id\" IS NULL OR NOT \"task_user_settings\".\"github_use_host_login\""
-        }
-      },
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.task_workspace_setup_for_host": {
@@ -6739,6 +6608,18 @@
           "primaryKey": false,
           "notNull": true,
           "default": false
+        },
+        "draft_launch": {
+          "name": "draft_launch",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "drafted_at": {
+          "name": "drafted_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
         },
         "setup_status": {
           "name": "setup_status",

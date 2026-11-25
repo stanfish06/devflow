@@ -1,5 +1,5 @@
 {
-  "id": "eb85d70b-d9d6-4f58-b720-bc8772a81f90",
+  "id": "a50a34a3-c869-4636-84ab-3d53efcd48d8",
   "prevId": "3fd4a5e2-da1b-424e-a560-d4143a8afaf4",
   "version": "7",
   "dialect": "postgresql",
@@ -2696,142 +2696,6 @@
       },
       "policies": {},
       "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.github_accounts": {
-      "name": "github_accounts",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "uuidv7()"
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "user_id": {
-          "name": "user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "github_user_id": {
-          "name": "github_user_id",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "login": {
-          "name": "login",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "name": {
-          "name": "name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "noreply_email": {
-          "name": "noreply_email",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_iv": {
-          "name": "token_iv",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_ciphertext": {
-          "name": "token_ciphertext",
-          "type": "bytea",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'ok'"
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(extract(epoch from now()) * 1000)::bigint"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "(extract(epoch from now()) * 1000)::bigint"
-        }
-      },
-      "indexes": {
-        "github_accounts_org_user_github_user_idx": {
-          "name": "github_accounts_org_user_github_user_idx",
-          "columns": [
-            {
-              "expression": "organization_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "github_user_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "github_accounts_organization_id_organizations_id_fk": {
-          "name": "github_accounts_organization_id_organizations_id_fk",
-          "tableFrom": "github_accounts",
-          "tableTo": "organizations",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {
-        "github_accounts_status_check": {
-          "name": "github_accounts_status_check",
-          "value": "\"github_accounts\".\"status\" IN ('ok', 'needs_token')"
-        }
-      },
       "isRLSEnabled": false
     },
     "public.github_integration_install_states": {
@@ -6609,6 +6473,18 @@
           "notNull": true,
           "default": false
         },
+        "draft_launch": {
+          "name": "draft_launch",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "drafted_at": {
+          "name": "drafted_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
         "setup_status": {
           "name": "setup_status",
           "type": "text",
@@ -7221,12 +7097,6 @@
           "notNull": true,
           "default": true
         },
-        "default_github_account_id": {
-          "name": "default_github_account_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "bigint",
@@ -7255,19 +7125,6 @@
             "id"
           ],
           "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "user_settings_default_github_account_id_github_accounts_id_fk": {
-          "name": "user_settings_default_github_account_id_github_accounts_id_fk",
-          "tableFrom": "user_settings",
-          "tableTo": "github_accounts",
-          "columnsFrom": [
-            "default_github_account_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

@@ -3,6 +3,7 @@ import type { TicketProvider } from '@devflow/db/tables/tasks'
 import type { Task } from '@devflow/db/tables/tasks'
 import type { CreatedWithExperimentFlags } from '@devflow/db/zodschemas/created-with-experiment-flags'
 import type { CodingAgent } from '@devflow/schemas/coding-agent'
+import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import type { WorkspaceSpec } from '@devflow/schemas/effect/workspace'
 import type { TaskIntent } from '@devflow/schemas/task-intent'
 
@@ -66,6 +67,8 @@ export type LaunchTaskDraftInput = {
 	readonly autoAdvanceImplementationToPr: boolean
 	readonly createdWithExperimentFlags?: CreatedWithExperimentFlags
 	readonly attachments: readonly TaskLaunchAttachment[]
+	/** Board status; a new task starts in progress, a promoted draft keeps its own. */
+	readonly status?: TaskStatus
 	readonly importedTicket?: PreparedTicketArtifactBundle
 	/** An explicit account pick: one of the user's accounts, or null for the host's gh login. Omitted: no pick. */
 	readonly githubAccountId?: string | null

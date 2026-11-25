@@ -139,6 +139,7 @@ function PaletteRow({
 		>
 			{item.icon}
 			<span className="ell">{item.label}</span>
+			{item.mark}
 			<span className="sp" />
 			{item.detail ? <span className="d">{item.detail}</span> : null}
 			{item.kbd ? <span className="kbd">{item.kbd}</span> : null}

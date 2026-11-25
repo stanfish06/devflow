@@ -15,10 +15,20 @@ export type Attachment = {
 	preview?: string
 }
 
-export function useAttachments(taskId: string | null, existing: boolean) {
+/** An attachment a draft saved: already uploaded, so it starts ready. The chip shows the name it was picked with. */
+function uploaded(metadata: AttachmentMetadata): Attachment {
+	const name = metadata.fileName.replace(/^uploads\/[0-9a-f-]{36}-/, '').replace(/^uploads\//, '')
+	return { id: uuidv7(), file: new File([], name, { type: metadata.contentType }), status: 'ready', metadata }
+}
+
+/**
+ * Files for a task's next message, uploaded under the task as they're added. `initial` are ones a
+ * draft already uploaded; they start ready.
+ */
+export function useAttachments(taskId: string | null, existing: boolean, initial?: readonly AttachmentMetadata[]) {
 	const { client: api } = useApi()
 	const { showToast } = useUi()
-	const [files, setFiles] = useState<Attachment[]>([])
+	const [files, setFiles] = useState<Attachment[]>(() => (initial ?? []).map(uploaded))
 	const requests = useRef(new Map<string, AbortController>())
 	const previews = useRef(new Map<string, string>())
 	const release = (id: string) => {

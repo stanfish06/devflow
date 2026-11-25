@@ -1,10 +1,10 @@
 import type { ClaudeUsageLimits } from '@devflow/schemas/zod/host/usage-limits'
-import { ArrowUp, Square, X } from 'lucide-react'
+import { ArrowUp, PencilLine, Play, Square, X } from 'lucide-react'
 import { type ReactNode, type RefObject, useRef, useState } from 'react'
 
 import { useSettingsStore } from '@/hooks/stores/settingsStore'
 import { useViewportFileDrop } from '@/hooks/useViewportFileDrop'
-import { AddButton, AttachmentChips, ContextMeter } from '@/minimalist/components/ComposerControls'
+import { AddButton, AttachmentChips, ContextMeter, SplitSend } from '@/minimalist/components/ComposerControls'
 import { ModelPicker, PermissionPicker } from '@/minimalist/components/ModelPicker'
 import { SuggestionList, useSuggestions } from '@/minimalist/components/Suggestions'
 import type { SlashCommand } from '@/minimalist/lib/data'
@@ -26,6 +26,7 @@ export function Composer({
 	onStop,
 	onInterruptAndSend,
 	onCompact,
+	onSaveDraft,
 	placeholder,
 	running = false,
 	disabled = false,
@@ -58,6 +59,12 @@ export function Composer({
 	onInterruptAndSend?: () => void
 	/** Sends /compact; the context meter offers it once the window fills up. */
 	onCompact?: () => void
+	/**
+	 * Creates the ticket without starting it (the new-task page). Send becomes a split button with
+	 * Save as draft behind its caret, and ⌘S saves. Saving ignores `submitDisabled`: a draft can wait
+	 * for an offline host.
+	 */
+	onSaveDraft?: () => void
 	placeholder: string
 	running?: boolean
 	disabled?: boolean
@@ -94,11 +101,9 @@ export function Composer({
 	const sendKey = useSettingsStore((state) => state.sendMessageKeybinding)
 	// Esc once arms the stop; a second Esc within a moment stops the agent, so a stray key never interrupts work.
 	const [stopArmed, setStopArmed] = useState(false)
-	const canSend =
-		(value.trim().length > 0 || (attachments?.metadata.length ?? 0) > 0 || hasIssue) &&
-		!disabled &&
-		!submitDisabled &&
-		!attachments?.blocked
+	const hasContent = value.trim().length > 0 || (attachments?.metadata.length ?? 0) > 0 || hasIssue
+	const canSave = hasContent && !disabled && !attachments?.blocked
+	const canSend = canSave && !submitDisabled
 	const ownRef = useRef<HTMLTextAreaElement>(null)
 	const textarea = inputRef ?? ownRef
 	const suggestions = useSuggestions({ value, onChange, commands, mentionScope, textarea })
@@ -106,7 +111,18 @@ export function Composer({
 	useViewportFileDrop(attachments && !disabled ? attachments.add : null)
 
 	return (
-		<div className="composer-wrap" role="group" aria-label="Message composer">
+		<div
+			className="composer-wrap"
+			role="group"
+			aria-label="Message composer"
+			onKeyDown={(event) => {
+				// ⌘S / Ctrl+S anywhere in the composer, its pickers included, saves rather than saving the page.
+				if (!onSaveDraft || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
+				if (event.key.toLowerCase() !== 's') return
+				event.preventDefault()
+				if (canSave) onSaveDraft()
+			}}
+		>
 			{children}
 			<SuggestionList suggestions={suggestions} />
 			<div className={chip ? 'composer has-chip' : 'composer'}>
@@ -224,7 +240,32 @@ export function Composer({
 							Send now
 						</button>
 					) : null}
-					{running && !canSend ? null : (
+					{onSaveDraft && !running ? (
+						<SplitSend
+							label={submitLabel ?? 'Start'}
+							title={submitBlocked ?? submitLabel}
+							disabled={!canSend}
+							onPrimary={onSubmit}
+							items={[
+								{
+									icon: <Play className="i sm" strokeWidth={1.6} />,
+									label: 'Start agent',
+									detail: 'Create the ticket and run it now',
+									kbd: sendKey === 'enter' ? '↵' : '⌘↵',
+									disabled: !canSend,
+									onSelect: onSubmit,
+								},
+								{
+									icon: <PencilLine className="i sm" strokeWidth={1.6} />,
+									label: 'Save as draft',
+									detail: 'Create the ticket, run it later',
+									kbd: '⌘S',
+									disabled: !canSave,
+									onSelect: onSaveDraft,
+								},
+							]}
+						/>
+					) : running && !canSend ? null : (
 						<button
 							type="button"
 							className={running ? 'btn primary' : 'send'}

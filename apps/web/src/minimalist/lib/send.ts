@@ -1,3 +1,4 @@
+import type { ApiInputs } from '@devflow/api-contract/contract-router'
 import type { Session } from '@devflow/db/tables/sessions'
 import { getContextWindowUsagePercentage, resolveEffectiveContextWindow } from '@devflow/schemas/effect/model-context'
 import { uuidv7 } from 'uuidv7'
@@ -10,15 +11,31 @@ import { type ApiClient, useApi } from '@/orpc/client'
 
 export type SendIntent = 'send' | 'queue' | 'interrupt_and_send'
 
-/** Post a message to a session as if the user typed it. */
-export async function sendToSession(api: ApiClient, sessionId: string, text: string, intent: SendIntent) {
-	const result = await api.sessions.v2.continue({
+/** Which board control sent a message, for telemetry; a typed message has none. */
+export type SendOrigin = 'card_resume' | 'card_retry'
+
+/**
+ * Post a message to a session as if the user typed it. `silent` skips the app's generic error
+ * toast, for callers that report failures themselves.
+ */
+export async function sendToSession(
+	api: ApiClient,
+	sessionId: string,
+	text: string,
+	intent: SendIntent,
+	options: { origin?: SendOrigin; silent?: boolean } = {},
+) {
+	const input: ApiInputs['sessions']['v2']['continue'] = {
 		sessionId,
 		messageId: uuidv7(),
 		eventId: uuidv7(),
 		text,
 		intent,
-	})
+	}
+	if (options.origin) input.origin = options.origin
+	const result = options.silent
+		? await api.sessions.v2.continue(input, { context: { silent: true } })
+		: await api.sessions.v2.continue(input)
 	if (result.kind === 'rejected') throw new Error(result.reason)
 }
 

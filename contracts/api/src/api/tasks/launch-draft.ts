@@ -1,5 +1,5 @@
 import { taskSelectSchema } from '@devflow/db/tables/tasks'
-import { TASK_WORKFLOW_TYPES, WORKTREE_TIMINGS } from '@devflow/schemas/effect/taskconfiguration'
+import { TASK_STATUSES, TASK_WORKFLOW_TYPES, WORKTREE_TIMINGS } from '@devflow/schemas/effect/taskconfiguration'
 import { TaskIntentSchema } from '@devflow/schemas/task-intent'
 import { WorkspaceSpecSchema } from '@devflow/schemas/zod/workspace'
 import { StatusCodes } from 'http-status-codes'
@@ -73,6 +73,10 @@ export const LaunchTaskDraftInputSchema = z
 		createdWithExperimentFlags: CreatedWithExperimentFlagsSchema.optional(),
 		attachments: z.array(LaunchTaskDraftAttachmentInputSchema).max(50).default([]),
 		githubAccountId: LaunchGithubAccountIdSchema,
+		status: z
+			.enum(TASK_STATUSES)
+			.optional()
+			.describe('Board status; a new task defaults to in_progress, a promoted draft keeps its own'),
 		firstSession: LaunchTaskDraftFirstSessionInputSchema,
 	})
 	.superRefine((input, context) => {

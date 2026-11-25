@@ -97,7 +97,8 @@ export async function startTask(
 	await page.getByRole('button', { name: new RegExp(`^${input.permission ?? 'Auto'} `) }).click()
 
 	await page.getByRole('textbox', { name: 'Message the agent' }).fill(input.prompt)
-	await page.getByRole('button', { name: 'Start task' }).click()
+	// Exactly Start: the split button's caret is "More ways to start".
+	await page.getByRole('button', { name: 'Start', exact: true }).click()
 	await page.waitForURL(/\/tasks\/[0-9a-f-]+/, { timeout: 60_000 })
 	return page.url().match(/\/tasks\/([0-9a-f-]+)/)![1]!
 }

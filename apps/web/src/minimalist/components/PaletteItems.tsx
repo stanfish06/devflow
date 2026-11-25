@@ -26,10 +26,12 @@ import {
 import type { ReactNode } from 'react'
 
 import { useToggleMinimalistLayout } from '@/hooks/use-minimalist-layout'
+import { DraftMark } from '@/minimalist/components/TaskItem'
 import { useSessionAccess } from '@/minimalist/lib/access'
 import { artifactName, isAttachment, isPromptArtifact } from '@/minimalist/lib/artifacts'
 import { useRecentArtifacts, useTask, useTaskTree } from '@/minimalist/lib/data'
 import { formatAgo, toMs } from '@/minimalist/lib/format'
+import { isBoardDraft } from '@/minimalist/lib/launch-form'
 import { AGENT_NAMES, pickModel, sessionSettings } from '@/minimalist/lib/models'
 import { matchActions } from '@/minimalist/lib/palette'
 import { phaseOf } from '@/minimalist/lib/phases'
@@ -50,6 +52,8 @@ export type PaletteItem = {
 	label: string
 	detail?: string
 	icon?: ReactNode
+	/** A mark after the label, such as a draft's. */
+	mark?: ReactNode
 	kbd?: string
 	run: () => void
 }
@@ -76,8 +80,13 @@ export function useTaskResults(query: string): PaletteItem[] {
 			id: row.task.id,
 			label: row.task.name,
 			detail: [row.projectName, row.latest ? phaseOf(row.latest) : null].filter(Boolean).join(' · '),
+			mark: row.task.is_draft ? <DraftMark /> : undefined,
 			kbd: `⌘${index + 1}`,
-			run: () => void navigate({ to: '/tasks/$taskId', params: { taskId: row.task.id } }),
+			// A board draft has no thread yet: it opens in the composer it was written in.
+			run: () => {
+				if (isBoardDraft(row.task)) void navigate({ to: '/', search: { task: row.task.id } })
+				else void navigate({ to: '/tasks/$taskId', params: { taskId: row.task.id } })
+			},
 		}))
 }
 

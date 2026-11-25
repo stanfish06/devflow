@@ -7,10 +7,13 @@ import { expect, test } from '@playwright/test'
 import {
 	API_PORT,
 	archiveTask,
+	chooseModel,
 	devflowCli,
+	E2E_PROJECT,
 	ensureE2eRepo,
 	expectStackUp,
 	listeningPid,
+	MODEL,
 	openE2eProject,
 	sendFollowUp,
 	startTask,
@@ -104,7 +107,7 @@ test('the API crashing mid-turn loses no events', async ({ page }) => {
 
 test('Medium (RPI) task auto-advances from research questions to research', async ({ page }) => {
 	await openE2eProject(page)
-	await startTask(page, {
+	const taskId = await startTask(page, {
 		prompt: 'Add a one-line CONTRIBUTING.md that says pull requests are welcome.',
 		size: 'Medium',
 	})
@@ -112,6 +115,13 @@ test('Medium (RPI) task auto-advances from research questions to research', asyn
 	// The second session is created by the API's auto-advance, not by the test.
 	await expect(page.getByText(/^research:/).first()).toBeVisible({ timeout: 360_000 })
 	await expect(page.getByText(/01-research-questions/).first()).toBeVisible()
+
+	// The board tags the task with its stage group, from the labels the agent's sessions wrote.
+	// Questions, research and design all fall under Research & Design, so a further auto-advance holds.
+	await page.goto('/board')
+	await expect(page.locator(`[data-task-id="${taskId}"] [data-stage="research-design"]`)).toHaveText(
+		'Research & Design',
+	)
 })
 
 test('the CLI lists the tasks created in the UI', async () => {
@@ -193,6 +203,100 @@ test('the board moves a task to another status by drag, and the list groups it t
 		.click()
 	await page.getByRole('menuitem', { name: new RegExp(`(^| )${from}$`) }).click()
 	await expect(column(from).locator(`[data-task-id="${taskId}"]`)).toBeVisible()
+})
+
+test('the board saves a ticket as a draft in its column, and Start launches it there', async ({ page }) => {
+	await openE2eProject(page)
+	await page.goto('/board')
+	const column = (label: string) => page.getByRole('region', { name: label, exact: true })
+	await column('Todo').getByRole('button', { name: 'New task in Todo' }).click()
+	await expect(page).toHaveURL(/[?&]status=todo/)
+	// Whatever the composer defaults to, the draft runs in the e2e project.
+	await page.getByRole('button', { name: /^Project: / }).click()
+	await page
+		.getByRole('dialog', { name: 'Options' })
+		.getByRole('button', { name: new RegExp(`^${E2E_PROJECT} `) })
+		.click()
+	await chooseModel(page, MODEL)
+	const prompt = `Reply with only the word plum ${Date.now()}`
+	await page.getByRole('textbox', { name: 'Message the agent' }).fill(prompt)
+	await page.getByRole('button', { name: 'More ways to start' }).click()
+	await page.getByRole('button', { name: /^Save as draft/ }).click()
+
+	// Back on the board, the draft waits in Todo with no agent.
+	await page.waitForURL(/\/board/)
+	const card = column('Todo').locator('[data-task-id]').filter({ hasText: prompt })
+	await expect(card).toBeVisible({ timeout: 30_000 })
+	await expect(card.locator('[data-agent-state]')).toHaveText('Draft')
+	const taskId = (await card.getAttribute('data-task-id')) ?? ''
+
+	// It reopens in the composer with what it saved, and Start launches it in place.
+	await card.locator('.line-clamp-2').click()
+	await expect(page).toHaveURL(new RegExp(`[?&]task=${taskId}`))
+	await expect(page.getByRole('textbox', { name: 'Message the agent' })).toHaveValue(prompt)
+	await expect(page.getByRole('button', { name: 'More ways to start' })).toHaveCount(0)
+	await page.getByRole('button', { name: 'Start', exact: true }).click()
+	await page.waitForURL(new RegExp(`/tasks/${taskId}`), { timeout: 60_000 })
+	await waitForTurnEnd(page)
+
+	await page.goto('/board')
+	const started = column('Todo').locator(`[data-task-id="${taskId}"]`)
+	await expect(started).toBeVisible({ timeout: 30_000 })
+	await expect(started.locator('[data-agent-state]')).not.toHaveText('Draft')
+	await expect(column('In progress').locator(`[data-task-id="${taskId}"]`)).toHaveCount(0)
+})
+
+test('the board starts, stops and resumes a draft in its own column', async ({ page, context }) => {
+	await openE2eProject(page)
+	await page.goto('/board')
+	const column = (label: string) => page.getByRole('region', { name: label, exact: true })
+	await column('Todo').getByRole('button', { name: 'New task in Todo' }).click()
+	await page.getByRole('button', { name: /^Project: / }).click()
+	await page
+		.getByRole('dialog', { name: 'Options' })
+		.getByRole('button', { name: new RegExp(`^${E2E_PROJECT} `) })
+		.click()
+	await page.getByRole('button', { name: /^Task size:/ }).click()
+	await page.getByRole('button', { name: /^Small/ }).click()
+	await chooseModel(page, MODEL)
+	await page.locator('button', { hasText: /^(Auto|Ask first|Auto-accept edits|Bypass permissions)$/ }).click()
+	await page.getByRole('button', { name: /^Bypass permissions / }).click()
+	const marker = `board-ready-${Date.now()}`
+	const prompt = `First reply with only ${marker}. Then run \`sleep 120\` in the shell. After it ends, reply done.`
+	await page.getByRole('textbox', { name: 'Message the agent' }).fill(prompt)
+	await page.getByRole('button', { name: 'More ways to start' }).click()
+	await page.getByRole('button', { name: /^Save as draft/ }).click()
+	await page.waitForURL(/\/board/)
+	const draft = column('Todo').locator('[data-task-id]').filter({ hasText: marker })
+	await expect(draft.locator('[data-agent-state]')).toHaveText('Draft')
+	const taskId = (await draft.getAttribute('data-task-id')) ?? ''
+	const card = column('Todo').locator(`[data-task-id="${taskId}"]`)
+	await card.hover()
+	await card.getByRole('button', { name: /^Start / }).click()
+	await expect(page).toHaveURL(/\/board$/)
+	await expect(card.locator('[data-agent-state]')).toHaveText('Running')
+	await expect(column('In progress').locator(`[data-task-id="${taskId}"]`)).toHaveCount(0)
+
+	// Observe a real agent response before Stop: resuming requires its initialized conversation id.
+	const thread = await context.newPage()
+	try {
+		await thread.goto(`/tasks/${taskId}`)
+		await expect(thread.getByText(marker, { exact: true }).first()).toBeVisible()
+		await card.hover()
+		await card.getByRole('button', { name: /^Stop / }).click()
+		await expect(card.locator('[data-agent-state]')).toHaveText('Stopped')
+		await expect(page).toHaveURL(/\/board$/)
+		await card.getByRole('button', { name: /^Resume / }).click()
+		await expect(card.locator('[data-agent-state]')).toHaveText('Running')
+		await expect(page).toHaveURL(/\/board$/)
+		await expect(thread.getByText('Continue where you left off.', { exact: true }).first()).toBeVisible()
+		await card.hover()
+		await card.getByRole('button', { name: /^Stop / }).click()
+		await expect(card.locator('[data-agent-state]')).toHaveText('Stopped')
+		await archiveTask(thread, taskId)
+	} finally {
+		await thread.close()
+	}
 })
 
 function escapeRegExp(text: string): string {

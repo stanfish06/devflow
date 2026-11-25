@@ -7,14 +7,23 @@ import { useSettingsStore } from '@/hooks/stores/settingsStore'
 import { activeViewportFileDropHandler } from '@/lib/viewport-file-drop'
 import type { SlashCommand } from '@/minimalist/lib/data'
 import type { ComposerSettings } from '@/minimalist/lib/models'
+import { MinimalistPortalContext } from '@/minimalist/lib/portal'
 import type { ComposerAttachments } from '@/minimalist/lib/use-attachments'
 
 import { Composer } from './Composer'
 
-vi.mock('@/minimalist/components/ComposerControls', () => ({
+// The split Start button is real; its menu needs the modal API jsdom lacks.
+vi.mock('@/minimalist/components/ComposerControls', async (importOriginal) => ({
+	...(await importOriginal<typeof import('@/minimalist/components/ComposerControls')>()),
 	AddButton: () => null,
 	AttachmentChips: () => null,
 	ContextMeter: () => null,
+}))
+vi.mock('@/minimalist/lib/modal', () => ({
+	openModal: (dialog: HTMLDialogElement | null) => {
+		dialog?.setAttribute('open', '')
+		return () => dialog?.removeAttribute('open')
+	},
 }))
 vi.mock('@/minimalist/components/ModelPicker', () => ({ ModelPicker: () => null, PermissionPicker: () => null }))
 vi.mock('@/minimalist/lib/mentions', async (importOriginal) => ({
@@ -213,6 +222,87 @@ describe('minimalist composer with sending off', () => {
 		const send = screen.getByRole('button', { name: 'Send' })
 		expect(send).toHaveProperty('disabled', true)
 		expect(send.getAttribute('title')).toBe('Start the daemon on Laptop to send')
+		expect(onSubmit).not.toHaveBeenCalled()
+	})
+})
+
+describe('minimalist composer that can save a draft', () => {
+	function Drafting({
+		onSubmit,
+		onSaveDraft,
+		submitDisabled = false,
+	}: {
+		onSubmit: () => void
+		onSaveDraft: () => void
+		submitDisabled?: boolean
+	}) {
+		const [value, setValue] = useState('')
+		return (
+			<MinimalistPortalContext value={document.body}>
+				<Composer
+					value={value}
+					onChange={setValue}
+					onSubmit={onSubmit}
+					onSaveDraft={onSaveDraft}
+					submitLabel="Start"
+					placeholder="Ask the agent to do anything"
+					settings={settings}
+					onSettingsChange={() => {}}
+					catalog={{ models: [], codexSignedOut: false }}
+					submitDisabled={submitDisabled}
+				/>
+			</MinimalistPortalContext>
+		)
+	}
+
+	it('starts on Enter and on its primary half', () => {
+		const onSubmit = vi.fn()
+		const onSaveDraft = vi.fn()
+		render(<Drafting onSubmit={onSubmit} onSaveDraft={onSaveDraft} />)
+		const input = type('Add retries')
+		fireEvent.keyDown(input, { key: 'Enter' })
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		expect(onSubmit).toHaveBeenCalledTimes(2)
+		expect(onSaveDraft).not.toHaveBeenCalled()
+	})
+
+	it('saves a draft from the caret menu and with ⌘S or Ctrl+S, but not with nothing to save', () => {
+		const onSubmit = vi.fn()
+		const onSaveDraft = vi.fn()
+		render(<Drafting onSubmit={onSubmit} onSaveDraft={onSaveDraft} />)
+		const input = screen.getByRole('textbox', { name: 'Message the agent' })
+		fireEvent.keyDown(input, { key: 's', metaKey: true })
+		expect(onSaveDraft).not.toHaveBeenCalled()
+		expect(screen.getByRole('button', { name: 'More ways to start' })).toBeDisabled()
+
+		type('Add retries')
+		fireEvent.click(screen.getByRole('button', { name: 'More ways to start' }))
+		const save = screen.getByRole('button', { name: /^Save as draft/ })
+		expect(save).toHaveTextContent('⌘S')
+		expect(screen.getByRole('button', { name: /^Start agent/ })).toHaveTextContent('↵')
+		fireEvent.click(save)
+		expect(onSaveDraft).toHaveBeenCalledOnce()
+		expect(screen.queryByRole('button', { name: /^Save as draft/ })).not.toBeInTheDocument()
+
+		const meta = fireEvent.keyDown(input, { key: 's', metaKey: true })
+		fireEvent.keyDown(input, { key: 'S', ctrlKey: true })
+		expect(meta).toBe(false) // the browser's Save Page never opens
+		expect(onSaveDraft).toHaveBeenCalledTimes(3)
+		expect(onSubmit).not.toHaveBeenCalled()
+	})
+
+	it('saves while starting is blocked, such as for an offline host', () => {
+		const onSubmit = vi.fn()
+		const onSaveDraft = vi.fn()
+		render(<Drafting onSubmit={onSubmit} onSaveDraft={onSaveDraft} submitDisabled />)
+		const input = type('Later')
+		expect(screen.getByRole('button', { name: 'Start' })).toBeDisabled()
+		fireEvent.keyDown(input, { key: 'Enter' })
+		fireEvent.click(screen.getByRole('button', { name: 'More ways to start' }))
+		expect(screen.getByRole('button', { name: /^Start agent/ })).toBeDisabled()
+		fireEvent.click(screen.getByRole('button', { name: /^Save as draft/ }))
+		fireEvent.keyDown(input, { key: 's', metaKey: true })
+		expect(onSaveDraft).toHaveBeenCalledTimes(2)
 		expect(onSubmit).not.toHaveBeenCalled()
 	})
 })

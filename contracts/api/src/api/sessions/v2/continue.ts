@@ -11,6 +11,10 @@ export const ContinueV2InputSchema = z.object({
 		.describe('Client-generated id for the conversation_events row written on the continue/drain path'),
 	text: z.string().min(1),
 	intent: z.enum(['queue', 'send', 'interrupt_and_send']),
+	origin: z
+		.enum(['card_resume', 'card_retry'])
+		.optional()
+		.describe('Which one-click board control sent this message; telemetry only, it never changes the outcome'),
 })
 
 export const ContinueV2OutputSchema = z.discriminatedUnion('kind', [

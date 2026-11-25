@@ -10,6 +10,7 @@ import { TextDialog } from '@/minimalist/components/TextDialog'
 import type { TaskRow } from '@/minimalist/lib/data'
 import { newTaskDraftKey, useHasDraft } from '@/minimalist/lib/drafts'
 import { formatAge } from '@/minimalist/lib/format'
+import { isBoardDraft } from '@/minimalist/lib/launch-form'
 import { phaseOf } from '@/minimalist/lib/phases'
 import { shortcutHint } from '@/minimalist/lib/shortcuts'
 import { statusText } from '@/minimalist/lib/status'
@@ -39,7 +40,7 @@ export function TaskItem({
 	const { closeSidebarOnNarrow } = useUi()
 	const copy = useCopy()
 	const unread = useTaskUnread(row.sessions)
-	const status = statusText(row, unread)
+	const status = row.task.is_draft ? 'Draft' : statusText(row, unread)
 	const { markRead, markUnread } = useUnreadActions()
 	const archiver = useArchive()
 	const anchor = useRef<HTMLDivElement>(null)
@@ -55,6 +56,35 @@ export function TaskItem({
 	}
 	// A new window opens in this app; a copied link opens the web app, which can hand off to the desktop app.
 	const link = `${window.location.origin}/tasks/${taskId}`
+	const boardDraft = isBoardDraft(row.task)
+	const linkProps = {
+		onClick: closeSidebarOnNarrow,
+		className: `row child ${selected ? 'sel' : ''}${unread ? ' unread' : ''}`,
+		title: row.task.name,
+		'aria-current': selected ? ('page' as const) : undefined,
+	}
+	const label = (
+		<>
+			<span className="t">{row.task.is_draft ? row.task.name || 'Untitled draft' : row.task.name}</span>
+			{/* Someone else's task, which you started a session in, shows whose it is. */}
+			{user && row.task.resource_owner_user_id !== user.id ? (
+				<WiredUserAvatar userId={row.task.resource_owner_user_id} size={16} />
+			) : null}
+			{elsewhere ? (
+				<>
+					<span className="host-tag" title={`Last ran on ${elsewhere}`} aria-hidden="true">
+						{elsewhere}
+					</span>
+					<span className="sr-only">, last ran on {elsewhere}</span>
+				</>
+			) : null}
+			{/* The mark hides while the row has focus, so its meaning goes in the link's name. */}
+			{status ? <span className="sr-only">, {status}</span> : null}
+			<span className="rowmeta" aria-hidden="true">
+				<TaskMark row={row} unread={unread} selected={selected} />
+			</span>
+		</>
+	)
 	return (
 		<div
 			ref={anchor}
@@ -64,33 +94,16 @@ export function TaskItem({
 				setOpen(true)
 			}}
 		>
-			<Link
-				to="/tasks/$taskId"
-				onClick={closeSidebarOnNarrow}
-				params={{ taskId }}
-				className={`row child ${selected ? 'sel' : ''}${unread ? ' unread' : ''}`}
-				title={row.task.name}
-				aria-current={selected ? 'page' : undefined}
-			>
-				<span className="t">{row.task.is_draft ? row.task.name || 'Untitled draft' : row.task.name}</span>
-				{/* Someone else's task, which you started a session in, shows whose it is. */}
-				{user && row.task.resource_owner_user_id !== user.id ? (
-					<WiredUserAvatar userId={row.task.resource_owner_user_id} size={16} />
-				) : null}
-				{elsewhere ? (
-					<>
-						<span className="host-tag" title={`Last ran on ${elsewhere}`} aria-hidden="true">
-							{elsewhere}
-						</span>
-						<span className="sr-only">, last ran on {elsewhere}</span>
-					</>
-				) : null}
-				{/* The mark hides while the row has focus, so its meaning goes in the link's name. */}
-				{status ? <span className="sr-only">, {status}</span> : null}
-				<span className="rowmeta" aria-hidden="true">
-					<TaskMark row={row} unread={unread} selected={selected} />
-				</span>
-			</Link>
+			{/* A board draft has no thread yet: it opens in the composer it was written in. */}
+			{boardDraft ? (
+				<Link to="/" search={{ task: taskId }} {...linkProps}>
+					{label}
+				</Link>
+			) : (
+				<Link to="/tasks/$taskId" params={{ taskId }} {...linkProps}>
+					{label}
+				</Link>
+			)}
 			<span className="row-acts">
 				<button
 					type="button"
@@ -181,12 +194,19 @@ export function TaskItem({
 	)
 }
 
+/** A ticket saved as a draft, not started: a dashed pill, as on the board's cards. */
+export function DraftMark() {
+	return <span className="draft-mark">Draft</span>
+}
+
 /**
- * The most urgent of running, needs you, failed and unread; then "Draft" when a message is half
- * written somewhere else than the open task; otherwise the RPI phase or age.
+ * A draft ticket's dashed mark; else the most urgent of running, needs you, failed and unread; then
+ * "Draft" when a message is half written somewhere else than the open task; otherwise the RPI phase
+ * or age.
  */
 export function TaskMark({ row, unread, selected }: { row: TaskRow; unread: boolean; selected: boolean }) {
 	const drafted = useHasDraft([...row.sessions.map((session) => session.id), newTaskDraftKey(row.task.id)])
+	if (row.task.is_draft) return <DraftMark />
 	if (row.attention === 'running') return <span className="spin" />
 	if (row.attention === 'needs-you') return <span className="dot warn" />
 	if (row.attention === 'failed') return <span className="dot err" />

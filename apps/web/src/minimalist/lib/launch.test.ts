@@ -336,6 +336,47 @@ describe('startTask', () => {
 			})
 		},
 	)
+
+	it.each([
+		['project', { kind: 'project' as const, project: { id: 'p1', repositories: [repository] } }],
+		['directory', { kind: 'directory' as const, path: '/code/app' }],
+	])('creates a %s task in its board column, with no follow-up status update', async (_kind, target) => {
+		const { api, client } = fakeApi()
+		await startTask(client, {
+			ids,
+			target,
+			hostId: 'h1',
+			draft: 'Fix the login bug',
+			ticket: null,
+			attachments: [],
+			settings,
+			workflow: { workflowType: 'oneshot', autoAdvance: false },
+			status: 'todo',
+		})
+		const create = target.kind === 'project' ? api.tasks.v2.create : api.tasks.launchDraft
+		const [input] = create.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(input).toMatchObject({ status: 'todo' })
+		await vi.waitFor(() =>
+			expect(api.tasks.update).toHaveBeenCalledWith({ taskId: ids.taskId, name: 'Agent title' }),
+		)
+		expect(api.tasks.update).toHaveBeenCalledTimes(1)
+	})
+
+	it('leaves the board status to the server when none is given', async () => {
+		const { api, client } = fakeApi()
+		await startTask(client, {
+			ids,
+			target: { kind: 'directory', path: '/code/app' },
+			hostId: 'h1',
+			draft: 'Fix the login bug',
+			ticket: null,
+			attachments: [],
+			settings,
+			workflow: { workflowType: 'oneshot', autoAdvance: false },
+		})
+		const [input] = api.tasks.launchDraft.mock.calls[0] as unknown as [Record<string, unknown>]
+		expect(input.status).toBeUndefined()
+	})
 })
 
 describe('launchInTask', () => {
