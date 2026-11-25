@@ -202,6 +202,8 @@ export function launchInput(args: {
 	snapshot: DraftLaunch
 	ticket: Ticket | null
 	status?: TaskStatus
+	/** The account picked in the composer. A draft's snapshot doesn't keep one, so its Start uses the project's or your default. */
+	githubAccount?: StartTaskInput['githubAccount']
 }): StartTaskInput {
 	const { snapshot } = args
 	const input: StartTaskInput = {
@@ -216,6 +218,7 @@ export function launchInput(args: {
 		directImplementation: snapshot.taskSize === 'small',
 	}
 	if (args.status) input.status = args.status
+	if (args.githubAccount) input.githubAccount = args.githubAccount
 	return input
 }
 

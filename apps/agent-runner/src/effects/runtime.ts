@@ -26,6 +26,7 @@ import {
 	type AcquireDaemonInstanceLockInput,
 } from './services/daemon-instance-lock'
 import { DaemonTaskSyncLive } from './services/daemon-task-sync'
+import { GithubCredentialsLive } from './services/github-credentials/github-credentials.layer'
 import { HostMachineProbeLive } from './services/host-machine-stats/host-machine-probe.layer'
 import { HostMachineStatsLive } from './services/host-machine-stats/host-machine-stats.layer'
 import { HostModelCatalogSourceLive } from './services/host-model-catalog/host-model-catalog.layer'
@@ -135,9 +136,13 @@ export function createDaemonRuntime(options: CreateDaemonRuntimeOptions) {
 	).pipe(Layer.provideMerge(Layer.mergeAll(StartupConfigLive, BunServices.layer, SessionRunRegistryLive)))
 	// One task-context cache shared by session launch, task-diff registration, and the trackers.
 	const TaskWorkspaceContextRuntimeLive = TaskWorkspaceContextLive.pipe(Layer.provide(BaseRuntimeLive))
-	const ClaudeAdaptersLive = Layer.mergeAll(ClaudeSdkLive, TaskWorkspaceContextRuntimeLive).pipe(
-		Layer.provideMerge(BaseRuntimeLive),
-	)
+	// One owner of every session's GitHub credential directory, shared by the Claude and Codex runs.
+	const GithubCredentialsRuntimeLive = GithubCredentialsLive.pipe(Layer.provide(BaseRuntimeLive), Layer.orDie)
+	const ClaudeAdaptersLive = Layer.mergeAll(
+		ClaudeSdkLive,
+		TaskWorkspaceContextRuntimeLive,
+		GithubCredentialsRuntimeLive,
+	).pipe(Layer.provideMerge(BaseRuntimeLive))
 	const ClaudeDomainLive = ClaudeSessionsLive.pipe(Layer.provideMerge(ClaudeAdaptersLive))
 	const WorkspacePathResolverPlatformLive = WorkspacePathResolverLive.pipe(
 		Layer.provideMerge(Layer.mergeAll(BunServices.layer, StartupConfigLive)),
@@ -208,6 +213,7 @@ export function createDaemonRuntime(options: CreateDaemonRuntimeOptions) {
 		WorkspaceRepositoryActorsLive,
 		WorkspaceSessionLaunchLive,
 		TaskWorkspaceContextRuntimeLive,
+		GithubCredentialsRuntimeLive,
 	).pipe(Layer.provideMerge(BaseRuntimeLive))
 
 	return ManagedRuntime.make(DaemonRuntimeLive)

@@ -1,10 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { useState } from 'react'
 import z from 'zod/v4'
 
 import { DesktopTaskDetailPage } from '@/components/task-detail/DesktopTaskDetailPage'
 import { useMinimalistLayout } from '@/hooks/use-minimalist-layout'
 import { optionalBooleanSearchParam } from '@/lib/search-params'
 import { MinimalistTaskPage } from '@/minimalist/components/TaskPage'
+import { useTask } from '@/minimalist/lib/data'
 
 export const taskDetailSearchSchema = z.object({
 	session: z.string().optional(),
@@ -40,8 +42,29 @@ function TaskDetailPage() {
 	const minimalist = useMinimalistLayout()
 	const { taskId } = Route.useParams()
 	const { session } = Route.useSearch()
-	if (minimalist) return <MinimalistTaskPage key={taskId} taskId={taskId} sessionId={session} />
+	if (minimalist) return <MinimalistTaskRoute key={taskId} taskId={taskId} sessionId={session} />
 	return <StandardTaskDetailPage />
+}
+
+/**
+ * The task page, until sync drops a task this page was showing: it was deleted, here or in another
+ * browser, so a plain page says so instead of an empty task. A task never seen here (a stale link,
+ * or one sync hasn't delivered yet) keeps the task page's own "doesn't exist" state, since without
+ * tombstones the browser can't tell those apart.
+ */
+function MinimalistTaskRoute({ taskId, sessionId }: { taskId: string; sessionId?: string }) {
+	const { task, isReady } = useTask(taskId)
+	const [seen, setSeen] = useState(false)
+	if (task && !seen) setSeen(true)
+	if (seen && isReady && !task)
+		return (
+			<main className="main">
+				<div className="hero">
+					<h1 className="status">This task was deleted</h1>
+				</div>
+			</main>
+		)
+	return <MinimalistTaskPage taskId={taskId} sessionId={sessionId} />
 }
 
 function StandardTaskDetailPage() {

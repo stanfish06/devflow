@@ -36,6 +36,36 @@ describe('stopReason', () => {
 		expect(stopReason(codex, 'mac')).toMatchObject({ title: 'Codex is signed out on mac' })
 	})
 
+	it('names the account GitHub rejected, and offers to replace its token or switch accounts', () => {
+		expect(
+			stopReason(session({ error_reason: 'github_token_rejected', error_message: 'stan-work' }), 'mac'),
+		).toEqual({
+			title: "GitHub rejected stan-work's token",
+			detail: 'Replace it or continue with another account, then send a message to try again.',
+			actions: ['replace-token', 'switch-account'],
+		})
+	})
+
+	it('says the account has no access, and offers only to switch accounts, when its token is fine', () => {
+		const stopped = stopReason(
+			session({ error_reason: 'github_no_repo_access', error_message: 'stan-work' }),
+			'mac',
+		)
+		expect(stopped).toMatchObject({
+			title: "stan-work can't push to this repository",
+			actions: ['switch-account'],
+		})
+		expect(stopped?.error).toBeUndefined()
+	})
+
+	it('reads a GitHub refusal from a Codex session too, and copes with a missing login', () => {
+		const codex = session({ coding_agent: 'codelayer', error_reason: 'github_token_rejected', error_message: null })
+		expect(stopReason(codex, 'mac')).toMatchObject({
+			title: "GitHub rejected the account's token",
+			actions: ['replace-token', 'switch-account'],
+		})
+	})
+
 	it('names an agent that could not start, and shows any other error as is', () => {
 		expect(stopReason(session({ error_reason: 'start_failed' }), 'mac')?.title).toBe('Claude Code could not start')
 		expect(stopReason(session({ error_message: 'Tool crashed' }), 'mac')).toMatchObject({

@@ -3,13 +3,16 @@ import { Link, useLocation, useNavigate, useParams } from '@tanstack/react-route
 import { Folder, FolderOpen, GitBranch, MoreHorizontal, Plus, SquarePen } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { Menu, MenuItem } from '@/minimalist/components/Menu'
+import { DeleteDialog } from '@/minimalist/components/DeleteDialog'
+import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
 import { TaskItem } from '@/minimalist/components/TaskItem'
-import { type ProjectGroup, repoName, useOpenTaskId, useTaskTree } from '@/minimalist/lib/data'
+import { type ProjectGroup, repoName, useHosts, useOpenTaskId, useTaskTree } from '@/minimalist/lib/data'
 import { formatAge, toMs } from '@/minimalist/lib/format'
+import { elsewhereHost, maskGroups } from '@/minimalist/lib/host-mask'
 import { sessionName } from '@/minimalist/lib/session-name'
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useAction } from '@/minimalist/lib/use-action'
+import { useWorkingHost, type WorkingHost } from '@/minimalist/lib/use-working-host'
 import { useApi } from '@/orpc/client'
 
 const TASKS_PER_PROJECT = 5
@@ -17,12 +20,15 @@ const STANDALONE_SESSIONS = 8
 
 /**
  * The sidebar's default view: each project with its latest tasks, then sessions outside any task.
- * Other people's projects show only while they hold one of your tasks; the composer's project
- * picker still lists every project.
+ * Other people's projects show only while they hold one of your tasks, and projects bound to other
+ * hosts hide while you work on this one. The composer's project picker still lists every project.
  */
 export function ProjectList() {
 	const { groups: allGroups, standalone, isReady } = useTaskTree()
-	const groups = allGroups.filter((group) => group.mine || group.tasks.length > 0)
+	const working = useWorkingHost()
+	const hostNames = useHostNames()
+	const listed = allGroups.filter((group) => group.mine || group.tasks.length > 0)
+	const groups = maskGroups(listed, working.id)
 	const { closeSidebarOnNarrow } = useUi()
 	const params = useParams({ strict: false }) as { sessionId?: string }
 	const openTaskId = useOpenTaskId()
@@ -44,9 +50,18 @@ export function ProjectList() {
 				</Link>
 			</div>
 			{isReady ? null : <SkeletonRows />}
-			{isReady && groups.length === 0 ? (
+			{isReady && listed.length === 0 ? (
 				<div className="empty">
 					Add a project to start. <Link to="/settings/projects/new">Add project</Link>
+				</div>
+			) : null}
+			{/* Everything you have lives on other hosts: say so, rather than offering to add a project. */}
+			{isReady && listed.length > 0 && groups.length === 0 ? (
+				<div className="empty">
+					No projects on this host.{' '}
+					<button type="button" className="linkbtn" onClick={() => working.set('all')}>
+						Show all hosts
+					</button>
 				</div>
 			) : null}
 			{groups.map((group) => (
@@ -55,6 +70,8 @@ export function ProjectList() {
 					group={group}
 					selected={group.key === selectedProject}
 					selectedTaskId={openTaskId}
+					working={working.id}
+					hostName={hostNames}
 				/>
 			))}
 			{standalone.length > 0 ? <div className="section">Sessions</div> : null}
@@ -78,10 +95,14 @@ function ProjectSection({
 	group,
 	selected,
 	selectedTaskId,
+	working,
+	hostName,
 }: {
 	group: ProjectGroup
 	selected: boolean
 	selectedTaskId: string | undefined
+	working: WorkingHost
+	hostName: (hostId: string) => string
 }) {
 	const { closeSidebarOnNarrow } = useUi()
 	const containsSelected = group.tasks.some((row) => row.task.id === selectedTaskId)
@@ -130,9 +151,17 @@ function ProjectSection({
 			</div>
 			{collapsed
 				? null
-				: visible.map((row) => (
-						<TaskItem key={row.task.id} row={row} selected={row.task.id === selectedTaskId} />
-					))}
+				: visible.map((row) => {
+						const elsewhere = elsewhereHost(row, working)
+						return (
+							<TaskItem
+								key={row.task.id}
+								row={row}
+								selected={row.task.id === selectedTaskId}
+								elsewhere={elsewhere === null ? null : hostName(elsewhere)}
+							/>
+						)
+					})}
 			{!collapsed && group.tasks.length > TASKS_PER_PROJECT ? (
 				<button type="button" className="row more" onClick={() => setShowAll(!showAll)}>
 					{showAll ? 'Show less' : 'Show more'}
@@ -140,6 +169,13 @@ function ProjectSection({
 			) : null}
 		</div>
 	)
+}
+
+/** Your hosts' names by id; a host you don't have (a teammate's, or a removed one) goes by its short id. */
+function useHostNames(): (hostId: string) => string {
+	const { hosts } = useHosts()
+	const names = new Map(hosts.map((entry) => [entry.host.host_id, entry.name]))
+	return (hostId) => names.get(hostId) ?? hostId.slice(0, 8)
 }
 
 /** A devflow project, including one whose workspace is still loading; the rest group by directory. */
@@ -208,7 +244,10 @@ function newTaskSearch(group: ProjectGroup): { project?: string; dir?: string } 
 	return dir ? { dir } : {}
 }
 
-/** New task, edit, archive. Directory groups have no project to edit or archive. */
+/**
+ * New task, edit, archive, and for its owner, delete. Directory groups have no project to edit,
+ * archive or delete.
+ */
 function ProjectMenu({ group }: { group: ProjectGroup }) {
 	const { client: api } = useApi()
 	const { showToast, closeSidebarOnNarrow } = useUi()
@@ -216,7 +255,10 @@ function ProjectMenu({ group }: { group: ProjectGroup }) {
 	const action = useAction()
 	const anchor = useRef<HTMLButtonElement>(null)
 	const [open, setOpen] = useState(false)
+	const [deleting, setDeleting] = useState(false)
 	const projectId = group.projectId
+	// `mine` on a project group means you own it, the same check the server makes.
+	const owner = projectId !== null && group.mine
 	const archive = async (archived: boolean) => {
 		if (!projectId) return
 		setOpen(false)
@@ -266,7 +308,27 @@ function ProjectMenu({ group }: { group: ProjectGroup }) {
 						/>
 					</>
 				) : null}
+				{owner ? (
+					<>
+						<MenuSeparator />
+						<MenuItem
+							label="Delete project…"
+							detail="Removes its tasks too"
+							danger
+							onSelect={() => {
+								setOpen(false)
+								setDeleting(true)
+							}}
+						/>
+					</>
+				) : null}
 			</Menu>
+			{deleting && projectId ? (
+				<DeleteDialog
+					target={{ kind: 'project', projectId, name: group.name }}
+					onClose={() => setDeleting(false)}
+				/>
+			) : null}
 		</>
 	)
 }

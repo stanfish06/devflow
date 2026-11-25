@@ -31,6 +31,7 @@ import {
 	type MakeTaskWorkspaceContextInput,
 } from '../helpers/task-workspace-context-fixture'
 import { makeMockDaemonApiLayer } from '../mocks/daemon-api.mock'
+import { makeHostLoginGithubCredentials } from '../mocks/github-credentials.mock'
 import { makeMockTaskWorkspaceContextLayer } from '../mocks/task-workspace-context.mock'
 
 const projectTask = {
@@ -106,6 +107,7 @@ const openWithContext = (
 				approvalChanges: Stream.never,
 				workspaceSetupChanges: Stream.never,
 				providerLoginChanges: Stream.never,
+				taskUserSettingsChanges: Stream.never,
 				workspaceSetups: Stream.never,
 				workspaceSetupSessions: Stream.never,
 				streamSessionChanges: () => Stream.never,
@@ -127,6 +129,7 @@ const openWithContext = (
 				drain: Effect.void,
 			}),
 			Layer.succeed(ClaudeProcessEnvironment, process.env),
+			makeHostLoginGithubCredentials(),
 			Layer.succeed(DurableStreamFetch, { fetch }),
 		).pipe(Layer.provideMerge(BunServices.layer))
 		const sdk = Layer.succeed(ClaudeSdk, {

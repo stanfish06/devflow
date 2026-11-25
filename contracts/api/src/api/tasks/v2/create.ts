@@ -7,6 +7,7 @@ import z from 'zod/v4'
 import { contractBuilder } from '../../../contract-builder'
 import { isSafeTaskWorkspacePathSegment } from '../../../lib/task-workspace-path'
 import { TicketProviderSchema } from '../../../lib/ticket-provider'
+import { LaunchGithubAccountIdSchema } from '../../github-accounts/schemas'
 import { CodingAgentSchema, PermissionsModeSchema } from '../../sessions/launch'
 import { CreatedWithExperimentFlagsSchema } from '../experiment-flags'
 import { LaunchTaskDraftAttachmentInputSchema } from '../launch-draft'
@@ -70,6 +71,7 @@ export const CreateTaskV2InputSchema = z
 		autoAdvanceImplementationToPr: z.boolean().default(false),
 		createdWithExperimentFlags: CreatedWithExperimentFlagsSchema.optional(),
 		attachments: z.array(LaunchTaskDraftAttachmentInputSchema).max(50).default([]),
+		githubAccountId: LaunchGithubAccountIdSchema,
 		status: z
 			.enum(TASK_STATUSES)
 			.optional()

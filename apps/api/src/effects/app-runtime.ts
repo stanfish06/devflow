@@ -9,6 +9,7 @@ import { Directory } from '../auth/directory'
 import { PersonalAccessTokenFileStoreLive, type PersonalAccessTokenStore } from '../auth/personal-access-tokens'
 import { db, dbReadReplica } from '../db/db'
 import { getLocalDirectory } from '../devflow/local-auth'
+import { type TokenCipher, TokenCipherLive } from './github-accounts/token-cipher'
 import type { ArtifactComments } from './services/artifact-comments/artifact-comments'
 import { ArtifactCommentsLive } from './services/artifact-comments/artifact-comments-live'
 import type { DiffComments } from './services/diff-comments/diff-comments'
@@ -69,6 +70,7 @@ export type AppRuntimeServices =
 	| TaskIntentClassifier
 	| PrStatusStream
 	| SessionTitleGeneration
+	| TokenCipher
 
 /**
  * The type for the actual runtime
@@ -95,6 +97,8 @@ const BaseRuntimeLive = Layer.mergeAll(
 	PostgresReadReplicaDbLive(dbReadReplica),
 	S3Live,
 	DurableStreamsConfigLive.pipe(Layer.orDie),
+	// Never fails: without GITHUB_ACCOUNT_TOKEN_KEY only the GitHub-account token procedures do.
+	TokenCipherLive,
 )
 	// The one fetch transport, provided once. GitHub operations declare HttpClient in R and receive
 	// this instance ambiently.

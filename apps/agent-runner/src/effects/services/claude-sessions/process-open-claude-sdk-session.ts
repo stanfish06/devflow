@@ -4,7 +4,7 @@ import { DaemonCollections } from '../daemon-collections/daemon-collections.serv
 import { StreamProducerLiveForSession } from '../stream-producer/stream-producer.service'
 import type { PreparedClaudeRun } from './prepare-claude-session'
 import type { ClaudeSdkSession } from './sdk/claude-sdk-session.service'
-import { observeLiveSessionControls } from './workflows/live-controls'
+import { observeDaemonStopRequest, observeLiveSessionControls } from './workflows/live-controls'
 import { processClaudeEvents } from './workflows/process-events'
 
 export const processOpenClaudeSdkSession = Effect.fn('claude.process_open_sdk_session')(function* (input: {
@@ -20,6 +20,12 @@ export const processOpenClaudeSdkSession = Effect.fn('claude.process_open_sdk_se
 		collections,
 		sdkSession: input.sdkSession,
 		interruptState: input.prepared.interruptState,
+	}).pipe(Effect.forkScoped)
+
+	yield* observeDaemonStopRequest({
+		sessionId,
+		stopRequested: input.prepared.stopRequested,
+		sdkSession: input.sdkSession,
 	}).pipe(Effect.forkScoped)
 
 	yield* processClaudeEvents({

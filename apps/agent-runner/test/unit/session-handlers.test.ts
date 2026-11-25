@@ -97,6 +97,9 @@ function createMockCollections() {
 		providerLoginRequests: {
 			toArray: [],
 		} as unknown as DaemonServices['collections']['providerLoginRequests'],
+		taskUserSettings: {
+			toArray: [],
+		} as unknown as DaemonServices['collections']['taskUserSettings'],
 	}
 }
 

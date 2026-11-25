@@ -366,6 +366,19 @@
 	.child .meta.draft {
 		color: var(--fg-2);
 	}
+	/* Where a task last ran, when that isn't the working host: muted, so it informs without competing. */
+	.child .host-tag {
+		flex: none;
+		max-width: 88px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		padding: 0 6px;
+		border: 1px solid var(--line-2);
+		border-radius: 999px;
+		color: var(--fg-3);
+		font-size: 11px;
+		line-height: 16px;
+	}
 	/* A ticket saved as a draft: a dashed pill in the sidebar, the palette and the draft's title bar. */
 	.draft-mark {
 		flex: none;
@@ -482,16 +495,51 @@
 		margin-left: -6px;
 		box-shadow: 0 0 0 1.5px var(--surface);
 	}
+	/* A neutral robot badge in the theme's own colours, so it follows light and dark. */
 	.avatar.agent-mark {
-		background: #fff;
-	}
-	.host-chip {
-		margin-left: auto;
-		font-size: 11.5px;
+		background: var(--surface-2);
 		color: var(--fg-3);
+		border: 1px solid var(--line);
+	}
+	/* "Host's own gh login" in Settings → GitHub accounts: a house where an account's initials would be. */
+	.avatar.gh-host {
+		width: 24px;
+		height: 24px;
+		background: var(--surface-2);
+		color: var(--fg-3);
+		border: 1px solid var(--line);
+	}
+	/* The working-host switcher under the brand row: a choice, so it looks like a control. */
+	.host-switch {
 		display: flex;
 		align-items: center;
-		gap: 5px;
+		gap: 8px;
+		width: 100%;
+		margin: 0 0 8px;
+		padding: 5px 8px;
+		border: 1px solid var(--line-2);
+		border-radius: 8px;
+		text-align: left;
+	}
+	.host-switch:hover,
+	.host-switch[aria-expanded='true'] {
+		background: var(--hover);
+	}
+	.host-switch .name {
+		flex: 1;
+		min-width: 0;
+		font-weight: 500;
+	}
+	.host-switch .state {
+		font-size: 11.5px;
+		color: var(--fg-3);
+	}
+	.host-switch .i {
+		color: var(--fg-2);
+		flex: none;
+	}
+	.host-switch .chev {
+		color: var(--fg-3);
 	}
 
 	/* main */
@@ -559,6 +607,17 @@
 		border-color: transparent;
 		background: transparent;
 		color: var(--fg-2);
+	}
+	.btn.danger {
+		background: var(--del);
+		color: #fff;
+		border-color: transparent;
+	}
+	/* A quieter destructive action in a row of buttons, like Delete… beside Unarchive. */
+	.btn.ghost-danger {
+		background: transparent;
+		color: var(--del);
+		border-color: transparent;
 	}
 	.btn.sm {
 		height: 24px;
@@ -1147,6 +1206,14 @@
 	.mi .i {
 		color: var(--fg-2);
 	}
+	.mi.danger,
+	.mi.danger .i {
+		color: var(--del);
+	}
+	.mi.danger .d {
+		color: inherit;
+		opacity: 0.75;
+	}
 	.sep {
 		height: 1px;
 		background: var(--line);
@@ -1349,6 +1416,17 @@
 		font-weight: 600;
 		margin: 0 0 8px;
 	}
+	/* A settings group title with a control for the whole group at its end. */
+	.group-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		margin: 0 0 6px;
+	}
+	.group-head .h2 {
+		margin: 0;
+	}
 	.h1 {
 		font-size: 22px;
 		font-weight: 500;
@@ -1404,6 +1482,10 @@
 	}
 	.btn.primary:hover {
 		background: var(--accent);
+		opacity: 0.9;
+	}
+	.btn.danger:hover:not(:disabled) {
+		background: var(--del);
 		opacity: 0.9;
 	}
 	.btn:disabled,
@@ -2140,6 +2222,11 @@
 	}
 	.text-dialog .lbl {
 		margin: 14px 0 6px;
+	}
+	.text-dialog label.lbl {
+		display: block;
+		color: var(--fg-2);
+		font-size: 12.5px;
 	}
 	.dialog-actions {
 		display: flex;

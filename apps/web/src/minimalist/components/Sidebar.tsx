@@ -7,6 +7,7 @@ import { AccountMenu } from '@/minimalist/components/AccountMenu'
 import { AttentionList } from '@/minimalist/components/AttentionList'
 import { ProjectList } from '@/minimalist/components/ProjectList'
 import { ResizeHandle } from '@/minimalist/components/ResizeHandle'
+import { WorkingHostSwitcher } from '@/minimalist/components/WorkingHostSwitcher'
 import { useMinimalistInbox } from '@/minimalist/lib/inbox'
 import { shortcutHint } from '@/minimalist/lib/shortcuts'
 import { useUi } from '@/minimalist/lib/ui-state'
@@ -47,6 +48,7 @@ export function Sidebar() {
 					</button>
 				</span>
 			</div>
+			<WorkingHostSwitcher />
 			<nav className="nav" aria-label="Main navigation">
 				<Link
 					to="/"

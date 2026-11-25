@@ -129,6 +129,12 @@ describe('launchError', () => {
 		expect(launchError(error)).toContain('The server rejected the request')
 	})
 
+	it('says when the picked GitHub account is gone', () => {
+		const message = 'The GitHub account picked for this task was not found. Pick another one.'
+		const error = new ORPCError('NOT_FOUND', { status: 404, data: { message } })
+		expect(launchError(error)).toBe(`Could not start the task. ${message} ${kept}`)
+	})
+
 	it('keeps to the plain message otherwise', () => {
 		expect(launchError(new Error('boom'))).toBe(`Could not start the task. ${kept}`)
 	})
@@ -233,6 +239,49 @@ describe('startTask', () => {
 			firstSession: { workingDirectory: '/code/app' },
 		})
 		expect(api.ai.generateTitle).not.toHaveBeenCalled()
+	})
+
+	describe('GitHub account', () => {
+		const launch = (client: ApiClient, target: 'project' | 'directory', githubAccount?: object) =>
+			startTask(client, {
+				ids,
+				target:
+					target === 'project'
+						? { kind: 'project', project: { id: 'p1', repositories: [repository] } }
+						: { kind: 'directory', path: '/code/app' },
+				hostId: 'h1',
+				draft: 'Fix the login bug',
+				ticket: null,
+				attachments: [],
+				settings,
+				workflow: { workflowType: 'oneshot', autoAdvance: false },
+				...(githubAccount ? { githubAccount: githubAccount as { id: string | null; explicit: boolean } } : {}),
+			})
+		const sent = (call: unknown) => (call as [Record<string, unknown>])[0]
+
+		it.each([
+			['project', 'an account', { id: 'acct-1', explicit: true }, 'acct-1'],
+			['project', "the host's gh login", { id: null, explicit: true }, null],
+			['directory', 'an account', { id: 'acct-1', explicit: true }, 'acct-1'],
+			['directory', "the host's gh login", { id: null, explicit: true }, null],
+		] as const)('sends a %s task the %s you picked', async (target, _label, account, expected) => {
+			const { api, client } = fakeApi()
+			await launch(client, target, account)
+			const call = target === 'project' ? api.tasks.v2.create.mock.calls[0] : api.tasks.launchDraft.mock.calls[0]
+			expect(sent(call)).toHaveProperty('githubAccountId', expected)
+		})
+
+		it.each(['project', 'directory'] as const)(
+			'sends nothing for a %s task when the account was inherited, so later defaults still apply',
+			async (target) => {
+				const { api, client } = fakeApi()
+				await launch(client, target, { id: 'acct-1', explicit: false })
+				await launch(client, target)
+				const calls = target === 'project' ? api.tasks.v2.create.mock.calls : api.tasks.launchDraft.mock.calls
+				expect(calls).toHaveLength(2)
+				for (const call of calls) expect(sent(call)).not.toHaveProperty('githubAccountId')
+			},
+		)
 	})
 
 	it('starts a medium task on its research questions, with the prompt as the task content', async () => {

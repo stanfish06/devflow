@@ -1,8 +1,9 @@
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core'
+import { bigint, boolean, check, pgTable, text, unique, uuid } from 'drizzle-orm/pg-core'
 import { createInsertSchema, createSelectSchema, createUpdateSchema } from 'drizzle-zod'
 import { uuidv7 } from 'uuidv7'
 
+import { githubAccounts } from './github-accounts'
 import { organizations } from './organizations'
 import { tasks } from './tasks'
 
@@ -43,6 +44,14 @@ export const taskUserSettings = pgTable(
 			.notNull(),
 		auto_advance_implementation_to_pr: boolean('auto_advance_implementation_to_pr').default(false).notNull(),
 
+		// The GitHub account this user's agents act as in this task. Both unset: no pick, so the
+		// project's default and then the user's own default apply. `github_use_host_login`: the user
+		// picked each host's own gh login for this task. Written only at launch (when the pick was
+		// explicit) and by tasks.setGithubAccount, which check the account is the user's own;
+		// removing the account clears it, so the task falls through to the next level.
+		github_account_id: uuid('github_account_id').references(() => githubAccounts.id, { onDelete: 'set null' }),
+		github_use_host_login: boolean('github_use_host_login').default(false).notNull(),
+
 		created_at: bigint('created_at', { mode: 'bigint' })
 			.notNull()
 			.default(sql`(extract(epoch from now()) * 1000)::bigint`)
@@ -54,7 +63,13 @@ export const taskUserSettings = pgTable(
 			.$defaultFn(() => BigInt(Date.now()))
 			.$onUpdateFn(() => BigInt(Date.now())),
 	},
-	(t) => [unique('task_user_settings_unique').on(t.organization_id, t.user_id, t.task_id)],
+	(t) => [
+		unique('task_user_settings_unique').on(t.organization_id, t.user_id, t.task_id),
+		check(
+			'task_user_settings_github_choice_check',
+			sql`${t.github_account_id} IS NULL OR NOT ${t.github_use_host_login}`,
+		),
+	],
 )
 
 export const taskUserSettingsSelectSchema = createSelectSchema(taskUserSettings)

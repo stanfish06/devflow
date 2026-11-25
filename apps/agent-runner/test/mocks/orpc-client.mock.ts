@@ -81,6 +81,10 @@ export function createMockORPCClient(overrides?: DeepPartial<ORPCClient>): ORPCC
 		users: {
 			setGithubIdentity: notImplemented('users.setGithubIdentity'),
 		},
+		githubAccounts: {
+			resolveToken: notImplemented('githubAccounts.resolveToken'),
+			reportRejection: notImplemented('githubAccounts.reportRejection'),
+		},
 		approvals: {
 			create: notImplemented('approvals.create'),
 		},

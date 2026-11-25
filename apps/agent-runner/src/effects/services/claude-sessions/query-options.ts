@@ -7,6 +7,8 @@ import { mapToSdkPermissionMode } from '@/agents/claudecode/permission-mode'
 import type { ForkMeta } from '@/agents/shared/run-session'
 import { createDockerSandboxSpawner, isDockerSandboxEnabled } from '@/devflow/docker-sandbox'
 
+import { withGithubEnvironment, type GithubEnv } from '../github-credentials/credential-files'
+
 export const CLAUDE_TOOLS = [
 	'Agent',
 	'ListAgents',
@@ -50,6 +52,11 @@ export interface BuildClaudeQueryOptionsInput {
 	readonly canUseTool?: Options['canUseTool']
 	readonly stderr?: Options['stderr']
 	readonly commitAttributionEnv?: Record<string, string>
+	/**
+	 * Points `gh` and `git` at the session's GitHub account. Null or absent keeps the host's own gh
+	 * login: the env is then exactly what it was before accounts existed.
+	 */
+	readonly githubEnv?: GithubEnv | null
 	readonly inheritedEnv: NodeJS.ProcessEnv
 }
 
@@ -91,22 +98,27 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Op
 		// Relay subagent text/thinking and depth-2+ subagent messages, keyed by
 		// their spawning Agent tool_use id. Off, nested Agent calls render empty.
 		forwardSubagentText: true,
-		env: {
-			CLAUDE_CODE_EFFORT_LEVEL: effort ?? 'high',
-			CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
-			CLAUDE_CODE_DISABLE_CRON: '1',
-			CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
-			CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
-			ENABLE_TOOL_SEARCH: 'auto:5',
-			CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0',
-			CLAUDE_AGENT_SDK_MCP_NO_PREFIX: '0',
-			CLAUDE_CODE_SYNC_PLUGIN_INSTALL: '1',
-			CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS: '20000',
-			MCP_CONNECTION_NONBLOCKING: '0',
-			CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH: '1',
-			...input.inheritedEnv,
-			...input.commitAttributionEnv,
-		},
+		// The SDK replaces the process env with exactly this, so stripping a variable here keeps it
+		// out of the agent (and of the sandbox, which filters this same env).
+		env: withGithubEnvironment(
+			{
+				CLAUDE_CODE_EFFORT_LEVEL: effort ?? 'high',
+				CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR: '1',
+				CLAUDE_CODE_DISABLE_CRON: '1',
+				CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+				CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+				ENABLE_TOOL_SEARCH: 'auto:5',
+				CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '0',
+				CLAUDE_AGENT_SDK_MCP_NO_PREFIX: '0',
+				CLAUDE_CODE_SYNC_PLUGIN_INSTALL: '1',
+				CLAUDE_CODE_SYNC_PLUGIN_INSTALL_TIMEOUT_MS: '20000',
+				MCP_CONNECTION_NONBLOCKING: '0',
+				CLAUDE_CODE_ENABLE_BACKGROUND_PLUGIN_REFRESH: '1',
+				...input.inheritedEnv,
+				...input.commitAttributionEnv,
+			},
+			input.githubEnv ?? null,
+		),
 		systemPrompt: {
 			type: 'preset',
 			preset: 'claude_code',
@@ -123,6 +135,7 @@ export function buildClaudeQueryOptions(input: BuildClaudeQueryOptionsInput): Op
 			? createDockerSandboxSpawner({
 					cwd: input.cwd,
 					mountPaths: [...input.additionalDirectories, input.rpiPluginPath, input.appPluginPath],
+					githubEnv: input.githubEnv ?? null,
 				})
 			: undefined,
 	}

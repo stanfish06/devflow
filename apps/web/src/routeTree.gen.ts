@@ -31,6 +31,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings/diagn
 import { Route as SettingsExperimentsRouteImport } from './routes/settings/experiments'
 import { Route as SettingsGeneralRouteImport } from './routes/settings/general'
 import { Route as SettingsGitRouteImport } from './routes/settings/git'
+import { Route as SettingsGithubAccountsRouteImport } from './routes/settings/github-accounts'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings/keybindings'
 import { Route as SettingsPersonalAccessTokensRouteImport } from './routes/settings/personal-access-tokens'
 import { Route as SettingsProjectsRouteImport } from './routes/settings/projects'
@@ -158,6 +159,11 @@ const SettingsGitRoute = SettingsGitRouteImport.update({
   path: '/git',
   getParentRoute: () => SettingsRouteRoute,
 } as any)
+const SettingsGithubAccountsRoute = SettingsGithubAccountsRouteImport.update({
+  id: '/github-accounts',
+  path: '/github-accounts',
+  getParentRoute: () => SettingsRouteRoute,
+} as any)
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
@@ -267,6 +273,7 @@ export interface FileRoutesByFullPath {
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/git': typeof SettingsGitRoute
+  '/settings/github-accounts': typeof SettingsGithubAccountsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/personal-access-tokens': typeof SettingsPersonalAccessTokensRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -304,6 +311,7 @@ export interface FileRoutesByTo {
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/git': typeof SettingsGitRoute
+  '/settings/github-accounts': typeof SettingsGithubAccountsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/personal-access-tokens': typeof SettingsPersonalAccessTokensRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -346,6 +354,7 @@ export interface FileRoutesById {
   '/settings/experiments': typeof SettingsExperimentsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/git': typeof SettingsGitRoute
+  '/settings/github-accounts': typeof SettingsGithubAccountsRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/personal-access-tokens': typeof SettingsPersonalAccessTokensRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -389,6 +398,7 @@ export interface FileRouteTypes {
     | '/settings/experiments'
     | '/settings/general'
     | '/settings/git'
+    | '/settings/github-accounts'
     | '/settings/keybindings'
     | '/settings/personal-access-tokens'
     | '/settings/projects'
@@ -426,6 +436,7 @@ export interface FileRouteTypes {
     | '/settings/experiments'
     | '/settings/general'
     | '/settings/git'
+    | '/settings/github-accounts'
     | '/settings/keybindings'
     | '/settings/personal-access-tokens'
     | '/settings/projects'
@@ -467,6 +478,7 @@ export interface FileRouteTypes {
     | '/settings/experiments'
     | '/settings/general'
     | '/settings/git'
+    | '/settings/github-accounts'
     | '/settings/keybindings'
     | '/settings/personal-access-tokens'
     | '/settings/projects'
@@ -650,6 +662,13 @@ declare module '@tanstack/react-router' {
       path: '/git'
       fullPath: '/settings/git'
       preLoaderRoute: typeof SettingsGitRouteImport
+      parentRoute: typeof SettingsRouteRoute
+    }
+    '/settings/github-accounts': {
+      id: '/settings/github-accounts'
+      path: '/github-accounts'
+      fullPath: '/settings/github-accounts'
+      preLoaderRoute: typeof SettingsGithubAccountsRouteImport
       parentRoute: typeof SettingsRouteRoute
     }
     '/settings/keybindings': {
@@ -859,6 +878,7 @@ interface SettingsRouteRouteChildren {
   SettingsExperimentsRoute: typeof SettingsExperimentsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsGitRoute: typeof SettingsGitRoute
+  SettingsGithubAccountsRoute: typeof SettingsGithubAccountsRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsPersonalAccessTokensRoute: typeof SettingsPersonalAccessTokensRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
@@ -878,6 +898,7 @@ const SettingsRouteRouteChildren: SettingsRouteRouteChildren = {
   SettingsExperimentsRoute: SettingsExperimentsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsGitRoute: SettingsGitRoute,
+  SettingsGithubAccountsRoute: SettingsGithubAccountsRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsPersonalAccessTokensRoute: SettingsPersonalAccessTokensRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,

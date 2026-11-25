@@ -1,16 +1,20 @@
-import { Cause, Duration, Effect, Fiber, Layer, Ref, Stream } from 'effect'
+import { DAEMON_ACTIVE_SESSION_STATUSES } from '@devflow/db/tables/sessions'
+import { Cause, Duration, Effect, Fiber, Layer, Queue, Ref, Stream } from 'effect'
 import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 
 import type { DaemonServices } from '@/agents/claudecode/types'
 import { parseSessionLaunchCandidate } from '@/collections/parse-session-launch-candidate'
 import type { SessionChangeMessage } from '@/collections/types'
+import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import {
 	DaemonCollections,
 	type TaskChangeMessage,
+	type TaskUserSettingsChangeMessage,
 	type WorkspaceSetupSession,
 	type WorkspaceSetupTask,
 } from '@/effects/services/daemon-collections/daemon-collections.service'
+import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
 import { SessionLaunchExecutor } from '@/effects/services/session-runs/session-launch-executor.service'
 import { SessionRunRegistry } from '@/effects/services/session-runs/session-run-registry'
 import {
@@ -290,6 +294,110 @@ export const processWorkspaceSessionChange = (row: WorkspaceSetupSession, servic
 }
 
 /**
+ * Whether a change to one of the daemon user's task settings rows changed which GitHub account
+ * their agents act as in that task. A new row only matters when it carries a pick (a row without
+ * one resolves exactly like no row). A deleted row goes with its task, whose sessions go too.
+ */
+export function githubAccountChoiceChanged(change: TaskUserSettingsChangeMessage): boolean {
+	const next = change.value
+	if (change.type === 'delete') return false
+	if (change.type === 'insert') return next.github_account_id !== null || next.github_use_host_login
+	const previous = change.previousValue
+	// Without the previous row there's no telling; a refresh that changes nothing is harmless.
+	if (previous === undefined) return true
+	return (
+		previous.github_account_id !== next.github_account_id ||
+		previous.github_use_host_login !== next.github_use_host_login
+	)
+}
+
+const isMidTurn = (status: string) => (DAEMON_ACTIVE_SESSION_STATUSES as readonly string[]).includes(status)
+
+/**
+ * Wait until the session is between turns (or gone). Subscribes before reading the current status,
+ * so a turn that ends in between is never missed.
+ */
+const awaitTurnEnd = (sessionId: string, services: DaemonServices) =>
+	Effect.scoped(
+		Effect.gen(function* () {
+			const ended = yield* Queue.unbounded<void>()
+			yield* Effect.acquireRelease(
+				Effect.sync(() =>
+					services.collections.sessions.subscribeChanges(
+						(changes) => {
+							for (const change of changes) {
+								if (change.value.id !== sessionId) continue
+								if (change.type === 'delete' || !isMidTurn(change.value.status))
+									Queue.offerUnsafe(ended, undefined)
+							}
+						},
+						{ includeInitialState: false },
+					),
+				),
+				(subscription) => Effect.sync(() => subscription.unsubscribe()),
+			)
+			const current = services.collections.sessions.get(sessionId)
+			if (current !== undefined && isMidTurn(current.status)) yield* Queue.take(ended)
+		}),
+	)
+
+/**
+ * Close a Claude session's SDK process once its current turn is over, so the next message starts a
+ * fresh one (resuming the conversation) whose environment carries the task's new GitHub choice.
+ * Closing between turns is what the idle timeout already does; nothing the agent was doing is cut
+ * short. A message that arrives meanwhile resumes in a new process instead of the old one.
+ */
+const restartClaudeSessionAfterTurn = (sessionId: string, services: DaemonServices) =>
+	Effect.gen(function* () {
+		yield* awaitTurnEnd(sessionId, services)
+		const claudeSessions = yield* ClaudeSessions
+		const outcome = yield* claudeSessions.stopClaudeSession({ sessionId, reason: 'github_account_changed' })
+		yield* Effect.logInfo('Restarted a Claude session for its new GitHub account').pipe(
+			Effect.annotateLogs({ session_id: sessionId, outcome }),
+		)
+	}).pipe(
+		Effect.catchCause((cause) =>
+			Cause.hasInterrupts(cause)
+				? Effect.void
+				: Effect.logError('Could not restart a Claude session for its new GitHub account').pipe(
+						Effect.annotateLogs({ session_id: sessionId, cause }),
+					),
+		),
+		Effect.withSpan('daemon_subscriptions.restart_claude_for_github_account', {
+			attributes: { session_id: sessionId },
+		}),
+	)
+
+/**
+ * The task's GitHub account changed: bring every session of it prepared on this host in line.
+ *
+ * - Account to account: its credential files are rewritten in place, so the agent acts as the new
+ *   account from its next `git` or `gh` call.
+ * - To or from the host's own gh login: the running agent's environment can't follow (it was fixed
+ *   when the agent started). An account's directory is locked at once, so nothing more goes out as
+ *   the old account, and a Claude session is restarted after its current turn so its next one runs
+ *   with the new choice. Codex already starts a new process for every turn.
+ */
+export const processTaskUserSettingsChange = (change: TaskUserSettingsChangeMessage, services: DaemonServices) => {
+	const taskId = change.value.task_id
+	const attributes = { task_id: taskId, change_type: change.type }
+	return Effect.gen(function* () {
+		if (!githubAccountChoiceChanged(change)) return
+		const credentials = yield* GithubCredentials
+		const refreshed = yield* credentials.refresh(taskId)
+		for (const { sessionId, outcome } of refreshed) {
+			if (outcome !== 'restart') continue
+			const session = services.collections.sessions.get(sessionId)
+			if (session !== undefined && session.coding_agent !== 'claude') continue
+			services.daemonRuntime.runFork(restartClaudeSessionAfterTurn(sessionId, services))
+		}
+	}).pipe(
+		(effect) => isolateDaemonChange(effect, 'Task settings change processing failed', attributes),
+		Effect.withSpan('daemon_subscriptions.process_task_user_settings_change', { attributes }),
+	)
+}
+
+/**
  * The legacy launch path as an Effect service. This is the only place the promise-based runner
  * meets the daemon's Effect services, so `DaemonServices` never travels further than this layer.
  */
@@ -356,9 +464,14 @@ export function initializeSubscriptions(services: DaemonServices) {
 				Stream.tap(() => markHealthy),
 				Stream.runDrain,
 			)
+			const taskUserSettings = collections.taskUserSettingsChanges.pipe(
+				Stream.mapEffect((change) => processTaskUserSettingsChange(change, services)),
+				Stream.tap(() => markHealthy),
+				Stream.runDrain,
+			)
 			// Both generations recover through initial-state replay and subsequent synced changes.
 			// Task changes revisit waiting sessions when the task arrives after the session.
-			yield* Effect.all([sessions, tasks, workspaceLaunches], {
+			yield* Effect.all([sessions, tasks, workspaceLaunches, taskUserSettings], {
 				concurrency: 'unbounded',
 				discard: true,
 			})

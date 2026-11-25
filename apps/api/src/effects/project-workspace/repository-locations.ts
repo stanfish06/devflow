@@ -1,3 +1,4 @@
+import { onlineHosts } from '@devflow/db/tables/online-hosts'
 import { repositoryLocationsForUserForHost } from '@devflow/db/tables/repository-locations-for-user-for-host'
 import type {
 	ProjectRepositoryPaths,
@@ -193,6 +194,53 @@ export const selectRepositoryLocations = Effect.fn('project_workspace.select_rep
 	const db = yield* PostgresDb
 	return yield* db.transaction((transaction) => selectRepositoryLocationsWithExecutor(transaction, input))
 })
+
+/**
+ * Which of the user's registered hosts hold an existing checkout of each repository. Managed clones
+ * don't count, since any host can make one, and nor do checkouts on host registrations that are gone.
+ */
+export const readCheckoutHostsWithExecutor = Effect.fn('project_workspace.read_checkout_hosts_with_executor')(
+	function* (
+		db: PostgresTransaction,
+		input: Pick<RepositoryLocationScope, 'organizationId' | 'userId'> & {
+			readonly repositoryIdentities: readonly string[]
+		},
+	) {
+		const hostsByIdentity = new Map<string, string[]>()
+		if (input.repositoryIdentities.length === 0) return hostsByIdentity
+		const locations = repositoryLocationsForUserForHost
+		const rows = yield* db
+			.query(
+				db.client
+					.selectDistinct({ repositoryIdentity: locations.repository_identity, hostId: locations.host_id })
+					.from(locations)
+					.innerJoin(
+						onlineHosts,
+						and(
+							eq(onlineHosts.organization_id, locations.organization_id),
+							eq(onlineHosts.user_id, locations.user_id),
+							eq(onlineHosts.host_id, locations.host_id),
+						),
+					)
+					.where(
+						and(
+							eq(locations.organization_id, input.organizationId),
+							eq(locations.user_id, input.userId),
+							eq(locations.source_kind, 'filesystem'),
+							inArray(locations.repository_identity, [...new Set(input.repositoryIdentities)]),
+						),
+					)
+					.orderBy(asc(locations.host_id)),
+			)
+			.pipe(captureLocationQueryFailure)
+		for (const row of rows) {
+			const hosts = hostsByIdentity.get(row.repositoryIdentity) ?? []
+			hosts.push(row.hostId)
+			hostsByIdentity.set(row.repositoryIdentity, hosts)
+		}
+		return hostsByIdentity
+	},
+)
 
 export function repositoryLocationsByIdentity(locations: readonly ConfiguredRepositorySourcePreference[]) {
 	return new Map(locations.map((location) => [location.repositoryIdentity, location]))

@@ -11,6 +11,8 @@
  * Mapping to devflow's conversation events:
  *   agentMessage -> assistant message; reasoning -> thinking; commandExecution -> `bash` tool call
  *   and result; fileChange -> `apply_patch` call and result per file; mcpToolCall -> `mcp__s__t`.
+ * A commandExecution whose output shows GitHub refusing the session's account stops the turn, and
+ * the session fails with the reason the API gives (see GithubCredentials.reportRejection).
  * The Codex thread id is stored as the session's coding_agent_session_id and resumed from there.
  */
 import type { ChildProcess } from 'node:child_process'
@@ -22,6 +24,10 @@ import { Effect } from 'effect'
 import { handleInterruptOutcome, subscribeToSessionInterrupt } from '@/agents/claudecode/interrupts'
 import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } from '@/agents/shared/run-session'
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
+import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github-credentials/credential-files'
+import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
+import { matchGithubRejection } from '@/effects/services/github-credentials/rejection-signatures'
+import { stopRunOnGithubRejection } from '@/effects/services/github-credentials/stop-on-github-rejection'
 import { normalizePath } from '@/lib/utils'
 import logger from '@/logger'
 
@@ -165,11 +171,54 @@ export class AppServerClient {
  * Docker sandbox: that would need the user's whole CODEX_HOME (auth refresh rewrites auth.json by
  * rename) mounted into the container, including every past Codex session.
  */
-export function startAppServer(cwd: string): ChildProcess {
-	return spawn('codex', ['app-server'], { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+export function startAppServer(cwd: string, env: NodeJS.ProcessEnv = process.env): ChildProcess {
+	return spawn('codex', ['app-server'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+}
+
+/**
+ * The Codex process env for a session: the daemon's own, pointed at the session's GitHub account
+ * when it has one. Codex runs on the host, so the account's gitconfig keeps the user's own global
+ * git config underneath. Null keeps the host's own gh login and the env exactly as before.
+ */
+export function codexEnvironment(githubEnv: GithubEnv | null, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	return withGithubEnvironment(env, githubEnv)
+}
+
+/**
+ * Put the session's GitHub account in place for a Codex run. Returns its env (null: host login) and
+ * a release to call once the app-server has stopped.
+ */
+async function prepareCodexGithubCredentials(
+	session: Pick<SessionForExecution, 'id' | 'task_id'>,
+	services: SessionContext['services'],
+): Promise<{ readonly githubEnv: GithubEnv | null; readonly release: () => Promise<void> }> {
+	const githubEnv = await services.daemonRuntime.runPromise(
+		Effect.gen(function* () {
+			const credentials = yield* GithubCredentials
+			return yield* credentials.prepare({ sessionId: session.id, taskId: session.task_id, scope: 'host' })
+		}),
+	)
+	let released = false
+	return {
+		githubEnv,
+		release: async () => {
+			// Host-login sessions are held too, so release every prepared session.
+			if (released) return
+			released = true
+			await services.daemonRuntime.runPromise(
+				Effect.gen(function* () {
+					const credentials = yield* GithubCredentials
+					yield* credentials.release(session.id)
+				}),
+			)
+		},
+	}
 }
 
 type CreateEvent = Parameters<SessionContext['services']['orpc']['sessions']['events']['create']>[0]
+
+/** A notification field that should hold text, or '' when it holds anything else. */
+const textOf = (value: unknown): string => (typeof value === 'string' ? value : '')
 
 export async function executeCodexAppServer(
 	ctx: SessionContext,
@@ -183,7 +232,15 @@ export async function executeCodexAppServer(
 	const bypass = session.permissions_mode === 'bypass'
 	const prompt = session.prompt ?? ''
 
-	const client = new AppServerClient(startAppServer(cwd))
+	// Fails the session rather than start Codex as some other GitHub identity.
+	const github = await prepareCodexGithubCredentials(session, services)
+	let client: AppServerClient
+	try {
+		client = new AppServerClient(startAppServer(cwd, codexEnvironment(github.githubEnv)))
+	} catch (error) {
+		await github.release()
+		throw error
+	}
 	let threadId = session.coding_agent_session_id ?? ''
 	const emit = (event: Omit<CreateEvent, 'sessionId' | 'codingAgentSessionId'>) =>
 		orpc.sessions.events.create({ ...event, sessionId: session.id, codingAgentSessionId: threadId } as CreateEvent)
@@ -270,6 +327,8 @@ export async function executeCodexAppServer(
 						toolResultContent: `${output}${exit}`,
 					})
 				})
+				// In the same ordered chain, so the turn's outcome waits for the verdict.
+				stopOnGithubRejection(textOf(item.command), textOf(item.aggregatedOutput))
 				break
 			case 'fileChange':
 				enqueue(async () => {
@@ -315,17 +374,33 @@ export async function executeCodexAppServer(
 		}
 	})
 
+	const interruptTurn = async () => {
+		abort.abort()
+		const turnId = currentTurnId
+		if (threadId && turnId) await client.request('turn/interrupt', { threadId, turnId }).catch(() => undefined)
+	}
+
+	/**
+	 * Only a run pointed at a credential directory acts as an account GitHub can refuse; a
+	 * host-login run keeps today's behaviour. On a confirmed refusal the turn is interrupted, and
+	 * the interrupt state already holds why the session fails.
+	 */
+	function stopOnGithubRejection(command: string, output: string) {
+		if (github.githubEnv === null) return
+		const rejection = matchGithubRejection({ command, output })
+		if (rejection === null) return
+		enqueue(async () => {
+			const stop = await services.daemonRuntime.runPromise(
+				stopRunOnGithubRejection({ sessionId: session.id, rejection, interruptState }),
+			)
+			if (stop) await interruptTurn()
+		})
+	}
+
 	const unsubscribeInterrupt = subscribeToSessionInterrupt({
 		sessionId: session.id,
 		interruptState,
-		eventIterator: {
-			interrupt: async () => {
-				abort.abort()
-				const turnId = currentTurnId
-				if (threadId && turnId)
-					await client.request('turn/interrupt', { threadId, turnId }).catch(() => undefined)
-			},
-		},
+		eventIterator: { interrupt: interruptTurn },
 		closeInputStream: undefined,
 		sessionsCollection: services.collections.sessions,
 	})
@@ -382,6 +457,7 @@ export async function executeCodexAppServer(
 	} finally {
 		unsubscribeInterrupt()
 		client.close()
+		await github.release()
 	}
 
 	await handleInterruptOutcome({

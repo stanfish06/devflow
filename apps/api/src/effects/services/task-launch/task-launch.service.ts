@@ -1,5 +1,6 @@
 import { Context, Effect } from 'effect'
 
+import type { GithubAccountNotFound } from '../../github-accounts/errors'
 import type { PostgresDb } from '../postgres/postgres-db.service'
 import type { SessionTitleGeneration } from '../session-title-generation/session-title-generation.service'
 import type { TaskIntentClassifier } from '../task-intent-classifier/task-intent-classifier.service'
@@ -11,7 +12,7 @@ export interface TaskLaunchServiceShape {
 		input: LaunchTaskDraftInput,
 	) => Effect.Effect<
 		LaunchTaskDraftResult,
-		TaskLaunchConflict | TaskLaunchForbidden | TaskLaunchUnavailable,
+		TaskLaunchConflict | TaskLaunchForbidden | TaskLaunchUnavailable | GithubAccountNotFound,
 		PostgresDb | TaskIntentClassifier | SessionTitleGeneration
 	>
 }

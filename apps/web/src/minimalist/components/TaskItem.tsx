@@ -4,6 +4,7 @@ import { useRef, useState } from 'react'
 
 import { useBrowserAuth as useAuth } from '@/hooks/use-browser-auth'
 import { WiredUserAvatar } from '@/minimalist/components/Avatar'
+import { DeleteDialog } from '@/minimalist/components/DeleteDialog'
 import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
 import { TextDialog } from '@/minimalist/components/TextDialog'
 import type { TaskRow } from '@/minimalist/lib/data'
@@ -20,8 +21,20 @@ import { useTaskUnread, useUnreadActions } from '@/minimalist/lib/use-unread'
 import { useApi } from '@/orpc/client'
 import { getTaskShareUrl } from '@/utils/sharing-links'
 
-/** A task in the sidebar: its name and state, archive on hover, and a menu on right-click or "More". */
-export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean }) {
+/**
+ * A task in the sidebar: its name and state, archive on hover, and a menu on right-click or "More".
+ * Its owner also gets "Delete task…", last in the menu and never a hover button.
+ * `elsewhere` names the host its latest session ran on, when that isn't the working host.
+ */
+export function TaskItem({
+	row,
+	selected,
+	elsewhere = null,
+}: {
+	row: TaskRow
+	selected: boolean
+	elsewhere?: string | null
+}) {
 	const { client: api } = useApi()
 	const { user } = useAuth()
 	const { closeSidebarOnNarrow } = useUi()
@@ -33,8 +46,10 @@ export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean })
 	const anchor = useRef<HTMLDivElement>(null)
 	const [open, setOpen] = useState(false)
 	const [renaming, setRenaming] = useState(false)
+	const [deleting, setDeleting] = useState(false)
 	const taskId = row.task.id
 	const latest = row.latest
+	const owner = Boolean(user && row.task.resource_owner_user_id === user.id)
 	const archive = () => {
 		setOpen(false)
 		void archiver.archive({ kind: 'task', id: taskId }, true)
@@ -54,6 +69,14 @@ export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean })
 			{/* Someone else's task, which you started a session in, shows whose it is. */}
 			{user && row.task.resource_owner_user_id !== user.id ? (
 				<WiredUserAvatar userId={row.task.resource_owner_user_id} size={16} />
+			) : null}
+			{elsewhere ? (
+				<>
+					<span className="host-tag" title={`Last ran on ${elsewhere}`} aria-hidden="true">
+						{elsewhere}
+					</span>
+					<span className="sr-only">, last ran on {elsewhere}</span>
+				</>
 			) : null}
 			{/* The mark hides while the row has focus, so its meaning goes in the link's name. */}
 			{status ? <span className="sr-only">, {status}</span> : null}
@@ -138,6 +161,19 @@ export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean })
 						window.open(link, '_blank', 'noopener')
 					}}
 				/>
+				{owner ? (
+					<>
+						<MenuSeparator />
+						<MenuItem
+							label="Delete task…"
+							danger
+							onSelect={() => {
+								setOpen(false)
+								setDeleting(true)
+							}}
+						/>
+					</>
+				) : null}
 			</Menu>
 			{renaming ? (
 				<TextDialog
@@ -146,6 +182,12 @@ export function TaskItem({ row, selected }: { row: TaskRow; selected: boolean })
 					submitLabel="Save name"
 					onClose={() => setRenaming(false)}
 					onSave={(name) => api.tasks.update({ taskId, name })}
+				/>
+			) : null}
+			{deleting ? (
+				<DeleteDialog
+					target={{ kind: 'task', taskId, title: row.task.name }}
+					onClose={() => setDeleting(false)}
 				/>
 			) : null}
 		</div>

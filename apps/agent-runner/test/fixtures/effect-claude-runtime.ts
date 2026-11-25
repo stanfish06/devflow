@@ -24,6 +24,8 @@ export function makeSessionContext(session: Session): SessionContext {
 			wasInterrupted: Effect.succeed(false),
 			resumeWithPrompt: Effect.succeed(null),
 			markInterrupted: () => Effect.void,
+			failure: Effect.succeed(null),
+			markFailed: () => Effect.succeed(false),
 		},
 		continuationKind: 'ordinary',
 	}

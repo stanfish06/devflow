@@ -48,6 +48,11 @@ import { replyDiffCommentContract } from './api/diff-comments/reply'
 import { resolveDiffCommentContract } from './api/diff-comments/resolve'
 import { resolveBatchDiffCommentsContract } from './api/diff-comments/resolve-batch'
 import { durableStreamsContract } from './api/durable-streams'
+import { addGithubAccountContract } from './api/github-accounts/add'
+import { listGithubAccountsContract } from './api/github-accounts/list'
+import { removeGithubAccountContract } from './api/github-accounts/remove'
+import { replaceGithubAccountTokenContract } from './api/github-accounts/replace-token'
+import { setDefaultGithubAccountContract } from './api/github-accounts/set-default'
 import { listHostAliasesContract } from './api/hosts/alias-list'
 import { upsertHostAliasContract } from './api/hosts/alias-upsert'
 import { deleteHostContract } from './api/hosts/delete'
@@ -100,6 +105,8 @@ import { retryProjectWorkspaceRepositorySetupContract } from './api/project-work
 import { skipProjectWorkspaceRepositorySetupStepContract } from './api/project-workspaces/skip-repository-setup-step'
 import { archiveProjectV2Contract } from './api/projects-v2/archive'
 import { createProjectV2Contract } from './api/projects-v2/create'
+import { deleteProjectV2Contract } from './api/projects-v2/delete'
+import { projectDeletePreviewV2Contract } from './api/projects-v2/delete-preview'
 import { getProjectV2Contract } from './api/projects-v2/get'
 import { listProjectsV2Contract } from './api/projects-v2/list'
 import { upsertProjectV2LocationContract } from './api/projects-v2/location-upsert'
@@ -107,6 +114,7 @@ import {
 	getProjectV2RepositorySourcesContract,
 	upsertProjectV2RepositorySourcesContract,
 } from './api/projects-v2/repository-sources'
+import { setProjectGithubAccountContract } from './api/projects-v2/set-github-account'
 import { updateProjectV2Contract } from './api/projects-v2/update'
 import {
 	cancelProviderLoginContract,
@@ -175,10 +183,14 @@ import { upsertTaskUserSettingsContract } from './api/task-user-settings/upsert'
 import { archiveTaskContract } from './api/tasks/archive'
 import { createTaskContract } from './api/tasks/create'
 import { createTaskDraftContract } from './api/tasks/createDraft'
+import { deleteTaskContract } from './api/tasks/delete'
+import { deleteArchivedTasksContract } from './api/tasks/delete-archived'
+import { deleteArchivedTasksPreviewContract } from './api/tasks/delete-archived-preview'
 import { launchTaskDraftContract } from './api/tasks/launch-draft'
 import { listTasksContract } from './api/tasks/list'
 import { reassignTaskOwnerContract } from './api/tasks/reassign-owner'
 import { saveTaskDraftContract } from './api/tasks/saveDraft'
+import { setTaskGithubAccountContract } from './api/tasks/set-github-account'
 import { updateTaskContract } from './api/tasks/update'
 import { createTaskV2Contract } from './api/tasks/v2/create'
 import { createUploadContract } from './api/uploads/create'
@@ -208,6 +220,8 @@ import { getDiffCommentsContract } from './daemon/diff-comments/get'
 import { replyToDiffCommentContract } from './daemon/diff-comments/reply'
 import { updateDiffCommentsContract } from './daemon/diff-comments/update'
 import { createEventContract } from './daemon/events/create'
+import { reportGithubRejectionContract } from './daemon/github-accounts/report-rejection'
+import { resolveGithubTokenContract } from './daemon/github-accounts/resolve-token'
 import { heartbeatContract } from './daemon/heartbeat'
 import { shutdownContract } from './daemon/hosts/shutdown'
 import { syncGitHubArtifactBacklinkContract } from './daemon/integrations/github/sync-artifact-backlink'
@@ -362,6 +376,10 @@ export const ApiContract = {
 		update: updateTaskContract,
 		reassignOwner: reassignTaskOwnerContract,
 		archive: archiveTaskContract,
+		delete: deleteTaskContract,
+		deleteArchivedPreview: deleteArchivedTasksPreviewContract,
+		deleteArchived: deleteArchivedTasksContract,
+		setGithubAccount: setTaskGithubAccountContract,
 		list: listTasksContract,
 		v2: {
 			create: createTaskV2Contract,
@@ -374,6 +392,9 @@ export const ApiContract = {
 			create: createProjectV2Contract,
 			update: updateProjectV2Contract,
 			archive: archiveProjectV2Contract,
+			deletePreview: projectDeletePreviewV2Contract,
+			delete: deleteProjectV2Contract,
+			setGithubAccount: setProjectGithubAccountContract,
 			locations: { upsert: upsertProjectV2LocationContract },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesContract,
@@ -536,6 +557,13 @@ export const ApiContract = {
 			request: requestHostUpdateContract,
 		},
 	},
+	githubAccounts: {
+		list: listGithubAccountsContract,
+		add: addGithubAccountContract,
+		replaceToken: replaceGithubAccountTokenContract,
+		remove: removeGithubAccountContract,
+		setDefault: setDefaultGithubAccountContract,
+	},
 }
 
 export const DaemonApiContract = {
@@ -595,6 +623,10 @@ export const DaemonApiContract = {
 	},
 	users: {
 		setGithubIdentity: setGithubIdentityContract,
+	},
+	githubAccounts: {
+		resolveToken: resolveGithubTokenContract,
+		reportRejection: reportGithubRejectionContract,
 	},
 	approvals: {
 		create: createApprovalContract,

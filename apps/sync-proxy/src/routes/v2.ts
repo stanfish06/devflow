@@ -177,6 +177,21 @@ export function createV2App(config: AppConfig) {
 		return proxyElectricResponseWithRuntime(config, c.var.electricOriginUrl, undefined, c.req)
 	})
 
+	// A daemon's own user's per-task choices (the GitHub account its agents act as), so it can follow
+	// a mid-run switch. Unlike /task-user-settings, never a teammate's row.
+	app.all('/daemon/task-user-settings', async (c) => {
+		const { organizationId, userId, hostId } = c.var.authContext
+		if (!hostId) return c.json({ error: 'hostId required in daemon token' }, StatusCodes.BAD_REQUEST)
+
+		c.var.electricOriginUrl.searchParams.set('table', getTableName(taskUserSettings))
+		const { fragment, params } = buildWhereFragment(taskUserSettings, [
+			{ column: taskUserSettings.organization_id, value: organizationId },
+			{ column: taskUserSettings.user_id, value: userId },
+		])
+		applyWhereToUrl(c.var.electricOriginUrl, fragment, params)
+		return proxyElectricResponseWithRuntime(config, c.var.electricOriginUrl, undefined, c.req)
+	})
+
 	app.all('/daemon/provider-login-requests', async (c) => {
 		const { organizationId, hostId } = c.var.authContext
 		if (!hostId) return c.json({ error: 'hostId required in daemon token' }, StatusCodes.BAD_REQUEST)

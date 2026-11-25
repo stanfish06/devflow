@@ -55,6 +55,8 @@ export type Turn =
 			endedAt: number
 	  }
 	| { kind: 'compaction'; id: string; at: number }
+	/** A line the session records between turns, such as a switch of its GitHub account. */
+	| { kind: 'notice'; id: string; text: string; at: number }
 
 export function parseInput(value: unknown): Record<string, unknown> {
 	if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>
@@ -69,18 +71,33 @@ export function parseInput(value: unknown): Record<string, unknown> {
 	return {}
 }
 
-function isCompaction(row: EventRow): boolean {
-	if (row.event_type !== 'system' || !row.content) return false
+/** A system event's JSON payload, or null when it has none. */
+function systemPayload(row: EventRow): Record<string, unknown> | null {
+	if (row.event_type !== 'system' || !row.content) return null
 	try {
 		const parsed: unknown = JSON.parse(row.content)
-		return (
-			typeof parsed === 'object' &&
-			parsed !== null &&
-			(parsed as { kind?: unknown }).kind === 'context_compaction'
-		)
+		return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, unknown>)
+			: null
 	} catch {
-		return false
+		return null
 	}
+}
+
+function isCompaction(row: EventRow): boolean {
+	return systemPayload(row)?.kind === 'context_compaction'
+}
+
+/**
+ * The line a system event shows in the conversation, or null for one it hides. The API records
+ * `{ kind: 'github_account_changed', login }` when you switch the task's account mid-run (a null
+ * login is the host's own gh login).
+ */
+export function noticeText(row: EventRow): string | null {
+	const payload = systemPayload(row)
+	if (payload?.kind !== 'github_account_changed') return null
+	const login = typeof payload.login === 'string' && payload.login ? payload.login : null
+	return login ? `Account changed to ${login}` : "Account changed to the host's own gh login"
 }
 
 /**
@@ -177,6 +194,12 @@ export function buildTurns(rows: readonly EventRow[]): Turn[] {
 		if (isCompaction(row)) {
 			closeAgentTurn()
 			turns.push({ kind: 'compaction', id: row.id, at: toMs(row.created_at) })
+			continue
+		}
+		const notice = noticeText(row)
+		if (notice !== null) {
+			closeAgentTurn()
+			turns.push({ kind: 'notice', id: row.id, text: notice, at: toMs(row.created_at) })
 			continue
 		}
 		if (row.event_type === 'system') continue

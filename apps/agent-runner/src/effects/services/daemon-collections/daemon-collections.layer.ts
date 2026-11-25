@@ -5,6 +5,7 @@ import type { DaemonServices } from '@/agents/claudecode/types'
 import { createApprovalsCollection } from '@/collections/electric/approvals'
 import { createProviderLoginRequestsCollection } from '@/collections/electric/provider-login-requests'
 import { createSessionsCollection } from '@/collections/electric/sessions'
+import { createTaskUserSettingsCollection } from '@/collections/electric/task-user-settings'
 import { createTasksCollection, loadHostTasks } from '@/collections/electric/tasks'
 import {
 	awaitWorkspaceSetupCollectionReady,
@@ -18,6 +19,7 @@ import {
 	DaemonCollections,
 	type ProviderLoginChangeMessage,
 	type TaskChangeMessage,
+	type TaskUserSettingsChangeMessage,
 	type WorkspaceSetupChangeMessage,
 	type WorkspaceSetupSession,
 	type WorkspaceSetupTask,
@@ -154,6 +156,7 @@ export function DaemonCollectionsLive(options: DaemonCollectionsOptions | Daemon
 		const approvalChanges = subscribe<ApprovalChangeMessage>(options.approvals)
 		const workspaceSetupChanges = subscribe<WorkspaceSetupChangeMessage>(options.workspaceSetup)
 		const providerLoginChanges = subscribe<ProviderLoginChangeMessage>(options.providerLoginRequests)
+		const taskUserSettingsChanges = subscribe<TaskUserSettingsChangeMessage>(options.taskUserSettings)
 		return Layer.succeed(DaemonCollections, {
 			current: Effect.succeed(options),
 			sessionChanges,
@@ -161,6 +164,7 @@ export function DaemonCollectionsLive(options: DaemonCollectionsOptions | Daemon
 			approvalChanges,
 			workspaceSetupChanges,
 			providerLoginChanges,
+			taskUserSettingsChanges,
 			workspaceSetups: makeWorkspaceSetupsStream(options, ''),
 			workspaceSetupSessions: makeWorkspaceSetupSessionsStream(options),
 			streamSessionChanges: (sessionId: string) =>
@@ -183,6 +187,7 @@ export function DaemonCollectionsLive(options: DaemonCollectionsOptions | Daemon
 				approvals: createApprovalsCollection(options.syncOrigin, options.token),
 				workspaceSetup,
 				providerLoginRequests: createProviderLoginRequestsCollection(options.syncOrigin, options.token),
+				taskUserSettings: createTaskUserSettingsCollection(options.syncOrigin, options.token),
 			}
 			yield* Effect.addFinalizer(() =>
 				Effect.forEach(Object.values(collections), disposeCollection, { discard: true }),
@@ -202,6 +207,8 @@ export function DaemonCollectionsLive(options: DaemonCollectionsOptions | Daemon
 			const approvalChanges = subscribe<ApprovalChangeMessage>(collections.approvals)
 			const workspaceSetupChanges = subscribe<WorkspaceSetupChangeMessage>(collections.workspaceSetup)
 			const providerLoginChanges = subscribe<ProviderLoginChangeMessage>(collections.providerLoginRequests)
+			// Including the initial state is what makes this on-demand collection load the whole shape.
+			const taskUserSettingsChanges = subscribe<TaskUserSettingsChangeMessage>(collections.taskUserSettings)
 			const workspaceSetupSessions = makeWorkspaceSetupSessionsStream(collections).pipe(
 				Stream.filter(
 					(row) => options.targetSessionId === undefined || row.session.id === options.targetSessionId,
@@ -216,6 +223,7 @@ export function DaemonCollectionsLive(options: DaemonCollectionsOptions | Daemon
 				approvalChanges,
 				workspaceSetupChanges,
 				providerLoginChanges,
+				taskUserSettingsChanges,
 				workspaceSetups,
 				workspaceSetupSessions,
 				streamSessionChanges: (sessionId: string) =>

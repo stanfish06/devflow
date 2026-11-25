@@ -1,4 +1,5 @@
-import { useMutation } from '@tanstack/react-query'
+import type { ProjectV2 } from '@devflow/api-contract/api/projects-v2/schemas'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import { useState } from 'react'
 
@@ -6,6 +7,7 @@ import { useArchivedSessions } from '@/hooks/live-queries/useArchivedSessions'
 import { useSettingsStore } from '@/hooks/stores/settingsStore'
 import { useBrowserAuth } from '@/hooks/use-browser-auth'
 import { useToggleMinimalistLayout } from '@/hooks/use-minimalist-layout'
+import { DeleteDialog } from '@/minimalist/components/DeleteDialog'
 import { Segmented, SettingRow, SettingsGroup, Toggle } from '@/minimalist/components/SettingsControls'
 import { useBatchQueueDelivery } from '@/minimalist/lib/batch-queue'
 import { useTaskTree } from '@/minimalist/lib/data'
@@ -20,7 +22,9 @@ import { sessionName } from '@/minimalist/lib/session-name'
 import { SHORTCUTS } from '@/minimalist/lib/shortcuts'
 import { type ThemePreference, useUi } from '@/minimalist/lib/ui-state'
 import { useAction } from '@/minimalist/lib/use-action'
+import { type DeleteTarget, projectDeletePreviewQuery } from '@/minimalist/lib/use-delete'
 import { useApi } from '@/orpc/client'
+import { archivedProjectsV2ListQuery, invalidateProjectsV2 } from '@/queries/projects-v2'
 
 const THEMES: Array<{ value: ThemePreference; label: string }> = [
 	{ value: 'system', label: 'System' },
@@ -307,12 +311,21 @@ export function ArchivedSettingsPage() {
 	const { groups, standalone, isReady } = useTaskTree(true)
 	const { user } = useBrowserAuth()
 	const inTasks = useArchivedSessions(user?.id)
-	const { client: api } = useApi()
+	const { client: api, queryClient: orpc } = useApi()
+	// Only the owner can unarchive or delete a project, so only your own are listed.
+	const archivedProjects = useQuery(archivedProjectsV2ListQuery(orpc))
+	const projects = (archivedProjects.data?.projects ?? []).filter(
+		(project) => project.resourceOwnerUserId === user?.id,
+	)
 	const { showToast } = useUi()
 	const action = useAction()
+	const [deleting, setDeleting] = useState<DeleteTarget | null>(null)
 	const tasks = groups
 		.flatMap((group) => group.tasks.map((row) => ({ row, project: group.name })))
 		.sort((a, b) => b.row.lastActivity - a.row.lastActivity)
+	// Only the owner can delete a task. Shared ones (you ran a session in them) list here too, unarchive-only.
+	const owns = (row: (typeof tasks)[number]['row']) => Boolean(user && row.task.resource_owner_user_id === user.id)
+	const ownsAny = tasks.some(({ row }) => owns(row))
 	const archivedTaskIds = new Set(tasks.map(({ row }) => row.task.id))
 	// Sessions in an archived task come back with it, so only those in open tasks list on their own.
 	const sessions = [
@@ -321,22 +334,43 @@ export function ArchivedSettingsPage() {
 			.filter((session) => session.task_id && session.status !== 'draft' && !archivedTaskIds.has(session.task_id))
 			.map((session) => ({ session, taskName: session.taskName || 'Untitled task' })),
 	].sort((a, b) => toMs(b.session.last_activity_at) - toMs(a.session.last_activity_at))
-	if (isReady && tasks.length === 0 && sessions.length === 0)
+	if (isReady && !archivedProjects.isPending && projects.length === 0 && tasks.length === 0 && sessions.length === 0)
 		return (
 			<p className="settings-lede">
-				Archived tasks and sessions show up here. Archiving keeps every session and file.
+				Archived projects, tasks and sessions show up here. Archiving keeps every session and file.
 			</p>
 		)
 	return (
 		<>
+			{projects.length > 0 ? (
+				<SettingsGroup title="Projects">
+					{projects.map((project) => (
+						<ArchivedProjectRow key={project.id} project={project} />
+					))}
+				</SettingsGroup>
+			) : null}
 			{tasks.length > 0 ? (
-				<SettingsGroup title="Tasks">
+				<SettingsGroup
+					title="Tasks"
+					action={
+						ownsAny ? (
+							<button
+								type="button"
+								className="btn sm ghost-danger"
+								onClick={() => setDeleting({ kind: 'archived-tasks' })}
+							>
+								Delete all archived tasks…
+							</button>
+						) : null
+					}
+				>
 					{tasks.map(({ row, project }) => (
 						<div key={row.task.id} className="srow">
 							<Link className="l" to="/tasks/$taskId" params={{ taskId: row.task.id }}>
 								<b>{row.task.name || 'Untitled task'}</b>
 								<span>
-									{project} · {formatAgo(row.lastActivity)}
+									{project}
+									{owns(row) ? '' : ' · shared with you'} · {formatAgo(row.lastActivity)}
 								</span>
 							</Link>
 							<button
@@ -356,6 +390,17 @@ export function ArchivedSettingsPage() {
 							>
 								Unarchive
 							</button>
+							{owns(row) ? (
+								<button
+									type="button"
+									className="btn ghost-danger"
+									onClick={() =>
+										setDeleting({ kind: 'task', taskId: row.task.id, title: row.task.name })
+									}
+								>
+									Delete…
+								</button>
+							) : null}
 						</div>
 					))}
 				</SettingsGroup>
@@ -388,7 +433,57 @@ export function ArchivedSettingsPage() {
 					))}
 				</SettingsGroup>
 			) : null}
+			{deleting ? <DeleteDialog target={deleting} onClose={() => setDeleting(null)} /> : null}
 		</>
+	)
+}
+
+/**
+ * An archived project you own: how many tasks it holds (the server's count, teammates' included,
+ * the same one its delete confirmation shows), Unarchive, and Delete….
+ */
+function ArchivedProjectRow({ project }: { project: ProjectV2 }) {
+	const { client: api, queryClient: orpc } = useApi()
+	const queryClient = useQueryClient()
+	const { showToast } = useUi()
+	const action = useAction()
+	const [deleting, setDeleting] = useState(false)
+	const counted = useQuery(projectDeletePreviewQuery(orpc, project.id)).data
+	const tasks = counted === undefined ? null : counted.taskCount === 1 ? '1 task' : `${counted.taskCount} tasks`
+	return (
+		<div className="srow">
+			<div className="l">
+				<b>{project.name}</b>
+				<span>
+					{tasks === null ? '' : `${tasks} · `}
+					{formatAgo(project.updatedAt)}
+				</span>
+			</div>
+			<button
+				type="button"
+				className="btn"
+				disabled={action.pending}
+				onClick={() =>
+					void action.run(async () => {
+						await api.projects.v2.archive({ projectId: project.id, archived: false })
+						// Projects aren't synced: refetch so it leaves this list and returns to the sidebar.
+						await invalidateProjectsV2(queryClient)
+						showToast(`${project.name} unarchived`)
+					}, `Could not unarchive ${project.name}. Try again.`)
+				}
+			>
+				Unarchive
+			</button>
+			<button type="button" className="btn ghost-danger" onClick={() => setDeleting(true)}>
+				Delete…
+			</button>
+			{deleting ? (
+				<DeleteDialog
+					target={{ kind: 'project', projectId: project.id, name: project.name }}
+					onClose={() => setDeleting(false)}
+				/>
+			) : null}
+		</div>
 	)
 }
 

@@ -5,9 +5,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ProjectList } from './ProjectList'
 
-const { route, data } = vi.hoisted(() => ({
+type Fixture = {
+	name: string
+	mine: boolean
+	tasks?: number
+	/** Null: a clone-on-demand project, or a folder group that never ran. */
+	hostIds?: string[] | null
+	projectId?: string | null
+	/** Where each task's latest session ran. */
+	latestHostIds?: Array<string | null>
+}
+
+const { route, data, working } = vi.hoisted(() => ({
 	route: { selectedTaskId: 'task-7' },
-	data: { standalone: [] as Session[], emptyProjects: [] as Array<{ name: string; mine: boolean; tasks?: number }> },
+	data: {
+		standalone: [] as Session[],
+		emptyProjects: [] as Fixture[],
+		projectHostIds: null as string[] | null,
+	},
+	working: { id: 'all' as string, set: vi.fn() },
 }))
 vi.mock('@tanstack/react-router', () => ({
 	useParams: () => ({}),
@@ -21,6 +37,13 @@ vi.mock('@tanstack/react-router', () => ({
 }))
 vi.mock('@/minimalist/lib/data', () => ({
 	useOpenTaskId: () => route.selectedTaskId,
+	useHosts: () => ({
+		isReady: true,
+		hosts: [
+			{ host: { host_id: 'mac-studio-id' }, name: 'mac-studio', online: true },
+			{ host: { host_id: 'linux-box-id' }, name: 'linux-box', online: true },
+		],
+	}),
 	useTaskTree: () => ({
 		isReady: true,
 		standalone: data.standalone,
@@ -30,30 +53,61 @@ vi.mock('@/minimalist/lib/data', () => ({
 				name: 'Project',
 				projectId: 'project',
 				mine: true,
+				hostIds: data.projectHostIds,
 				tasks: Array.from({ length: 8 }, (_, index) => ({
 					task: { id: `task-${index}`, name: `Task ${index}` },
 					latest: null,
+					latestHostId: null,
 				})),
 			},
-			...data.emptyProjects.map(({ name, mine, tasks = 0 }) => ({
-				key: name,
-				name,
-				projectId: name,
-				mine,
-				tasks: Array.from({ length: tasks }, (_, index) => ({
-					task: { id: `${name}-${index}`, name: `${name} task ${index}` },
-					latest: null,
-				})),
-			})),
+			...data.emptyProjects.map(
+				({ name, mine, tasks = 0, hostIds = null, projectId = name, latestHostIds = [] }) => ({
+					key: name,
+					name,
+					projectId,
+					mine,
+					hostIds,
+					tasks: Array.from({ length: tasks }, (_, index) => ({
+						task: { id: `${name}-${index}`, name: `${name} task ${index}` },
+						latest: null,
+						latestHostId: latestHostIds[index] ?? null,
+					})),
+				}),
+			),
 		],
 	}),
 }))
+vi.mock('@/minimalist/lib/use-working-host', () => ({
+	useWorkingHost: () => ({ id: working.id, host: null, state: 'online', isReady: true, set: working.set }),
+}))
 vi.mock('@/minimalist/lib/ui-state', () => ({ useUi: () => ({ closeSidebarOnNarrow: vi.fn(), showToast: vi.fn() }) }))
 vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: {} }) }))
-vi.mock('./Menu', () => ({ Menu: () => null, MenuItem: () => null }))
+vi.mock('./Menu', () => ({
+	Menu: ({ open, children }: { open: boolean; children: ReactNode }) =>
+		open ? <div role="menu">{children}</div> : null,
+	MenuItem: ({ label, danger, onSelect }: { label: string; danger?: boolean; onSelect?: () => void }) => (
+		<button type="button" role="menuitem" data-danger={danger ? '' : undefined} onClick={onSelect}>
+			{label}
+		</button>
+	),
+	MenuSeparator: () => <hr />,
+}))
+vi.mock('./DeleteDialog', () => ({
+	DeleteDialog: ({ target }: { target: { kind: string; projectId: string; name: string } }) => (
+		<div role="dialog" aria-label={`Delete ${target.name}`} data-project={target.projectId} />
+	),
+}))
 vi.mock('./TaskItem', () => ({
-	TaskItem: ({ row, selected }: { row: { task: { name: string } }; selected: boolean }) => (
-		<a href="#task" aria-current={selected ? 'page' : undefined}>
+	TaskItem: ({
+		row,
+		selected,
+		elsewhere,
+	}: {
+		row: { task: { name: string } }
+		selected: boolean
+		elsewhere?: string | null
+	}) => (
+		<a href="#task" aria-current={selected ? 'page' : undefined} data-elsewhere={elsewhere ?? undefined}>
 			{row.task.name}
 		</a>
 	),
@@ -65,6 +119,9 @@ beforeEach(() => {
 	route.selectedTaskId = 'task-7'
 	data.standalone = []
 	data.emptyProjects = []
+	data.projectHostIds = null
+	working.id = 'all'
+	working.set.mockReset()
 })
 
 describe('standalone session names', () => {
@@ -120,5 +177,113 @@ describe('shared projects', () => {
 		expect(toggle).toHaveAttribute('title', 'Shared busy\nShared with you')
 		expect(toggle.querySelector('.proj-icon')).toHaveClass('shared')
 		expect(screen.getByRole('button', { name: 'Project' }).querySelector('.proj-icon')).not.toHaveClass('shared')
+	})
+})
+
+describe('masking by the working host', () => {
+	beforeEach(() => {
+		data.emptyProjects = [
+			{ name: 'Studio checkout', mine: true, hostIds: ['mac-studio-id'] },
+			{ name: 'Clone anywhere', mine: true, hostIds: null },
+			{ name: 'Both hosts', mine: true, hostIds: ['linux-box-id', 'mac-studio-id'] },
+			{ name: 'studio-folder', mine: true, projectId: null, hostIds: ['mac-studio-id'], tasks: 1 },
+			{ name: 'never-ran', mine: true, projectId: null, hostIds: null, tasks: 1 },
+		]
+	})
+
+	const shown = () => screen.queryAllByRole('button', { expanded: true }).map((button) => button.textContent)
+
+	it('shows every project on All hosts', () => {
+		render(<ProjectList />)
+		expect(shown()).toEqual([
+			'Project',
+			'Studio checkout',
+			'Clone anywhere',
+			'Both hosts',
+			'studio-folder',
+			'never-ran',
+		])
+	})
+
+	it('hides projects checked out only on other hosts, and folders that ran only there', () => {
+		working.id = 'linux-box-id'
+		render(<ProjectList />)
+		expect(shown()).toEqual(['Project', 'Clone anywhere', 'Both hosts', 'never-ran'])
+	})
+
+	it('brings them back when switching to the host that has them', () => {
+		working.id = 'linux-box-id'
+		const view = render(<ProjectList />)
+		expect(screen.queryByRole('button', { name: 'Studio checkout' })).toBeNull()
+		working.id = 'mac-studio-id'
+		view.rerender(<ProjectList />)
+		expect(screen.getByRole('button', { name: 'Studio checkout' })).toBeInTheDocument()
+		expect(screen.getByRole('button', { name: 'studio-folder' })).toBeInTheDocument()
+	})
+
+	it('tags a task that last ran on another host with that host’s name, and never hides it', () => {
+		data.emptyProjects = [
+			{
+				name: 'Shared work',
+				mine: true,
+				hostIds: null,
+				tasks: 4,
+				latestHostIds: ['linux-box-id', 'mac-studio-id', null, 'teammate-host-123'],
+			},
+		]
+		working.id = 'mac-studio-id'
+		render(<ProjectList />)
+		const tag = (name: string) => screen.getByRole('link', { name }).getAttribute('data-elsewhere')
+		expect(tag('Shared work task 0')).toBe('linux-box')
+		expect(tag('Shared work task 1')).toBeNull()
+		expect(tag('Shared work task 2')).toBeNull()
+		// A host you don't have goes by its short id.
+		expect(tag('Shared work task 3')).toBe('teammate')
+	})
+
+	it('tags nothing on All hosts', () => {
+		data.emptyProjects = [{ name: 'Shared work', mine: true, tasks: 1, latestHostIds: ['linux-box-id'] }]
+		render(<ProjectList />)
+		expect(screen.getByRole('link', { name: 'Shared work task 0' })).not.toHaveAttribute('data-elsewhere')
+	})
+
+	it('offers to show every host when this one has none of your projects', () => {
+		data.emptyProjects = [{ name: 'Studio only', mine: true, hostIds: ['mac-studio-id'] }]
+		data.projectHostIds = ['mac-studio-id']
+		working.id = 'linux-box-id'
+		render(<ProjectList />)
+		expect(screen.queryByText(/Add a project to start/)).toBeNull()
+		expect(screen.getByText(/No projects on this host/)).toBeInTheDocument()
+		fireEvent.click(screen.getByRole('button', { name: 'Show all hosts' }))
+		expect(working.set).toHaveBeenCalledWith('all')
+	})
+})
+
+describe('deleting a project', () => {
+	const menuItems = () => screen.getAllByRole('menuitem').map((item) => item.textContent)
+
+	it('offers Delete project… last, in red, on a project you own, and opens its confirmation', () => {
+		data.emptyProjects = [{ name: 'Mine', mine: true, projectId: 'mine-id' }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for Mine' }))
+		expect(menuItems()).toEqual(['New task in project', 'Edit project', 'Archive project', 'Delete project…'])
+		const remove = screen.getByRole('menuitem', { name: 'Delete project…' })
+		expect(remove).toHaveAttribute('data-danger')
+		fireEvent.click(remove)
+		expect(screen.getByRole('dialog', { name: 'Delete Mine' })).toHaveAttribute('data-project', 'mine-id')
+	})
+
+	it('leaves it out of a project shared with you', () => {
+		data.emptyProjects = [{ name: 'Shared busy', mine: false, tasks: 1 }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for Shared busy' }))
+		expect(menuItems()).toEqual(['New task in project', 'Edit project', 'Archive project'])
+	})
+
+	it('leaves it out of a folder group, which has no project to delete', () => {
+		data.emptyProjects = [{ name: 'some-folder', mine: true, projectId: null, tasks: 1 }]
+		render(<ProjectList />)
+		fireEvent.click(screen.getByRole('button', { name: 'More for some-folder' }))
+		expect(menuItems()).toEqual(['New task in project'])
 	})
 })

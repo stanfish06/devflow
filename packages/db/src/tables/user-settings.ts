@@ -6,6 +6,7 @@ import z from 'zod/v4'
 
 import { jsonbParser } from '../utils/jsonb-parser'
 import { type ProjectsV2Variant, ProjectsV2VariantSchema } from '../zodschemas/projects-v2-variant'
+import { githubAccounts } from './github-accounts'
 import { organizations } from './organizations'
 
 type DefaultCodingAgent = LaunchableCodingAgent
@@ -82,6 +83,12 @@ export const userSettings = pgTable(
 		//     collection setting to the UI
 		//   - `auth.admin.users.list` — the Users panel switch, which must show what is collected
 		metrics_advanced_enabled: boolean('metrics_advanced_enabled').notNull().default(true),
+		// The GitHub account agents act as when neither the task nor the project picks one. Null is
+		// the host's own gh login (today's behaviour). Written only by githubAccounts.setDefault,
+		// which checks the account is the user's own; removing the account clears it.
+		default_github_account_id: uuid('default_github_account_id').references(() => githubAccounts.id, {
+			onDelete: 'set null',
+		}),
 
 		created_at: bigint('created_at', { mode: 'bigint' })
 			.notNull()

@@ -11,6 +11,7 @@ import type { HttpClient } from 'effect/http/HttpClient'
 import { Directory, UserDirectory } from '../../src/auth/directory'
 import { makeInMemoryPersonalAccessTokenStore, PersonalAccessTokenStore } from '../../src/auth/personal-access-tokens'
 import type { AppRuntime, AppRuntimeInitializationError, AppRuntimeServices } from '../../src/effects/app-runtime'
+import { makeTokenCipher, TokenCipher } from '../../src/effects/github-accounts/token-cipher'
 import { ArtifactCommentsLive } from '../../src/effects/services/artifact-comments/artifact-comments-live'
 import { DiffCommentsLive } from '../../src/effects/services/diff-comments/diff-comments-live'
 import { DurableStreamsConfig } from '../../src/effects/services/durable-streams/durable-streams-config.service'
@@ -51,6 +52,8 @@ export type TestRuntimeOptions = {
 	 * fetch transport, as production does. Override it when a test must not reach the network.
 	 */
 	httpClient?: Layer.Layer<HttpClient>
+	/** Defaults to a cipher over a fixed test key. */
+	tokenCipher?: Layer.Layer<TokenCipher>
 }
 
 function testDurableStreamsConfigLayer(origin: string) {
@@ -122,6 +125,11 @@ const fakeSessionTitleGenerationLayer = Layer.succeed(SessionTitleGeneration, {
 	scheduleGeneration: () => Effect.void,
 })
 
+/** GitHub account tokens encrypt under a fixed key in tests, so stored ciphertexts can be opened again. */
+export const TEST_GITHUB_ACCOUNT_TOKEN_KEY = new Uint8Array(32).fill(7)
+
+const testTokenCipherLayer = Layer.succeed(TokenCipher, makeTokenCipher(TEST_GITHUB_ACCOUNT_TOKEN_KEY))
+
 export function createRuntimeWithTestPostgresLayer(
 	db: PgDatabase<PostgresJsQueryResultHKT>,
 	options?: TestRuntimeOptions,
@@ -162,6 +170,7 @@ export function createRuntimeWithTestPostgresLayer(
 			options?.sessionTitleGeneration ?? fakeSessionTitleGenerationLayer,
 			options?.github ?? fakeGitHubLayer,
 			options?.prStatusStream ?? fakePrStatusStreamLayer,
+			options?.tokenCipher ?? testTokenCipherLayer,
 		)
 			// Mirrors production: one transport, provided once, ambient to every service that needs it.
 			.pipe(Layer.provideMerge(options?.httpClient ?? FetchHttpClient.layer)),

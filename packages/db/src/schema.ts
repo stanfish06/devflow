@@ -12,6 +12,7 @@ import { commits } from './tables/commits'
 import { contextShards } from './tables/context-shards'
 import { conversationEvents } from './tables/conversation-events'
 import { diffComments } from './tables/diff-comments'
+import { githubAccounts } from './tables/github-accounts'
 import { githubIntegrationInstallStates } from './tables/github-integration-install-states'
 import { githubIntegrationRepositories } from './tables/github-integration-repositories'
 import { githubIntegrations } from './tables/github-integrations'
@@ -19,6 +20,7 @@ import { hostAliases } from './tables/host-aliases'
 import { onlineHosts } from './tables/online-hosts'
 import { organizationSettings } from './tables/organization-settings'
 import { organizations } from './tables/organizations'
+import { projectUserSettings } from './tables/project-user-settings'
 import { projects } from './tables/projects'
 import { providerLoginRequests } from './tables/provider-login-requests'
 import { publicCommentUndoAuthorizations } from './tables/public-comment-undo-authorizations'
@@ -58,12 +60,14 @@ export * from './tables/diff-comments'
 export * from './tables/agent-slash-commands'
 export * from './tables/agent-command-discovery-requests'
 export * from './tables/host-aliases'
+export * from './tables/github-accounts'
 export * from './tables/github-integration-install-states'
 export * from './tables/github-integration-repositories'
 export * from './tables/github-integrations'
 export * from './tables/online-hosts'
 export * from './tables/organization-settings'
 export * from './tables/organizations'
+export * from './tables/project-user-settings'
 export * from './tables/projects'
 export * from './tables/pull-request-sessions'
 export * from './tables/repository-locations-for-user-for-host'
@@ -94,6 +98,7 @@ export const applicationTables = [
 	accessRequests,
 	teams,
 	projects,
+	projectUserSettings,
 	repositoryLocationsForUserForHost,
 	workspaces,
 	workspaceLocationsForUserForHost,
@@ -123,6 +128,7 @@ export const applicationTables = [
 	githubIntegrations,
 	githubIntegrationInstallStates,
 	githubIntegrationRepositories,
+	githubAccounts,
 	userSettings,
 	queuedMessages,
 	commits,

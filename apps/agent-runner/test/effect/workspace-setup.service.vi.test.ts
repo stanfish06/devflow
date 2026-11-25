@@ -88,6 +88,7 @@ const makeCollections = (
 		approvalChanges: Stream.never,
 		workspaceSetupChanges: Stream.never,
 		providerLoginChanges: Stream.never,
+		taskUserSettingsChanges: Stream.never,
 		workspaceSetups: workspaceSetups.pipe(Stream.tap((row) => Effect.sync(() => updateCurrentRow(row)))),
 		workspaceSetupSessions: Stream.never,
 		streamSessionChanges: () => Stream.never,

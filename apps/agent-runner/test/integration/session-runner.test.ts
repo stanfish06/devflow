@@ -24,6 +24,7 @@ import { HostUsageLimitsLive } from '@/lib/usage-limits/host-usage-limits'
 import { makeSessionContext } from '../fixtures/effect-claude-runtime'
 import { describeRealClaude } from '../helpers/real-claude'
 import { createTestSession } from '../helpers/session-fixtures'
+import { makeHostLoginGithubCredentials } from '../mocks/github-credentials.mock'
 import { makeMockTaskWorkspaceContextLayer } from '../mocks/task-workspace-context.mock'
 
 describeRealClaude('Session Runner - Real SDK Integration', () => {
@@ -108,6 +109,8 @@ describeRealClaude('Session Runner - Real SDK Integration', () => {
 				researchLibrary: () => Effect.die('Claude unexpectedly requested library research'),
 				syncGitHubArtifactBacklink: () => Effect.die('Claude unexpectedly synchronized a GitHub backlink'),
 				updateWorkspaceSetup: () => Effect.die('Claude unexpectedly updated workspace setup'),
+				resolveGithubToken: () => Effect.succeed({ useHostLogin: true as const }),
+				reportGithubRejection: () => Effect.die('Claude unexpectedly reported a GitHub rejection'),
 			})
 			const TestDependencies = Layer.mergeAll(
 				GitRunnerConfigurationLive,
@@ -115,6 +118,7 @@ describeRealClaude('Session Runner - Real SDK Integration', () => {
 				TestConfig,
 				TestApi,
 				makeMockTaskWorkspaceContextLayer(),
+				makeHostLoginGithubCredentials(),
 				Layer.succeed(DaemonCollections, {
 					current: Effect.succeed(collections),
 					sessionChanges: Stream.never,
@@ -122,6 +126,7 @@ describeRealClaude('Session Runner - Real SDK Integration', () => {
 					approvalChanges: Stream.never,
 					workspaceSetupChanges: Stream.never,
 					providerLoginChanges: Stream.never,
+					taskUserSettingsChanges: Stream.never,
 					workspaceSetups: Stream.never,
 					workspaceSetupSessions: Stream.never,
 					streamSessionChanges: () => Stream.never,

@@ -256,6 +256,39 @@ describe('handleInterruptOutcome', () => {
 		expect(mockOnResume).toHaveBeenCalledWith('new prompt')
 		expect(mockSessionsUpdate).not.toHaveBeenCalled()
 	})
+
+	test('fails the session with the reason the daemon stopped it for, even if a resume prompt arrived later', async () => {
+		const mockOnResume = vi.fn(async (_prompt: string) => {})
+		const mockSessionsUpdate = vi.fn(async () => ({ success: true, transactionId: 'mock-txid' }))
+		const mockOrpc = { sessions: { update: mockSessionsUpdate } } as unknown as ORPCClient
+		const mockShutdown = { isDaemonShuttingDown: () => false } as unknown as DaemonServices['shutdown']
+
+		const interruptState = await createInterruptState()
+		await expect(
+			Effect.runPromise(interruptState.markFailed({ reason: 'github_token_rejected', message: 'stan-work' })),
+		).resolves.toBe(true)
+		// Only the first failure is kept.
+		await expect(
+			Effect.runPromise(interruptState.markFailed({ reason: 'github_no_repo_access', message: 'stan-bot' })),
+		).resolves.toBe(false)
+		await Effect.runPromise(interruptState.markInterrupted('new prompt'))
+
+		await handleInterruptOutcome({
+			interruptState,
+			sessionId: 'session-123',
+			onResume: mockOnResume,
+			orpc: mockOrpc,
+			shutdown: mockShutdown,
+		})
+
+		expect(mockOnResume).not.toHaveBeenCalled()
+		expect(mockSessionsUpdate).toHaveBeenCalledExactlyOnceWith({
+			sessionId: 'session-123',
+			status: 'failed',
+			errorReason: 'github_token_rejected',
+			errorMessage: 'stan-work',
+		})
+	})
 })
 
 /**

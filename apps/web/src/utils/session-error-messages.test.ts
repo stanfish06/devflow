@@ -23,6 +23,15 @@ describe('session error messages', () => {
 		)
 	})
 
+	test('names the refused GitHub account, whose login is the message', () => {
+		expect(getSessionErrorDisplayMessage('github_token_rejected', 'stan-work')).toBe(
+			"GitHub rejected stan-work's token. Replace it in Settings, or switch the task's GitHub account, then send a message to try again.",
+		)
+		expect(getSessionErrorDisplayMessage('github_no_repo_access', 'stan-work')).toBe(
+			"stan-work can't push to this repository. Switch the task's GitHub account, then send a message to try again.",
+		)
+	})
+
 	test('shows the raw message for other reasons', () => {
 		expect(getSessionErrorDisplayMessage('auth_required', 'Not logged in')).toBe('Not logged in')
 		expect(getSessionErrorDisplayMessage(null, 'could not locate the claude code binary')).toBe(

@@ -85,6 +85,9 @@ export function isBusy(status: SessionStatus): boolean {
 	return status === 'waiting_for_usage_limit' || sessionAttention(status) === 'running'
 }
 
+/** What a stop notice offers to fix a GitHub account the agent couldn't use. */
+export type StopAction = 'replace-token' | 'switch-account'
+
 export type StopReason = {
 	title: string
 	detail: string
@@ -92,6 +95,8 @@ export type StopReason = {
 	error?: string
 	/** A command to run on the host, offered as a copy button. */
 	command?: string
+	/** Fixes offered as buttons, in order. */
+	actions?: StopAction[]
 }
 
 const CLAUDE_SIGN_IN = CLAUDE_SIGN_IN_VARIANT.setupCommands[0] ?? 'claude /login'
@@ -113,6 +118,22 @@ export function stopReason(
 	if (session.status !== 'failed') return null
 	const agent = agentOf(session.coding_agent)
 	const reason = resolveSessionErrorReason(session.error_reason, session.error_message)
+	// The daemon stopped the run because GitHub refused the task's account; the message is its login.
+	const login = session.error_message?.trim() || null
+	if (reason === 'github_token_rejected') {
+		return {
+			title: login ? `GitHub rejected ${login}'s token` : "GitHub rejected the account's token",
+			detail: 'Replace it or continue with another account, then send a message to try again.',
+			actions: ['replace-token', 'switch-account'],
+		}
+	}
+	if (reason === 'github_no_repo_access') {
+		return {
+			title: login ? `${login} can't push to this repository` : "The account can't push to this repository",
+			detail: 'GitHub accepted the token, but the account has no access here. Continue with another account, then send a message to try again.',
+			actions: ['switch-account'],
+		}
+	}
 	const signedOut =
 		agent === 'claude' ? reason === 'auth_required' : Boolean(matchCodelayerAuthError(session.error_message))
 	if (signedOut) {

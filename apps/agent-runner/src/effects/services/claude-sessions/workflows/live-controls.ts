@@ -1,4 +1,4 @@
-import { Effect, Stream } from 'effect'
+import { Deferred, Effect, Stream } from 'effect'
 
 import { isInterruptRequestedEvent, shouldResumeAfterInterrupt } from '@/agents/claudecode/interrupts'
 import { isModelChangeEvent } from '@/agents/claudecode/model-changes'
@@ -59,5 +59,31 @@ export function observeLiveSessionControls(input: {
 
 			return Effect.void
 		}),
+	)
+}
+
+/**
+ * The daemon stopped the run itself (GitHub refused the session's account): once `stopRequested`
+ * completes, interrupt the agent and end its process, as a user's interrupt does. The run then
+ * fails with the reason already recorded on its interrupt state.
+ */
+export function observeDaemonStopRequest(input: {
+	readonly sessionId: string
+	readonly stopRequested: Deferred.Deferred<void>
+	readonly sdkSession: ClaudeSdkSession
+}) {
+	return Deferred.await(input.stopRequested).pipe(
+		Effect.andThen(
+			Effect.logInfo("Stopping the Claude SDK session at the daemon's request").pipe(
+				Effect.andThen(
+					input.sdkSession.controls.interrupt.pipe(
+						Effect.catch((error) => Effect.logError('Error interrupting Claude SDK session', error)),
+					),
+				),
+				Effect.ensuring(input.sdkSession.input.close),
+				Effect.uninterruptible,
+			),
+		),
+		Effect.annotateLogs({ sessionId: input.sessionId }),
 	)
 }

@@ -77,7 +77,8 @@ export function subscribeToSessionInterrupt(options: {
 
 /**
  * Handle interrupt outcomes after session event processing completes.
- * Either marks session as interrupted, or calls onResume to continue with new prompt.
+ * Marks the session failed when the daemon stopped it for a reason (`markFailed`), else either
+ * marks it interrupted or calls onResume to continue with new prompt.
  * Skipped if daemon is shutting down (already handled separately).
  */
 export async function handleInterruptOutcome(options: {
@@ -94,7 +95,16 @@ export async function handleInterruptOutcome(options: {
 		return
 	}
 
-	if (snapshot.resumeWithPrompt) {
+	const failure = await Effect.runPromise(interruptState.failure)
+	if (failure !== null) {
+		logger.info({ sessionId, reason: failure.reason }, 'Session stopped by the daemon, setting status to failed')
+		await orpc.sessions.update({
+			sessionId,
+			status: 'failed',
+			errorReason: failure.reason,
+			errorMessage: failure.message,
+		})
+	} else if (snapshot.resumeWithPrompt) {
 		logger.info(
 			{ sessionId, resumeWithPrompt: snapshot.resumeWithPrompt },
 			'Resuming interrupted session with new prompt',

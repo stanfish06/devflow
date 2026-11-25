@@ -8,6 +8,7 @@ import type { HostUsageLimits } from '@/lib/usage-limits/host-usage-limits'
 import type { DaemonApi } from '../daemon-api/daemon-api.service'
 import type { DaemonCollections } from '../daemon-collections/daemon-collections.service'
 import type { DaemonTaskSync } from '../daemon-task-sync'
+import type { GithubCredentials } from '../github-credentials/github-credentials.service'
 import type { DurableStreamFetch } from '../stream-producer/durable-stream-fetch'
 import type { GitCommandRunnerRequirements } from '../task-diff/git-command-runner.service'
 import type { TaskDiffServiceRegistry } from '../task-diff/task-diff-service-registry.service'
@@ -27,6 +28,7 @@ type ClaudeExecutionDependencies =
 	| DaemonTaskSync
 	| DurableStreamFetch
 	| FileSystem.FileSystem
+	| GithubCredentials
 	| Path.Path
 	| TaskDiffServiceRegistry
 	| TaskWorkspaceContext
@@ -53,7 +55,8 @@ export interface DeliverClaudeFollowUpMessageInput {
 
 export interface StopClaudeSessionInput {
 	readonly sessionId: string
-	readonly reason?: 'archive' | 'delete' | 'explicit'
+	/** `github_account_changed`: the task's account moved to or from the host login, which needs a new process. */
+	readonly reason?: 'archive' | 'delete' | 'explicit' | 'github_account_changed'
 }
 
 export type StopClaudeSessionOutcome = 'not-active' | 'already-stopping' | 'stopped' | 'timed-out'

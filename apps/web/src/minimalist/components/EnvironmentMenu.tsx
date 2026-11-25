@@ -1,38 +1,46 @@
 import type { Session } from '@devflow/db/tables/sessions'
-import { Copy, FolderGit2, GitBranch, Laptop, Server } from 'lucide-react'
+import { Copy, FolderGit2, GitBranch, House, Laptop, Server } from 'lucide-react'
 import { useRef, useState } from 'react'
 
+import { Avatar } from '@/minimalist/components/Avatar'
+import { GithubAccountMenu } from '@/minimalist/components/GithubAccountMenu'
 import { Menu, MenuItem, MenuLabel, MenuSeparator } from '@/minimalist/components/Menu'
 import { type HostView, taskBranch, useHosts, useTask } from '@/minimalist/lib/data'
 import { basename, formatAgo, shortPath } from '@/minimalist/lib/format'
+import { githubAccountLabel, pickOf, type ResolvedGithubAccount } from '@/minimalist/lib/github-accounts'
 import { useCopy } from '@/minimalist/lib/use-copy'
+import { useTaskGithubAccount } from '@/minimalist/lib/use-task-github-account'
 
 /**
- * Where the session runs, as one quiet chip: host and branch. The directory and
- * its copy action sit behind it, since you only need them when you want the files.
+ * Where the session runs, as one quiet chip: host, branch and, in your own sessions, the GitHub
+ * account it pushes as. The directory and its copy action sit behind it, since you only need them
+ * when you want the files; the account opens the same menu the composer uses.
  */
 export function EnvironmentMenu({ session, host }: { session: Session; host: HostView | null }) {
 	const copy = useCopy()
 	const { task } = useTask(session.task_id)
 	const branch = taskBranch(task)
 	const anchor = useRef<HTMLButtonElement>(null)
-	const [open, setOpen] = useState(false)
+	const [open, setOpen] = useState<'environment' | 'account' | null>(null)
 	// Hosts can load after the thread; until they do, the chip claims neither online nor offline.
 	const { isReady: hostsReady } = useHosts()
 	const online = host?.online ?? false
 	const state = !host && !hostsReady ? 'loading' : online ? 'online' : 'offline'
 	const hostName = host?.name ?? (state === 'loading' ? 'Host' : 'Unknown host')
 	const HostIcon = host?.host.distribution === 'cli' ? Server : Laptop
-	const close = () => setOpen(false)
+	const account = useTaskGithubAccount(session, task?.project_id ?? null)
+	const close = () => setOpen(null)
 	return (
 		<>
 			<button
 				type="button"
 				ref={anchor}
 				className={`env-chip${state === 'offline' ? ' offline' : ''}`}
-				aria-label={`Environment: ${hostName}${state === 'loading' ? '' : `, ${state}`}`}
+				aria-label={`Environment: ${hostName}${state === 'loading' ? '' : `, ${state}`}${
+					account.shown ? `, pushes as ${githubAccountLabel(account.resolved)}` : ''
+				}`}
 				title={state === 'offline' ? `${hostName} is offline` : session.working_directory}
-				onClick={() => setOpen(true)}
+				onClick={() => setOpen('environment')}
 			>
 				<span className="env-host">
 					<HostIcon className="i sm" strokeWidth={1.6} />
@@ -46,8 +54,14 @@ export function EnvironmentMenu({ session, host }: { session: Session; host: Hos
 					<FolderGit2 className="i sm label" strokeWidth={1.6} />
 				)}
 				<span className="label mono">{branch ?? basename(session.working_directory)}</span>
+				{account.shown ? (
+					<>
+						<span className="label dim">·</span>
+						<span className="label">{githubAccountLabel(account.resolved)}</span>
+					</>
+				) : null}
 			</button>
-			<Menu anchor={anchor} open={open} onClose={close} placement="below-end" width={320}>
+			<Menu anchor={anchor} open={open === 'environment'} onClose={close} placement="below-end" width={320}>
 				<MenuLabel>Runs on</MenuLabel>
 				<div className="env-row">
 					<HostIcon className="i sm" strokeWidth={1.6} />
@@ -71,6 +85,24 @@ export function EnvironmentMenu({ session, host }: { session: Session; host: Hos
 						</div>
 					</div>
 				</div>
+				{account.shown ? (
+					<>
+						<MenuLabel>Pushes and opens PRs as</MenuLabel>
+						<MenuItem
+							icon={
+								account.resolved.account === 'host' ? (
+									<House className="i sm" strokeWidth={1.6} />
+								) : (
+									<Avatar name={account.resolved.account.login} size={18} />
+								)
+							}
+							label={githubAccountLabel(account.resolved)}
+							detail={`${sourceCopy(account.resolved)} · Change…`}
+							disabled={account.pending}
+							onSelect={() => setOpen('account')}
+						/>
+					</>
+				) : null}
 				<MenuSeparator />
 				<MenuItem
 					icon={<Copy className="i sm" strokeWidth={1.6} />}
@@ -85,8 +117,33 @@ export function EnvironmentMenu({ session, host }: { session: Session; host: Hos
 					}}
 				/>
 			</Menu>
+			{account.shown ? (
+				<GithubAccountMenu
+					anchor={anchor}
+					open={open === 'account'}
+					onClose={close}
+					placement="below-end"
+					value={pickOf(account.resolved)}
+					projectDefaultId={account.projectDefaultId}
+					hostName={host?.name}
+					onPick={account.pick}
+				/>
+			) : null}
 		</>
 	)
+}
+
+function sourceCopy(resolved: ResolvedGithubAccount): string {
+	switch (resolved.source) {
+		case 'task':
+			return 'Picked for this task'
+		case 'project':
+			return "The project's default"
+		case 'default':
+			return 'Your default'
+		case 'host':
+			return "Whatever this host's gh is signed in as"
+	}
 }
 
 function hostStatus(host: HostView | null, loading: boolean): string {

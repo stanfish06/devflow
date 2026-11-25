@@ -22,6 +22,7 @@ describe('Effect Claude interruption session', () => {
 			approvalChanges: Stream.empty,
 			workspaceSetupChanges: Stream.empty,
 			providerLoginChanges: Stream.empty,
+			taskUserSettingsChanges: Stream.empty,
 			workspaceSetups: Stream.empty,
 			workspaceSetupSessions: Stream.empty,
 			streamSessionChanges: () => Stream.make(interruptChange),
@@ -49,6 +50,8 @@ describe('Effect Claude interruption session', () => {
 					order.push('mark')
 					replacementPrompt = prompt
 				}),
+			failure: Effect.die('unused'),
+			markFailed: () => Effect.die('unused'),
 		}
 
 		return observeLiveSessionControls({

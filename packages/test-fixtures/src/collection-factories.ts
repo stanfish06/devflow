@@ -586,6 +586,28 @@ export function createTaskUserSettingsV2Collection(opts: CollectionFactoryOpts |
 	)
 }
 
+/** The daemon's own-user shape (`/v2/daemon/task-user-settings`); the server needs a hostId. */
+export function createDaemonTaskUserSettingsCollection(opts: CollectionFactoryOpts | CollectionFromServer) {
+	const { proxyPort, onError } = normalizeOpts(opts)
+
+	return createCollection(
+		electricCollectionOptions({
+			schema: taskUserSettingsSelectSchema,
+			shapeOptions: {
+				url: `http://localhost:${proxyPort}/v2/daemon/task-user-settings`,
+				subsetMethod: 'POST',
+				onError: (err) => {
+					onError?.(err)
+					return {}
+				},
+			},
+			getKey: (item) => item.id,
+			syncMode: 'on-demand',
+			startSync: true,
+		}),
+	)
+}
+
 export type TaskUserSettingsCollection = ReturnType<typeof createTaskUserSettingsCollection>
 
 // =============================================================================

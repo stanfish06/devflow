@@ -49,6 +49,11 @@ import { replyDiffCommentProcedure } from './api/diff-comments/reply.effect'
 import { resolveBatchDiffCommentsProcedure } from './api/diff-comments/resolve-batch.effect'
 import { resolveDiffCommentProcedure } from './api/diff-comments/resolve.effect'
 import { getOrHydrateDurableStreamSessionsProcedure } from './api/durable-streams/sessions'
+import { addGithubAccountProcedure } from './api/github-accounts/add.effect'
+import { listGithubAccountsProcedure } from './api/github-accounts/list.effect'
+import { removeGithubAccountProcedure } from './api/github-accounts/remove.effect'
+import { replaceGithubAccountTokenProcedure } from './api/github-accounts/replace-token.effect'
+import { setDefaultGithubAccountProcedure } from './api/github-accounts/set-default.effect'
 import { listHostAliasesEffectProcedure } from './api/hosts/alias-list.effect'
 import { upsertHostAliasEffectProcedure } from './api/hosts/alias-upsert.effect'
 import { deleteHostEffectProcedure } from './api/hosts/delete.effect'
@@ -99,11 +104,14 @@ import { retryProjectWorkspaceRepositorySetupProcedure } from './api/project-wor
 import { skipProjectWorkspaceRepositorySetupStepProcedure } from './api/project-workspaces/skip-repository-setup-step.effect'
 import { archiveProjectV2Procedure } from './api/projects-v2/archive.effect'
 import { createProjectV2Procedure } from './api/projects-v2/create.effect'
+import { projectDeletePreviewV2Procedure } from './api/projects-v2/delete-preview.effect'
+import { deleteProjectV2Procedure } from './api/projects-v2/delete.effect'
 import { getProjectV2Procedure } from './api/projects-v2/get.effect'
 import { listProjectsV2Procedure } from './api/projects-v2/list.effect'
 import { upsertProjectV2LocationProcedure } from './api/projects-v2/location-upsert.effect'
 import { getProjectV2RepositorySourcesProcedure } from './api/projects-v2/repository-sources-get.effect'
 import { upsertProjectV2RepositorySourcesProcedure } from './api/projects-v2/repository-sources-upsert.effect'
+import { setProjectGithubAccountProcedure } from './api/projects-v2/set-github-account.effect'
 import { updateProjectV2Procedure } from './api/projects-v2/update.effect'
 import {
 	cancelProviderLoginProcedure,
@@ -172,10 +180,14 @@ import { upsertTaskUserSettingsProcedure } from './api/task-user-settings/upsert
 import { archiveTaskProcedure } from './api/tasks/archive'
 import { createTaskProcedure } from './api/tasks/create'
 import { createTaskDraftEffectProcedure } from './api/tasks/createDraft.effect'
+import { deleteArchivedTasksPreviewProcedure } from './api/tasks/delete-archived-preview.effect'
+import { deleteArchivedTasksProcedure } from './api/tasks/delete-archived.effect'
+import { deleteTaskEffectProcedure } from './api/tasks/delete.effect'
 import { launchTaskDraftProcedure } from './api/tasks/launch-draft'
 import { listTasksProcedure } from './api/tasks/list.effect'
 import { reassignTaskOwnerProcedure } from './api/tasks/reassign-owner'
 import { saveTaskDraftProcedure } from './api/tasks/saveDraft'
+import { setTaskGithubAccountProcedure } from './api/tasks/set-github-account.effect'
 import { updateTaskProcedure } from './api/tasks/update'
 import { createTaskV2Procedure } from './api/tasks/v2/create.effect'
 import { createUploadProcedure } from './api/uploads/create.effect'
@@ -205,6 +217,8 @@ import { daemonListEnabledContextShardsProcedure } from './daemon/context-shards
 import { getDiffCommentsProcedure } from './daemon/diff-comments/get.effect'
 import { replyToDiffCommentProcedure } from './daemon/diff-comments/reply.effect'
 import { updateDiffCommentsProcedure } from './daemon/diff-comments/update.effect'
+import { reportGithubRejectionProcedure } from './daemon/github-accounts/report-rejection.effect'
+import { resolveGithubTokenProcedure } from './daemon/github-accounts/resolve-token.effect'
 import { heartbeatEffectProcedure } from './daemon/hosts/heartbeat.effect'
 import { shutdownEffectProcedure } from './daemon/hosts/shutdown.effect'
 import { syncGitHubArtifactBacklinkProcedure } from './daemon/integrations/github/sync-artifact-backlink.effect'
@@ -358,6 +372,10 @@ export const apiRouter = os.router({
 		update: updateTaskProcedure,
 		reassignOwner: reassignTaskOwnerProcedure,
 		archive: archiveTaskProcedure,
+		delete: deleteTaskEffectProcedure,
+		deleteArchivedPreview: deleteArchivedTasksPreviewProcedure,
+		deleteArchived: deleteArchivedTasksProcedure,
+		setGithubAccount: setTaskGithubAccountProcedure,
 		list: listTasksProcedure,
 		v2: {
 			create: createTaskV2Procedure,
@@ -370,6 +388,9 @@ export const apiRouter = os.router({
 			create: createProjectV2Procedure,
 			update: updateProjectV2Procedure,
 			archive: archiveProjectV2Procedure,
+			deletePreview: projectDeletePreviewV2Procedure,
+			delete: deleteProjectV2Procedure,
+			setGithubAccount: setProjectGithubAccountProcedure,
 			locations: { upsert: upsertProjectV2LocationProcedure },
 			repositorySources: {
 				get: getProjectV2RepositorySourcesProcedure,
@@ -536,6 +557,13 @@ export const apiRouter = os.router({
 			request: requestHostUpdateEffectProcedure,
 		},
 	},
+	githubAccounts: {
+		list: listGithubAccountsProcedure,
+		add: addGithubAccountProcedure,
+		replaceToken: replaceGithubAccountTokenProcedure,
+		remove: removeGithubAccountProcedure,
+		setDefault: setDefaultGithubAccountProcedure,
+	},
 })
 
 export const daemonRouter = daemonBase.router({
@@ -593,6 +621,10 @@ export const daemonRouter = daemonBase.router({
 	},
 	users: {
 		setGithubIdentity: setGithubIdentityProcedure,
+	},
+	githubAccounts: {
+		resolveToken: resolveGithubTokenProcedure,
+		reportRejection: reportGithubRejectionProcedure,
 	},
 	approvals: {
 		create: createApprovalProcedure,

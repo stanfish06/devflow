@@ -6,6 +6,7 @@ import {
 	Folder,
 	FolderGit2,
 	GitBranch,
+	House,
 	PanelLeft,
 	Route,
 	Server,
@@ -18,7 +19,9 @@ import { uuidv7 } from 'uuidv7'
 
 import { useSyncInternal } from '@/components/providers/SyncProvider'
 import { missingRepositorySources } from '@/lib/repository-sources'
+import { Avatar } from '@/minimalist/components/Avatar'
 import { Composer } from '@/minimalist/components/Composer'
+import { GithubAccountMenu } from '@/minimalist/components/GithubAccountMenu'
 import { IssueDialog } from '@/minimalist/components/IssueDialog'
 import { DirectoryMenu, HostIcon, HostMenu, TargetMenu } from '@/minimalist/components/LaunchMenus'
 import { Menu, MenuItem, MenuSeparator } from '@/minimalist/components/Menu'
@@ -38,6 +41,14 @@ import {
 import { draftStartBlocker } from '@/minimalist/lib/draft-blocker'
 import { newTaskDraftKey } from '@/minimalist/lib/drafts'
 import { basename, formatAgo, toMs } from '@/minimalist/lib/format'
+import {
+	type GithubAccountPick,
+	githubAccountLabel,
+	pickOf,
+	type ResolvedGithubAccount,
+	resolveGithubAccount,
+	useGithubAccounts,
+} from '@/minimalist/lib/github-accounts'
 import {
 	defaultTarget,
 	ensureRepositorySources,
@@ -67,6 +78,7 @@ import { githubFullName, type Ticket, ticketLabel } from '@/minimalist/lib/ticke
 import { useUi } from '@/minimalist/lib/ui-state'
 import { useCopy } from '@/minimalist/lib/use-copy'
 import { type DraftAutosaveState, useDraftAutosave } from '@/minimalist/lib/use-draft-autosave'
+import { useWorkingHost } from '@/minimalist/lib/use-working-host'
 import { useApi } from '@/orpc/client'
 
 type NewTaskProps = {
@@ -147,12 +159,18 @@ function LaunchPage({
 		? existingWorkspace.data?.workspace.projectId
 		: existing.task?.project_id
 	const taskHost = hosts.find((entry) => entry.host.host_id === latestExisting?.host_id) ?? null
+	// Until you pick, a new task starts on the working host; this composer only reads it, so picking
+	// here never changes it. A session in a task keeps the task's host.
+	const working = useWorkingHost()
+	const seedHostId = mode === 'new' && working.id !== 'all' ? working.id : null
+	const seedOffline =
+		form.hostId === null && seedHostId !== null && working.state === 'offline' ? working.host : null
 	// A draft runs on the host it was saved for, or one picked for it here; never on another by default.
 	const host =
 		mode === 'draft'
 			? (hosts.find((entry) => entry.host.host_id === form.hostId) ?? null)
 			: launchHost(hosts, {
-					picked: form.hostId,
+					picked: form.hostId ?? seedHostId,
 					task: inTask && latestExisting?.host_id ? { hostId: latestExisting.host_id } : null,
 				})
 	const directories = useRecentDirectories(host?.host.host_id ?? null)
@@ -173,7 +191,7 @@ function LaunchPage({
 	const launchLock = useRef(false)
 	const catalog = modelCatalog(host?.host)
 	const settings = fitSettings(form.settings, catalog)
-	const [menu, setMenu] = useState<'target' | 'host' | 'directory' | null>(null)
+	const [menu, setMenu] = useState<'target' | 'host' | 'directory' | 'account' | null>(null)
 	const targetAnchor = useRef<HTMLButtonElement>(null)
 	const directoryAnchor = useRef<HTMLButtonElement>(null)
 	useEffect(() => {
@@ -193,6 +211,7 @@ function LaunchPage({
 		}
 	}, [inTask, taskSidebarOpen, toggleTaskSidebar])
 	const hostAnchor = useRef<HTMLButtonElement>(null)
+	const accountAnchor = useRef<HTMLButtonElement>(null)
 
 	const namedProject = (id: string): Target | null => {
 		const project = projects.data?.find((entry) => entry.id === id)
@@ -219,6 +238,20 @@ function LaunchPage({
 		effectiveTarget?.kind === 'project'
 			? projects.data?.find((project) => project.id === effectiveTarget.projectId)
 			: undefined
+	// The account a new task pushes as: the one you pick here, else the project's default, else yours.
+	// Only a pick is sent, so an untouched task keeps following the defaults if they change later.
+	const githubAccounts = useGithubAccounts()
+	const [accountPick, setAccountPick] = useState<{ pick: GithubAccountPick } | null>(null)
+	const projectDefaultId =
+		effectiveTarget?.kind === 'project' ? githubAccounts.projectDefaults[effectiveTarget.projectId] : undefined
+	const account = resolveGithubAccount({
+		accounts: githubAccounts.accounts,
+		task: accountPick ? accountPick.pick : undefined,
+		project: projectDefaultId,
+		defaultAccountId: githubAccounts.defaultAccountId,
+	})
+	// Without any accounts there is nothing to choose but each host's own login, as before.
+	const showAccount = !existingTaskId && (githubAccounts.accounts.length > 0 || accountPick !== null)
 	const workspace: LoadedTarget | null =
 		effectiveTarget?.kind === 'directory'
 			? effectiveTarget
@@ -329,7 +362,7 @@ function LaunchPage({
 			}
 			if (!workspace || !snapshot) throw new Error('project not loaded')
 			// A draft starts in place, with what's on screen, and keeps its column; a new task takes
-			// the column it was created from.
+			// the column it was created from, and the account picked for it.
 			await startTask(
 				api,
 				launchInput({
@@ -338,6 +371,8 @@ function LaunchPage({
 					snapshot: { ...snapshot, settings },
 					ticket,
 					status: mode === 'new' ? status : undefined,
+					githubAccount:
+						mode === 'new' ? { id: pickOf(account), explicit: accountPick !== null } : undefined,
 				}),
 			)
 			if (mode === 'new') {
@@ -455,12 +490,30 @@ function LaunchPage({
 				type="button"
 				ref={hostAnchor}
 				aria-label={`Host: ${host ? host.name : 'none'}`}
+				title={seedOffline ? offlineSeedCopy(seedOffline.name) : undefined}
 				onClick={() => setMenu('host')}
 			>
 				<HostIcon host={host} />
 				{host ? host.name : hostsReady ? 'No host' : 'Host'}
 				<ChevronDown className="i sm" />
 			</button>
+			{showAccount ? (
+				<button
+					type="button"
+					ref={accountAnchor}
+					aria-label={`GitHub account: ${githubAccountLabel(account)}`}
+					title={accountTitle(account)}
+					onClick={() => setMenu('account')}
+				>
+					{account.account === 'host' ? (
+						<House className="i sm" strokeWidth={1.6} />
+					) : (
+						<Avatar name={account.account.login} size={14} />
+					)}
+					{githubAccountLabel(account)}
+					<ChevronDown className="i sm" />
+				</button>
+			) : null}
 			{copy ? (
 				<span className="muted wc" title={copy.title}>
 					<WorkingCopyIcon branch={copy.branch} />
@@ -513,6 +566,9 @@ function LaunchPage({
 			)}
 			<div className="col">
 				{hostsReady && hosts.length === 0 ? <NoHostsNotice /> : null}
+				{seedOffline ? (
+					<OfflineWorkingHostNotice name={seedOffline.name} onPick={() => setMenu('host')} />
+				) : null}
 				<Composer
 					value={form.text}
 					onChange={form.setText}
@@ -563,6 +619,15 @@ function LaunchPage({
 					form.setHostId(id)
 					if (id !== host?.host.host_id) setPickedDirectory(null)
 				}}
+			/>
+			<GithubAccountMenu
+				anchor={accountAnchor}
+				open={menu === 'account'}
+				onClose={() => setMenu(null)}
+				value={pickOf(account)}
+				projectDefaultId={projectDefaultId}
+				hostName={host?.name}
+				onPick={(pick) => setAccountPick({ pick })}
 			/>
 			<DirectoryMenu
 				anchor={directoryAnchor}
@@ -713,6 +778,43 @@ function NoHostsNotice() {
 						}
 					>
 						Copy start command
+					</button>
+				</div>
+			</div>
+		</div>
+	)
+}
+
+/** Where the composer's account comes from, for its tooltip. */
+function accountTitle(account: ResolvedGithubAccount): string {
+	const who = account.account === 'host' ? "each host's own gh login" : account.account.login
+	switch (account.source) {
+		case 'task':
+			return `Pushes and opens PRs as ${who}`
+		case 'project':
+			return `Pushes and opens PRs as ${who}, the project's default`
+		case 'default':
+			return `Pushes and opens PRs as ${who}, your default`
+		case 'host':
+			return "Pushes and opens PRs as each host's own gh login"
+	}
+}
+
+function offlineSeedCopy(name: string) {
+	return `${name} is offline — pick a host for this launch`
+}
+
+/** The working host is offline. Say so and offer another host for this launch, without changing it. */
+function OfflineWorkingHostNotice({ name, onPick }: { name: string; onPick: () => void }) {
+	return (
+		<div className="notice" role="status">
+			<Server className="i sm" strokeWidth={1.6} />
+			<div className="body">
+				<b>{offlineSeedCopy(name)}</b>
+				<div className="d">Your working host stays {name}. The host you pick is used for this task only.</div>
+				<div className="acts">
+					<button type="button" className="btn" onClick={onPick}>
+						Pick a host
 					</button>
 				</div>
 			</div>

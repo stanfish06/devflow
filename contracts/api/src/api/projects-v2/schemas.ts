@@ -13,6 +13,11 @@ export const projectV2Schema = z.object({
 	archived: z.boolean(),
 	createdAt: z.number().int(),
 	updatedAt: z.number().int(),
+	/**
+	 * The caller's own hosts with an existing checkout of any of the project's repositories. Empty
+	 * when the caller only clones on demand, so the project can run on any host.
+	 */
+	checkoutHostIds: z.array(z.string()),
 })
 
 export const projectLocationV2Schema = z.object({
