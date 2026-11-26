@@ -9,6 +9,8 @@ import type { ISyncService } from '@/lib/sync-service'
 import logger from '@/logger'
 import type { ORPCClient } from '@/orpc/client'
 
+import { GRACEFUL_SHUTDOWN_TIMEOUT_MS } from './shutdown-deadline'
+
 const SHUTDOWN_NOTIFICATION_TIMEOUT_MS = 2_000
 
 const withTimeout = async (operation: Promise<unknown>, timeoutMs: number): Promise<void> => {
@@ -57,18 +59,25 @@ export const createGracefulShutdown = (options: ShutdownOptions) => {
 			}
 
 			await attempt('self_update', () => options.stopSelfUpdate?.())
-			// Close active and idle app-servers before disposing their VM leases and credential service.
-			await attempt('codex_app_servers', shutdownCodexAppServers)
-			await attempt('sessions', async () => {
-				await options.runtime.runPromise(
-					Effect.gen(function* () {
-						const claudeSessions = yield* ClaudeSessions
-						yield* claudeSessions.shutdownActiveClaudeSessions
-					}),
-				)
-				await shutdownAllSessions()
-				logger.info('Session shutdown complete')
-			})
+			// An opening VM also has a registered session completion. Bound both waits together
+			// so a stalled factory leaves time to notify the host and dispose the runtime.
+			await attempt('session_drain', () =>
+				withTimeout(
+					Promise.all([
+						attempt('codex_app_servers', shutdownCodexAppServers),
+						attempt('sessions', async () => {
+							await options.runtime.runPromise(
+								Effect.gen(function* () {
+									const claudeSessions = yield* ClaudeSessions
+									yield* claudeSessions.shutdownActiveClaudeSessions
+								}),
+							)
+							await shutdownAllSessions()
+						}),
+					]),
+					GRACEFUL_SHUTDOWN_TIMEOUT_MS / 2,
+				),
+			)
 			await attempt('subscriptions', options.stopSubscriptions)
 			await attempt('capture_sources', () => options.stopCaptureSources?.())
 			await attempt('sync_service', options.syncService.shutdown.bind(options.syncService))

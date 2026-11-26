@@ -115,10 +115,16 @@ describe('Codex session processes', () => {
 		const running = appServer()
 		const active = await registry.acquire('active', async () => running)
 		const cold = Promise.withResolvers<CodexSessionProcess>()
-		const opening = expect(registry.acquire('cold', () => cold.promise)).rejects.toBeInstanceOf(
-			CodexSessionClosedError,
-		)
+		const started = Promise.withResolvers<AbortSignal>()
+		const opening = expect(
+			registry.acquire('cold', (signal) => {
+				started.resolve(signal)
+				return cold.promise
+			}),
+		).rejects.toBeInstanceOf(CodexSessionClosedError)
+		const signal = await started.promise
 		const stopped = registry.shutdown()
+		expect(signal.aborted).toBe(true)
 		expect(active.wasCancelled()).toBe(true)
 		await expect(registry.acquire('late', async () => appServer())).rejects.toBeInstanceOf(CodexSessionClosedError)
 		const late = appServer()

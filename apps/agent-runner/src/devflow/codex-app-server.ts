@@ -349,7 +349,7 @@ async function prepareCodexWorkflow(
 	// Interrupt/resume can reuse the pre-invocation session snapshot. Read the persisted call on replies.
 	const handoff = Boolean(session.handoff_source_session_id)
 	const previous =
-		handoff || (continuing && !requested)
+		handoff || (continuing && (cold || !requested))
 			? await services.orpc.sessions.workflowSkill({
 					sessionId: session.id,
 					includeConversation: cold && continuing,
@@ -450,6 +450,7 @@ async function openCodexProcess(
 	sandbox: ReturnType<typeof sessionSandbox>,
 	workflow: Awaited<ReturnType<typeof prepareCodexWorkflow>>,
 	continuing: boolean,
+	signal: AbortSignal,
 ): Promise<CodexProcess> {
 	const { session, services } = ctx
 	const { orpc } = services
@@ -459,6 +460,7 @@ async function openCodexProcess(
 	let lease: VmLease | null = null
 	let client: AppServerClient
 	try {
+		signal.throwIfAborted()
 		if (inVm) {
 			// The dispatcher marks a launch as launching and a continuation as running.
 			const activeStatus = continuing ? 'running' : 'launching'
@@ -489,6 +491,7 @@ async function openCodexProcess(
 				throw new Error('The session stopped while its VM was starting')
 			}
 		}
+		signal.throwIfAborted()
 		client = new AppServerClient(
 			lease
 				? startVmAppServer(lease, cwd, github.githubEnv)
@@ -534,9 +537,10 @@ export async function executeCodexAppServer(
 	const prepareWorkflow = (cold: boolean) => prepareCodexWorkflow(ctx, cwd, prompt, continuing, cold)
 	let workflow: Awaited<ReturnType<typeof prepareWorkflow>> | undefined
 	const slot = await codexProcesses
-		.acquire(session.id, async () => {
+		.acquire(session.id, async (signal) => {
 			workflow = await prepareWorkflow(true)
-			return openCodexProcess(ctx, cwd, sandbox, workflow, continuing)
+			signal.throwIfAborted()
+			return openCodexProcess(ctx, cwd, sandbox, workflow, continuing, signal)
 		})
 		.catch((error: unknown) => {
 			if (error instanceof CodexSessionClosedError) return null

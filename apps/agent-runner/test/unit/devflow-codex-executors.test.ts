@@ -224,6 +224,7 @@ test('loads the bundled research skill, routes it to PRD and uploads the artifac
 })
 
 test.each([
+	{ skill: 'iterate-prd', labels: [], reply: '/rpi:iterate-prd Continue with the same choices.' },
 	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
 	{
 		skill: 'iterate-tdd',
@@ -238,7 +239,10 @@ test.each([
 			{ role: 'user', content: 'Only librarians can release a hold.' },
 			{ role: 'assistant', content: 'Should volunteers be able to see the queue?' },
 		]
-		const workflowSkill = vi.fn(async () => ({ skill, conversation: history }))
+		const workflowSkill = vi.fn(async () => ({
+			skill: reply.startsWith('/') ? 'create-prd' : skill,
+			conversation: history,
+		}))
 		const create = vi.fn(async () => ({}))
 		const ctx = {
 			session: {

@@ -10,6 +10,7 @@ export interface CodexSessionProcess {
 }
 
 interface ProcessEntry<T> {
+	opening: AbortController
 	resource: Promise<T>
 	turnEnd?: Promise<void>
 	activeTurn?: PromiseWithResolvers<void>
@@ -27,7 +28,7 @@ export class CodexSessionProcesses<T extends CodexSessionProcess> {
 
 	async acquire(
 		sessionId: string,
-		open: () => Promise<T>,
+		open: (signal: AbortSignal) => Promise<T>,
 	): Promise<{ process: T; wasCancelled(): boolean; release(retire?: boolean): Promise<void> }> {
 		for (;;) {
 			if (this.stopped) throw new CodexSessionClosedError('Codex session processes have shut down')
@@ -104,10 +105,15 @@ export class CodexSessionProcesses<T extends CodexSessionProcess> {
 			)
 	}
 
-	private start(id: string, open: () => Promise<T>): ProcessEntry<T> {
+	private start(id: string, open: (signal: AbortSignal) => Promise<T>): ProcessEntry<T> {
+		const opening = new AbortController()
 		const entry: ProcessEntry<T> = {
+			opening,
 			resource: Promise.resolve()
-				.then(open)
+				.then(() => {
+					opening.signal.throwIfAborted()
+					return open(opening.signal)
+				})
 				.then((process) => {
 					void process.whenExited().then(onExit, onExit)
 					return process
@@ -129,6 +135,7 @@ export class CodexSessionProcesses<T extends CodexSessionProcess> {
 	private force(id: string, entry: ProcessEntry<T>): Promise<void> {
 		const message = `Codex process for session ${id} was closed`
 		entry.forced ??= entry.cancelled || this.stopped ? new CodexSessionClosedError(message) : new Error(message)
+		entry.opening.abort(entry.forced)
 		entry.activeTurn?.resolve()
 		return this.close(id, entry)
 	}
