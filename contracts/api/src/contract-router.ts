@@ -238,6 +238,7 @@ import { upsertSessionPullRequestContract } from './daemon/sessions/pull-request
 import { reportSessionRepositoriesContract } from './daemon/sessions/repositories/report'
 import { updateSessionContract } from './daemon/sessions/update'
 import { recordSessionUsageContract } from './daemon/sessions/usage-record'
+import { workflowSkillContract } from './daemon/sessions/workflow-skill'
 import { daemonGetSettingsContract } from './daemon/settings/get'
 import { syncDaemonApprovalsContract } from './daemon/sync/approvals'
 import { syncDaemonArtifactsContract } from './daemon/sync/artifacts'
@@ -599,6 +600,7 @@ export const DaemonApiContract = {
 		},
 		update: updateSessionContract,
 		ensureStreamHydrated: ensureStreamHydratedContract,
+		workflowSkill: workflowSkillContract,
 	},
 	// Host-scoped commit ledger (sibling of sessions): the HEAD-watch records every
 	// observed commit already tagged with an attribution tier, and tracks a

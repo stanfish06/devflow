@@ -149,7 +149,24 @@ test('Codex runs through codex app-server', async ({ page }) => {
 	await expect.poll(() => worktreeFile('create-codex-e2e-txt', 'codex-e2e.txt')?.trim()).toBe('papaya')
 })
 
-test('Codex Large task advances from research questions through research to PRD', async ({ page }) => {
+type PrdSession = { id: string; labels: Array<{ name: string }> | null; provider: string; status: string }
+type PrdMessage = {
+	id: string
+	role: string
+	content: string | null
+	event_type: string
+	parent_tool_use_id: string | null
+	created_at: string
+}
+
+function syncRows<T>(resource: string, field: string, value: string): T[] {
+	const filter = JSON.stringify({ type: 'comparison', field: [field], operator: 'eq', value })
+	const output = devflowCli('api', 'sync', resource, '--where', filter)
+	return (JSON.parse(output.slice(output.indexOf('{'))) as { rows: T[] }).rows
+}
+
+test('Codex Large task reaches PRD and continues the interview after ordinary replies', async ({ page }) => {
+	test.setTimeout(16 * 60_000)
 	test.skip(!existsSync(join(homedir(), '.codex', 'auth.json')), 'No Codex CLI login (codex login)')
 	await openE2eProject(page)
 	const taskId = await startTask(page, {
@@ -161,11 +178,57 @@ test('Codex Large task advances from research questions through research to PRD'
 	await expect(page.getByText(/^research-questions:/).first()).toBeVisible()
 	await expect(page.getByText(/^research:/).first()).toBeVisible({ timeout: 240_000 })
 	await expect(page.getByText(/^design-prd:/).first()).toBeVisible({ timeout: 240_000 })
-	// PRD drafting pauses for the user's first answer after writing the skeleton.
-	const artifactDir = join(homedir(), '.devflow', 'artifacts', taskId)
-	await expect
-		.poll(() => readdirSync(artifactDir).some((name) => /^\d+-prd-.*\.md$/.test(name)), { timeout: 120_000 })
-		.toBe(true)
+	const prdSession = syncRows<PrdSession>('sessions', 'task_id', taskId).find(
+		(session) => session.provider === 'codex' && session.labels?.some((label) => label.name === 'rpi:design-prd'),
+	)
+	if (!prdSession) throw new Error(`No Codex PRD session for task ${taskId}`)
+	const sessionId = prdSession.id
+	await page.goto(`/tasks/${taskId}?session=${sessionId}`)
+
+	const messages = () =>
+		syncRows<PrdMessage>('conversation-events', 'session_id', sessionId)
+			.filter((event) => event.event_type === 'message' && !event.parent_tool_use_id)
+			.sort((a, b) => Number(a.created_at) - Number(b.created_at) || a.id.localeCompare(b.id))
+
+	// The API commits the submitted answer with the resume command. Wait for that write before
+	// checking readiness, then read the final reply after all commentary has been persisted.
+	async function expectInterviewQuestion(answer?: string) {
+		const timing = { timeout: 180_000, intervals: [1_000, 3_000] }
+		if (answer) {
+			await expect
+				.poll(() => messages().findLast((message) => message.role === 'user')?.content, timing)
+				.toBe(answer)
+		}
+		await expect
+			.poll(() => syncRows<PrdSession>('sessions', 'id', sessionId)[0]?.status, timing)
+			.toBe('ready_for_input')
+		await expect
+			.poll(() => messages().at(-1), timing)
+			.toMatchObject({ role: 'assistant', content: expect.stringMatching(/^[^?]*\?[^?]*$/s) })
+	}
+
+	await expectInterviewQuestion()
+	for (const [answer, decision] of [
+		[
+			'Yes. The main problem is that first-time contributors cannot find the triage checklist.',
+			/triage checklist/i,
+		],
+		[
+			'Success means 90% of new contributors can find that checklist within five minutes without help.',
+			/90\s*(?:%|percent)|ninety percent/i,
+		],
+	] as const) {
+		await sendFollowUp(page, answer)
+		await expectInterviewQuestion(answer)
+		await expect
+			.poll(
+				() =>
+					syncRows<{ file_name: string; content: string }>('artifacts', 'task_id', taskId).find((artifact) =>
+						/^\d+-prd-.*\.md$/.test(artifact.file_name),
+					)?.content,
+			)
+			.toMatch(decision)
+	}
 	await archiveTask(page, taskId)
 })
 

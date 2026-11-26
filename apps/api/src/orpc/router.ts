@@ -236,6 +236,7 @@ import { upsertSessionPullRequestProcedure } from './daemon/sessions/pull-reques
 import { reportSessionRepositoriesProcedure } from './daemon/sessions/repositories/report.effect'
 import { updateSessionProcedure } from './daemon/sessions/update'
 import { recordSessionUsageEffectProcedure } from './daemon/sessions/usage/record.effect'
+import { workflowSkillProcedure } from './daemon/sessions/workflow-skill'
 import { daemonGetSettingsEffectProcedure } from './daemon/settings/get.effect'
 import { syncDaemonApprovalsProcedure } from './daemon/sync/approvals'
 import { syncDaemonArtifactsProcedure } from './daemon/sync/artifacts'
@@ -601,6 +602,7 @@ export const daemonRouter = daemonBase.router({
 		},
 		update: updateSessionProcedure,
 		ensureStreamHydrated: ensureStreamHydratedProcedure,
+		workflowSkill: workflowSkillProcedure,
 	},
 	commits: {
 		recordObserved: recordObservedCommitsProcedure,
