@@ -1,4 +1,3 @@
-import { isEffortSupported, isFastModeSupported } from '@devflow/ai/config'
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { sessions } from '@devflow/db/tables/sessions'
 import { taskWorkspaceSetupForHost } from '@devflow/db/tables/task-workspace-setup-for-host'
@@ -6,6 +5,7 @@ import { tasks } from '@devflow/db/tables/tasks'
 import { ORPCError } from '@orpc/server'
 import { and, eq } from 'drizzle-orm'
 
+import { checkHostModelSettings } from '../../../db/check-host-model-settings'
 import { createSessionForLaunch } from '../../../db/create-session-for-launch'
 import { getTxId } from '../../../db/get-tx-id'
 import { validateHostOwnership } from '../../../db/host-auth'
@@ -53,22 +53,23 @@ export const launchSessionProcedure = apiBaseOrgRequired.sessions.launch.handler
 	// (it only writes rows whose title IS NULL). Same rule as sessions.v2.create.
 	const title = requestedTitle?.trim() ? requestedTitle : null
 
-	if (!isEffortSupported(codingAgent, provider, model, effort)) {
-		throw new ORPCError('BAD_REQUEST', {
-			message: `effort=${effort} not supported for ${codingAgent}/${provider}/${model}`,
-		})
-	}
-	if (!isFastModeSupported(codingAgent, provider, model, fastMode)) {
-		throw new ORPCError('BAD_REQUEST', {
-			message: `fastMode not supported for ${codingAgent}/${provider}/${model}`,
-		})
-	}
 	const organizationId = context.auth.organizationId
 	const { services } = context
 	const { db } = services
 
 	try {
 		const txResult = await db.transaction(async (tx) => {
+			const modelSettings = await checkHostModelSettings(tx, context.auth, input)
+			if (!modelSettings.effortSupported) {
+				throw new ORPCError('BAD_REQUEST', {
+					message: `effort=${effort} not supported for ${codingAgent}/${provider}/${model}`,
+				})
+			}
+			if (!modelSettings.fastModeSupported) {
+				throw new ORPCError('BAD_REQUEST', {
+					message: `fastMode not supported for ${codingAgent}/${provider}/${model}`,
+				})
+			}
 			let result: typeof sessions.$inferSelect | undefined
 			let forceTaskUserWorkingDirectoryUpdate = false
 

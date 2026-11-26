@@ -153,7 +153,7 @@ describe('Codex conversation events', () => {
 				// A taskless first prompt still needs the workflow plugin mounted for future turns.
 				expect(acquire).toHaveBeenCalledWith(
 					expect.objectContaining({
-						readOnlyPaths: [expect.stringMatching(/workflow-skills$/)],
+						workflowPluginPath: expect.stringMatching(/workflow-skills$/),
 					}),
 				)
 				expect(run).toHaveBeenCalledOnce()
@@ -232,6 +232,7 @@ test('loads the bundled research skill, routes it to PRD and uploads the artifac
 test.each([
 	{ skill: 'iterate-prd', labels: [], reply: '/rpi:iterate-prd Continue with the same choices.' },
 	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
+	{ skill: 'create-tdd', labels: [], reply: 'Use separate processes.' },
 	{
 		skill: 'iterate-tdd',
 		labels: [{ name: 'rpi:design-tdd', title: 'design' }],
@@ -279,6 +280,17 @@ test.each([
 		const input = requests.find((row) => row.method === 'turn/start').params.input
 		expect(input).toHaveLength(2)
 		expect(input[0].text).toContain(`skills/${skill}/SKILL.md`)
+		const phase = skill.endsWith('-prd') ? 'prd' : 'tdd'
+		const template = readFileSync(
+			new URL(
+				`../../../workflow-skills/skills/${skill}/references/${phase}_final_answer_resolved.md`,
+				import.meta.url,
+			),
+			'utf8',
+		)
+		expect(input[0].text).toContain(template)
+		if (phase === 'prd') expect(input[0].text).toContain('status: approved')
+		else expect(input[0].text).not.toContain('status: approved')
 		expect(input[0].text).toContain(JSON.stringify(history))
 		expect(input[1].text).toBe(reply)
 		expect(create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message', role: 'user' }))
@@ -308,6 +320,7 @@ test.each(['iterate-prd', null])('keeps the task and choices across a handoff wi
 		const ctx = {
 			session: {
 				id: 'receiver',
+				effort: 'ultra',
 				provider: 'codex',
 				task_id: task.id,
 				handoff_source_session_id: 'source',
@@ -349,6 +362,7 @@ test.each(['iterate-prd', null])('keeps the task and choices across a handoff wi
 			true,
 		])
 		expect(turns).toHaveLength(4)
+		expect(turns.map((rpc) => rpc.params.effort)).toEqual(Array(4).fill('ultra'))
 		expect(turns.slice(0, 3).map((rpc) => rpc.pid)).toEqual(Array(3).fill(turns[0].pid))
 		expect(turns[3].pid).not.toBe(turns[0].pid)
 		expect(requests.filter((rpc) => rpc.method === 'thread/start')).toHaveLength(1)

@@ -16,6 +16,7 @@ import { canWriteTaskForSession } from '../../../db/task-auth'
 import { buildAttributedPrompt } from '../../../lib/session-prompt-attribution'
 import logger from '../../../logger'
 import { daemonBase } from '../../base'
+import { advanceApprovedCodexPrd } from './advance-approved-codex-prd'
 import { checkAutoAdvance } from './check-auto-advance'
 import { mergeModelUsage } from './merge-model-usage'
 
@@ -57,6 +58,7 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 					host_id: sessions.host_id,
 					provider: sessions.provider,
 					coding_agent: sessions.coding_agent,
+					isPrdSession: sql<boolean>`(${sessions.labels} #>> '{}')::jsonb @> '[{"name":"rpi:design-prd"}]'::jsonb`,
 					total_cost_usd: sessions.total_cost_usd,
 					model_usage: sessions.model_usage,
 					applied_usage_report_keys: sessions.applied_usage_report_keys,
@@ -381,13 +383,19 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 				success: true,
 				txid,
 				conversationEventsResult,
+				readyForInput: updateFields.status === 'ready_for_input',
 				session,
 				firstTaskCompletedAt,
 			}
 		})
 
 		// Fire-and-forget AI extractions AFTER transaction completes
-		if (input.status === 'ready_for_input' && txResult.conversationEventsResult.length > 0) {
+		const { session } = txResult
+		const advancedPrd =
+			txResult.readyForInput && session.provider === 'codex' && session.isPrdSession && session.task_id
+				? await advanceApprovedCodexPrd(db, organizationId, session.task_id, session.id)
+				: false
+		if (!advancedPrd && input.status === 'ready_for_input' && txResult.conversationEventsResult.length > 0) {
 			// Chain extraction → auto-advance (extraction must complete first so auto-advance
 			// can read next_step_suggestions for artifact-less transitions)
 			void runExtractionThenAutoAdvanceAsync(

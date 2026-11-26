@@ -332,6 +332,22 @@ function requestedRpiSkill(prompt: string): string | undefined {
 	return (match?.[1] ?? match?.[2])?.toLowerCase()
 }
 
+/** Deliver handoff templates with the turn so an existing VM can use them even if its plugin mount is stale. */
+async function loadCodexCompletionTemplates(base: string, skill: string): Promise<string> {
+	const references = new Set(skill.match(/\{SKILLBASE\}\/references\/[\w-]+_final_answer[\w-]*\.md\b/g))
+	if (references.size === 0) return ''
+	const templates = await Promise.all(
+		Array.from(references, async (reference) => {
+			const path = reference.replace('{SKILLBASE}', () => base)
+			return `${path}\n${await readFile(path, 'utf8')}`
+		}),
+	)
+	return [
+		'Devflow has loaded the following final answer templates for this skill. When its completion criteria are met, use the copy below selected by the skill and workflow routing.',
+		...templates,
+	].join('\n\n')
+}
+
 async function prepareCodexWorkflow(
 	ctx: SessionContext,
 	cwd: string,
@@ -393,6 +409,9 @@ async function prepareCodexWorkflow(
 		const instructions = [
 			`Devflow loaded ${name} from ${path}. Follow its instructions using your available tools. Where a named research agent is unavailable, perform its research with your own tools.`,
 			contents.replaceAll('{SKILLBASE}', () => base),
+			await loadCodexCompletionTemplates(base, contents),
+			(skillName === 'create-prd' || skillName === 'iterate-prd') &&
+				"Keep status: draft in the PRD's YAML frontmatter while drafting or revising it. An answer to an interview question or approval of an individual section continues the interview. Only when the user explicitly approves the whole PRD, save status: approved in its frontmatter, then return the skill's final answer template. Devflow starts the TDD in a new session.",
 			!requested &&
 				previous?.skill &&
 				[
@@ -475,10 +494,9 @@ async function openCodexProcess(
 						...taskWorkspaceMounts(cwd),
 						codexHome(),
 						...githubCredentialMounts(github.githubEnv),
-						pluginPath,
 						workflow.artifacts?.storagePath,
 					],
-					readOnlyPaths: [pluginPath],
+					workflowPluginPath: pluginPath,
 				}),
 				// Only while still launching: a stop request must not be overwritten.
 				() =>
@@ -780,8 +798,6 @@ export async function executeCodexAppServer(
 				toolResultContent: `Loaded ${path}`,
 			})
 		}
-		const effort =
-			session.effort && ['low', 'medium', 'high', 'xhigh'].includes(session.effort) ? session.effort : null
 		const started = (await client.request('turn/start', {
 			threadId,
 			input: turnInput,
@@ -795,7 +811,7 @@ export async function executeCodexAppServer(
 							writableRoots: workflow.artifacts ? [cwd, workflow.artifacts.storagePath] : [cwd],
 							networkAccess: true,
 						},
-			...(effort ? { effort } : {}),
+			effort: session.effort || undefined,
 		})) as { turn: { id: string } }
 		currentTurnId = started.turn.id
 		logger.info({ sessionId: session.id, threadId, turnId: currentTurnId }, 'Codex app-server turn started')

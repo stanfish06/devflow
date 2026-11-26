@@ -1,4 +1,3 @@
-import { isEffortSupported, isFastModeSupported } from '@devflow/ai/config'
 import { approvals } from '@devflow/db/tables/approvals'
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { pullRequestSessions } from '@devflow/db/tables/pull-request-sessions'
@@ -9,6 +8,7 @@ import { tasks } from '@devflow/db/tables/tasks'
 import { ORPCError } from '@orpc/server'
 import { and, count, eq, inArray } from 'drizzle-orm'
 
+import { checkHostModelSettings } from '../../../db/check-host-model-settings'
 import { getTxId } from '../../../db/get-tx-id'
 import { validateHostOwnership } from '../../../db/host-auth'
 import { ACTIVE_SESSION_STATUSES } from '../../../db/session-statuses'
@@ -155,23 +155,33 @@ export const updateSessionApiProcedure = apiBaseOrgRequired.sessions.update.hand
 				const effectiveCodingAgent = input.codingAgent ?? session.coding_agent
 				const effectiveProvider = input.provider ?? session.provider
 				const effectiveModel = input.model ?? session.model
-				if (input.effort !== undefined) {
-					if (!isEffortSupported(effectiveCodingAgent, effectiveProvider, effectiveModel, input.effort)) {
-						throw errors.BAD_REQUEST({
-							data: {
-								message: `effort=${input.effort} not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
-							},
-						})
-					}
+				const modelSettings = await checkHostModelSettings(
+					tx,
+					{
+						organizationId: context.auth.organizationId,
+						userId: input.hostId ? context.auth.userId : session.created_by,
+					},
+					{
+						...input,
+						hostId: input.hostId === undefined ? session.host_id : input.hostId,
+						codingAgent: effectiveCodingAgent,
+						provider: effectiveProvider,
+						model: effectiveModel,
+					},
+				)
+				if (!modelSettings.effortSupported) {
+					throw errors.BAD_REQUEST({
+						data: {
+							message: `effort=${input.effort} not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
+						},
+					})
 				}
-				if (input.fastMode !== undefined) {
-					if (!isFastModeSupported(effectiveCodingAgent, effectiveProvider, effectiveModel, input.fastMode)) {
-						throw errors.BAD_REQUEST({
-							data: {
-								message: `fastMode not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
-							},
-						})
-					}
+				if (!modelSettings.fastModeSupported) {
+					throw errors.BAD_REQUEST({
+						data: {
+							message: `fastMode not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
+						},
+					})
 				}
 
 				// Build update object with only provided fields

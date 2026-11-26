@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 
+import { artifacts } from '@devflow/db/tables/artifacts'
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { organizations } from '@devflow/db/tables/organizations'
 import { queuedMessages } from '@devflow/db/tables/queued-messages'
@@ -14,6 +15,7 @@ import { uuidv7 } from 'uuidv7'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import logger from '../../src/logger'
+import { upsertArtifactProcedure } from '../../src/orpc/daemon/artifacts/upsert'
 import { updateSessionProcedure } from '../../src/orpc/daemon/sessions/update'
 import { createMockDaemonAuth, createMockDaemonContext } from '../mocks'
 import { createRuntimeWithTestPostgresLayer } from '../utils/effect-procedure-test-runtime'
@@ -78,6 +80,113 @@ describe('daemon/sessions/update context window limit', async () => {
 				dbReadReplica: db,
 			},
 		}),
+	})
+
+	test('starts one fresh TDD session after Codex syncs an approved PRD and reports ready', async () => {
+		const [task] = await db
+			.insert(tasks)
+			.values({
+				organization_id: organizationId,
+				resource_owner_user_id: userId,
+				created_by: userId,
+				name: 'Stage boundary',
+				slug: 'stage-boundary',
+				workflow_type: 'prd_tdd',
+				default_working_directory: tmpdir(),
+			})
+			.returning()
+		if (!task) throw new Error('Unable to create task')
+		const source = await createSession({
+			task_id: task.id,
+			coding_agent: 'codelayer',
+			provider: 'codex',
+			model: 'gpt-5.6-sol',
+			effort: 'high',
+			permissions_mode: 'bypass',
+			working_directory: '/worktrees/my-task',
+			coding_agent_session_id: randomUUID(),
+			labels: [{ name: 'rpi:design-prd', title: 'design-prd' }],
+		})
+		const context = createDaemonContext()
+		const syncPrd = (status: string) =>
+			call(
+				upsertArtifactProcedure,
+				{
+					taskId: task.id,
+					sessionId: source.id,
+					fileName: '03-prd.md',
+					content: `---\ntype: design-prd\nstatus: ${status}\n---\n# Requirements`,
+					frontmatter: { type: 'design-prd', status },
+					operationType: 'Edit',
+					operationContents: { file_path: '03-prd.md' },
+				},
+				context,
+			)
+		const ready = () => call(updateSessionProcedure, { sessionId: source.id, status: 'ready_for_input' }, context)
+		const siblings = () =>
+			db.select().from(sessions).where(eq(sessions.task_id, task.id)).orderBy(asc(sessions.created_at))
+		await syncPrd('draft')
+		await ready()
+		expect(await siblings()).toHaveLength(1)
+
+		// The user archived an earlier attempt before this approval.
+		await createSession({
+			task_id: task.id,
+			archived: true,
+			labels: [{ name: 'rpi:design-tdd', title: 'design-tdd' }],
+		})
+		await call(updateSessionProcedure, { sessionId: source.id, status: 'running' }, context)
+		const message = {
+			session_id: source.id,
+			organization_id: organizationId,
+			resource_owner_user_id: userId,
+			task_id: task.id,
+			event_type: 'message' as const,
+		}
+		await db.insert(conversationEvents).values({ ...message, role: 'user', content: 'I approve the PRD' })
+		const approved = await syncPrd('approved')
+		await db.update(artifacts).set({ share_enabled: true }).where(eq(artifacts.id, approved.artifactId))
+		const [reply] = await db
+			.insert(conversationEvents)
+			.values({ ...message, role: 'assistant', content: 'The PRD is approved and ready for technical design.' })
+			.returning()
+		if (!reply) throw new Error('Unable to create approval reply')
+		await Promise.all([ready(), ready()])
+		const stages = (await siblings()).filter((stage) => !stage.archived)
+		expect(stages).toHaveLength(2)
+		expect(stages[1]).toMatchObject({
+			task_id: task.id,
+			host_id: source.host_id,
+			working_directory: source.working_directory,
+			provider: 'codex',
+			coding_agent: 'codelayer',
+			model: source.model,
+			permissions_mode: 'bypass',
+			effort: 'high',
+			status: 'ready_for_launch',
+			coding_agent_session_id: null,
+			handoff_source_session_id: null,
+			prompt: 'use the rpi:create-tdd skill for .devflow/tasks/stage-boundary',
+		})
+		const [updatedReply] = await db.select().from(conversationEvents).where(eq(conversationEvents.id, reply.id))
+		const suggestion = updatedReply?.next_step_suggestion
+		expect(typeof suggestion === 'string' ? JSON.parse(suggestion) : suggestion).toMatchObject({
+			extraction: { nextStepType: 'create-tdd' },
+		})
+		const suggestions = stages[0]?.next_step_suggestions
+		expect(typeof suggestions === 'string' ? JSON.parse(suggestions) : suggestions).toMatchObject([
+			{ extraction: { nextStepType: 'create-tdd' } },
+		])
+
+		// A later PRD session can revisit the same task with the earlier approved document still present.
+		const revision = await createSession({
+			task_id: task.id,
+			coding_agent: 'codelayer',
+			provider: 'codex',
+			labels: [{ name: 'rpi:design-prd', title: 'design-prd' }],
+		})
+		await call(updateSessionProcedure, { sessionId: revision.id, status: 'ready_for_input' }, context)
+		expect((await siblings()).filter((stage) => !stage.archived)).toHaveLength(3)
 	})
 
 	test('persists explicit runtime context window limit as-is', async () => {

@@ -1,9 +1,9 @@
-import { isEffortSupported, isFastModeSupported } from '@devflow/ai/config'
 import { tasks } from '@devflow/db/tables/tasks'
 import { and, eq, or, sql } from 'drizzle-orm'
 import { Effect } from 'effect'
 import { uuidv7 } from 'uuidv7'
 
+import { checkHostModelSettings } from '../../db/check-host-model-settings'
 import { createSessionForLaunch } from '../../db/create-session-for-launch'
 import { getTaskWithEffectivePermissions } from '../../db/task-auth'
 import { lockActiveTaskSlugAllocation } from '../../db/task-slug-allocation'
@@ -20,17 +20,6 @@ const AUTOMATION_PREPARATION_LOCK_WAIT_MS = 5_000
 
 export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.automation.run.prepare.effect(
 	function* ({ input, context, errors }) {
-		if (!isEffortSupported(input.codingAgent, input.provider, input.model, input.effort)) {
-			return yield* Effect.fail(
-				errors.BAD_REQUEST({ data: { message: 'The selected effort is not supported by this model' } }),
-			)
-		}
-		if (!isFastModeSupported(input.codingAgent, input.provider, input.model, input.fastMode)) {
-			return yield* Effect.fail(
-				errors.BAD_REQUEST({ data: { message: 'Fast mode is not supported by this model' } }),
-			)
-		}
-
 		const postgres = yield* PostgresDb
 		const { organizationId, userId } = context.auth
 		const now = BigInt(yield* Effect.clockWith((clock) => clock.currentTimeMillis))
@@ -44,6 +33,19 @@ export const automationRunPrepareProcedure = effectOrpcBaseOrganizationRequired.
 		const prepared = yield* postgres
 			.transaction((tx) =>
 				Effect.gen(function* () {
+					const modelSettings = yield* tx.run(() => checkHostModelSettings(tx.client, context.auth, input))
+					if (!modelSettings.effortSupported) {
+						return yield* Effect.fail(
+							errors.BAD_REQUEST({
+								data: { message: 'The selected effort is not supported by this model' },
+							}),
+						)
+					}
+					if (!modelSettings.fastModeSupported) {
+						return yield* Effect.fail(
+							errors.BAD_REQUEST({ data: { message: 'Fast mode is not supported by this model' } }),
+						)
+					}
 					let task: typeof tasks.$inferSelect
 
 					if (input.taskMode === 'ensure') {

@@ -383,11 +383,11 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 							taskId: session.task_id,
 							paths: sandboxMountPaths({
 								cwd,
-								mountPaths: [...additionalDirectories, rpiPluginPath],
+								mountPaths: additionalDirectories,
 								githubEnv,
 							}),
 							// The plugin is loaded by later sessions too, on the host as well.
-							readOnlyPaths: [rpiPluginPath],
+							workflowPluginPath: rpiPluginPath,
 						},
 						// Only while still launching: a stop request must not be overwritten.
 						() =>
