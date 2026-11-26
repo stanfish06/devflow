@@ -74,7 +74,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', (l
 	const send = (message) => console.log(JSON.stringify(message))
 	if (method === 'turn/start') {
 		send({ id, result: { turn: { id: 'turn' } } })
-		send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: params.input[0].text } } })
+		send({ method: 'item/completed', params: { item: { type: 'agentMessage', text: params.input.at(-1).text } } })
 		send({ method: 'turn/completed', params: { turn: { status: 'completed' } } })
 	} else {
 		send({ id, result: { thread: { id: 'thread' } } })
@@ -124,7 +124,13 @@ describe('Codex conversation events', () => {
 				},
 				services: {
 					daemonRuntime: { runPromise: vi.fn().mockResolvedValue(null) },
-					orpc: { sessions: { update: vi.fn(), events: { create } } },
+					orpc: {
+						sessions: {
+							update: vi.fn(),
+							workflowSkill: vi.fn(async () => ({ skill: null, conversation: [] })),
+							events: { create },
+						},
+					},
 					collections: {
 						sessions: { get: () => ({ status }), subscribeChanges: () => ({ unsubscribe: vi.fn() }) },
 					},
@@ -201,9 +207,64 @@ test('loads the bundled research skill, routes it to PRD and uploads the artifac
 		const settings = requests.find((request) => request.method === 'thread/start').params
 		expect(settings.config.sandbox_workspace_write.writable_roots).toEqual([join(dir, '.devflow/artifacts/task')])
 		const input = requests.find((request) => request.method === 'turn/start').params.input
-		expect(input[0].text).toBe(prompt)
-		expect(input[1].text).toContain('skills/create-research/references/research_template.md')
-		expect(input[1].text).toContain('suggest /rpi:create-prd')
+		expect(input.at(-1).text).toBe(prompt)
+		expect(input[0].text).toContain('skills/create-research/references/research_template.md')
+		expect(input[0].text).toContain('suggest /rpi:create-prd')
+	} finally {
+		vi.unstubAllEnvs()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test.each([
+	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
+	{
+		skill: 'iterate-tdd',
+		labels: [{ name: 'rpi:design-tdd', title: 'design' }],
+		reply: 'Proceed with the second option.',
+	},
+])('reactivates $skill with the prior decision on a plain-text reply', async ({ skill, labels, reply }) => {
+	const dir = mkdtempSync(join(tmpdir(), 'devflow-codex-followup-'))
+	try {
+		installTestAppServer(dir)
+		const history = [
+			{ role: 'user', content: 'Only librarians can release a hold.' },
+			{ role: 'assistant', content: 'Should volunteers be able to see the queue?' },
+		]
+		const workflowSkill = vi.fn(async () => ({ skill, conversation: history }))
+		const create = vi.fn(async () => ({}))
+		const ctx = {
+			session: {
+				id: 'session',
+				provider: 'codex',
+				working_directory: dir,
+				coding_agent_session_id: 'thread',
+				labels,
+				prompt: reply,
+			},
+			interruptState: await createInterruptState(),
+			services: {
+				daemonRuntime: { runPromise: vi.fn().mockResolvedValue(null) },
+				orpc: { sessions: { update: vi.fn(), workflowSkill, events: { create } } },
+				collections: { sessions: { subscribeChanges: () => ({ unsubscribe: vi.fn() }) } },
+			},
+		} as unknown as SessionContext
+		await executeCodelayerSlot(ctx, 'session')
+		expect(workflowSkill).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session' })
+		expect(create).toHaveBeenCalledWith(
+			expect.objectContaining({ toolName: 'Skill', toolInputJson: { skill: `rpi:${skill}` } }),
+		)
+		const requests = readFileSync(join(dir, 'requests.jsonl'), 'utf8')
+			.trim()
+			.split('\n')
+			.map((line) => JSON.parse(line))
+		expect(requests.find((row) => row.method === 'thread/resume').params.threadId).toBe('thread')
+		const input = requests.find((row) => row.method === 'turn/start').params.input
+		expect(input).toHaveLength(2)
+		expect(input[0].text).toContain(`skills/${skill}/SKILL.md`)
+		expect(input[0].text).toContain(JSON.stringify(history))
+		expect(input[1].text).toBe(reply)
+		expect(create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message', role: 'user' }))
 	} finally {
 		vi.unstubAllEnvs()
 		rmSync(dir, { recursive: true, force: true })

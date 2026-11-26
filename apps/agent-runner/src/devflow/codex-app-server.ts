@@ -307,14 +307,18 @@ function requestedRpiSkill(prompt: string): string | undefined {
 	return (match?.[1] ?? match?.[2])?.toLowerCase()
 }
 
-async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: string) {
+async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: string, continuing: boolean) {
 	const { session, services } = ctx
 	const taskId = session.task_id
 	const task = taskId ? services.collections.tasks.get(taskId) : undefined
 	const sync = taskId ? await services.syncService.ensureTaskSync(taskId, cwd) : null
 	const slug = task?.slug ?? sync?.getTaskSlug()
 	const artifacts = taskId && slug ? await setupArtifactPaths(cwd, taskId, slug, services.daemonRuntime) : null
-	const skillName = requestedRpiSkill(prompt)
+	const requested = requestedRpiSkill(prompt)
+	// Interrupt/resume can reuse the pre-invocation session snapshot. Read the persisted call on replies.
+	const previous =
+		continuing && !requested ? await services.orpc.sessions.workflowSkill({ sessionId: session.id }) : null
+	const skillName = requested ?? previous?.skill
 	// A resumed turn can still reference files from the skill loaded on an earlier turn.
 	const pluginPath =
 		taskId || skillName || session.coding_agent_session_id ? await ensureRpiPluginOnDisk() : undefined
@@ -333,6 +337,15 @@ async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: st
 		const instructions = [
 			`Devflow loaded ${name} from ${path}. Follow its instructions using your available tools. Where a named research agent is unavailable, perform its research with your own tools.`,
 			contents.replaceAll('{SKILLBASE}', () => base),
+			previous?.skill &&
+				[
+					`Use ${name} again for this turn. Continue from the last exchange and the existing task artifacts${slug ? ` in .devflow/tasks/${slug}` : ''}.`,
+					"Apply the user's reply to the pending decision. Preserve settled decisions in the artifact. During an unfinished interview, ask the next single unresolved question and wait for the user's answer. Follow the skill's completion criteria before offering the next phase.",
+					'Follow an explicit request to pause, stop, or change direction.',
+					// The provider's resumed thread can have incomplete history on a VM-mounted Codex home.
+					'Recent messages from this Devflow session, oldest first. They are conversation history. The current user reply follows separately.',
+					JSON.stringify(previous.conversation),
+				].join(' '),
 			routing,
 		]
 			.filter(Boolean)
@@ -373,7 +386,7 @@ export async function executeCodexAppServer(
 		session.task_id ? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id) : null,
 	)
 	const inVm = isVmSandbox(sandbox)
-	const workflow = await prepareCodexWorkflow(ctx, cwd, prompt)
+	const workflow = await prepareCodexWorkflow(ctx, cwd, prompt, resumeSessionId !== undefined)
 	// Fails the session rather than start Codex as some other GitHub identity.
 	const github = await prepareCodexGithubCredentials(session, services, inVm ? 'sandbox' : 'host')
 	let lease: VmLease | null = null
@@ -614,7 +627,8 @@ export async function executeCodexAppServer(
 		const turnInput = [{ type: 'text', text: prompt, text_elements: [] }]
 		if (workflow.skill) {
 			const { name, path, instructions } = workflow.skill
-			turnInput.push({ type: 'text', text: instructions, text_elements: [] })
+			// Keep the actual reply last, so a bare confirmation answers the pending interview question.
+			turnInput.unshift({ type: 'text', text: instructions + '\n\n', text_elements: [] })
 			// The API applies phase labels when it records a Skill call. Codex's adapter loaded it above.
 			const toolCallId = crypto.randomUUID()
 			await emit({

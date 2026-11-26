@@ -351,6 +351,7 @@ describe('handleLaunchSession', () => {
 			const mockOrpc = {
 				sessions: {
 					update: mockSessionsUpdate,
+					workflowSkill: vi.fn(async () => ({ skill: null, conversation: [] })),
 					ensureStreamHydrated: vi.fn(async () => ({ sessionId: 'mock', status: 'exists' as const })),
 					events: { create: mockSessionsEventsCreate },
 					commits: { record: vi.fn(async () => ({ recorded: 0 })) },
@@ -639,6 +640,7 @@ describe('handleContinueSession', () => {
 			const mockOrpc = {
 				sessions: {
 					update: mockSessionsUpdate,
+					workflowSkill: vi.fn(async () => ({ skill: null, conversation: [] })),
 					ensureStreamHydrated: vi.fn(async () => ({ sessionId: 'mock', status: 'exists' as const })),
 					events: { create: mockSessionsEventsCreate },
 					commits: { record: vi.fn(async () => ({ recorded: 0 })) },

@@ -44,6 +44,7 @@ export function createMockORPCClient(overrides?: DeepPartial<ORPCClient>): ORPCC
 		},
 		sessions: {
 			update: notImplemented('sessions.update'),
+			workflowSkill: notImplemented('sessions.workflowSkill'),
 			ensureStreamHydrated: notImplemented('sessions.ensureStreamHydrated'),
 			events: {
 				create: notImplemented('sessions.events.create'),
