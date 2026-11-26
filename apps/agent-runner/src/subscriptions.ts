@@ -165,6 +165,19 @@ export const processSessionChange = (
 			yield* services.automationLifecycle.recordSessionActivity(session.status)
 		}
 		lifecycle.reconcileSessionChanges([change])
+		const previous = change.previousValue
+		if (
+			change.type === 'update' &&
+			previous?.coding_agent === 'codelayer' &&
+			(previous.task_id !== session.task_id ||
+				previous.resource_owner_user_id !== session.resource_owner_user_id ||
+				previous.working_directory !== session.working_directory ||
+				previous.coding_agent !== session.coding_agent ||
+				previous.provider !== session.provider)
+		) {
+			// A move may arrive mid-turn. Queue new deliveries behind the retirement of its old VM and credentials.
+			retireCodexAppServer(session.id)
+		}
 		if (
 			session.coding_agent === 'codelayer' &&
 			(change.type === 'delete' || session.archived || session.status === 'failed' || session.status === 'lost')

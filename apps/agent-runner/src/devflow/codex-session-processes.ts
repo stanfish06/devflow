@@ -10,6 +10,7 @@ export interface CodexSessionProcess {
 }
 
 interface ProcessEntry<T> {
+	scope: string
 	opening: AbortController
 	resource: Promise<T>
 	turnEnd?: Promise<void>
@@ -29,14 +30,19 @@ export class CodexSessionProcesses<T extends CodexSessionProcess> {
 	async acquire(
 		sessionId: string,
 		open: (signal: AbortSignal) => Promise<T>,
+		scope = '',
 	): Promise<{ process: T; wasCancelled(): boolean; release(retire?: boolean): Promise<void> }> {
 		for (;;) {
 			if (this.stopped) throw new CodexSessionClosedError('Codex session processes have shut down')
-			const entry = this.entries.get(sessionId) ?? this.start(sessionId, open)
+			const entry = this.entries.get(sessionId) ?? this.start(sessionId, open, scope)
 			if (entry.retiring) {
 				if (entry.forced) throw entry.forced
 				await entry.closed.promise
 				if (entry.forced) throw entry.forced
+				continue
+			}
+			if (entry.scope !== scope) {
+				await this.retire(sessionId)
 				continue
 			}
 			const previous = entry.turnEnd
@@ -105,9 +111,10 @@ export class CodexSessionProcesses<T extends CodexSessionProcess> {
 			)
 	}
 
-	private start(id: string, open: (signal: AbortSignal) => Promise<T>): ProcessEntry<T> {
+	private start(id: string, open: (signal: AbortSignal) => Promise<T>, scope: string): ProcessEntry<T> {
 		const opening = new AbortController()
 		const entry: ProcessEntry<T> = {
+			scope,
 			opening,
 			resource: Promise.resolve()
 				.then(() => {

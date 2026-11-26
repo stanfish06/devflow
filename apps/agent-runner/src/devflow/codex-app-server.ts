@@ -154,9 +154,9 @@ export class AppServerClient {
 			this.child.kill('SIGTERM')
 			return
 		}
-		// Let Codex finish its rollout before terminating an unresponsive server.
-		const terminate = setTimeout(() => this.child.kill('SIGTERM'), 1500)
-		const kill = setTimeout(() => this.child.kill('SIGKILL'), 4000)
+		// Allow a rollout flush, then finish escalation within the daemon's 2.5s session drain.
+		const terminate = setTimeout(() => this.child.kill('SIGTERM'), 1_000)
+		const kill = setTimeout(() => this.child.kill('SIGKILL'), 2_000)
 		terminate.unref()
 		kill.unref()
 		void this.exited.then(() => {
@@ -536,12 +536,18 @@ export async function executeCodexAppServer(
 	const continuing = resumeSessionId !== undefined
 	const prepareWorkflow = (cold: boolean) => prepareCodexWorkflow(ctx, cwd, prompt, continuing, cold)
 	let workflow: Awaited<ReturnType<typeof prepareWorkflow>> | undefined
+	// The VM mounts and GitHub identity belong to the task that opened the process.
+	const processScope = JSON.stringify([session.task_id, session.resource_owner_user_id, cwd, sandbox])
 	const slot = await codexProcesses
-		.acquire(session.id, async (signal) => {
-			workflow = await prepareWorkflow(true)
-			signal.throwIfAborted()
-			return openCodexProcess(ctx, cwd, sandbox, workflow, continuing, signal)
-		})
+		.acquire(
+			session.id,
+			async (signal) => {
+				workflow = await prepareWorkflow(true)
+				signal.throwIfAborted()
+				return openCodexProcess(ctx, cwd, sandbox, workflow, continuing, signal)
+			},
+			processScope,
+		)
 		.catch((error: unknown) => {
 			if (error instanceof CodexSessionClosedError) return null
 			throw error
@@ -825,7 +831,11 @@ export async function executeCodexAppServer(
 		onResume: async (nextPrompt) => {
 			const { runSession } = await import('@/agents/shared/run-session')
 			await runSession({
-				session: { ...session, prompt: nextPrompt, coding_agent_session_id: threadId },
+				session: {
+					...(services.collections.sessions.get(session.id) ?? session),
+					prompt: nextPrompt,
+					coding_agent_session_id: threadId,
+				},
 				resumeSessionId: session.id,
 				services,
 				execute: executeCodexAppServer,

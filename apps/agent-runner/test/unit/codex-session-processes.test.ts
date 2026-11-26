@@ -110,6 +110,20 @@ describe('Codex session processes', () => {
 		expect(old.close).toHaveBeenCalledTimes(1)
 	})
 
+	it('finishes the current turn and reacquires credentials when the task changes', async () => {
+		const registry = new CodexSessionProcesses<CodexSessionProcess>()
+		const old = appServer()
+		const first = await registry.acquire('session', async () => old, 'old-task')
+		const open = vi.fn(async () => appServer())
+		const moved = registry.acquire('session', open, 'new-task')
+		expect(open).not.toHaveBeenCalled()
+		await first.release()
+		const second = await moved
+		expect(old.close).toHaveBeenCalledOnce()
+		expect(open).toHaveBeenCalledOnce()
+		await second.release(true)
+	})
+
 	it('shuts down active and still-opening sessions and rejects later acquisitions', async () => {
 		const registry = new CodexSessionProcesses<CodexSessionProcess>()
 		const running = appServer()

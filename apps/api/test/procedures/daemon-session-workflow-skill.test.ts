@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { organizations } from '@devflow/db/tables/organizations'
 import { sessions } from '@devflow/db/tables/sessions'
+import { taskUserAcl } from '@devflow/db/tables/task-user-acl'
+import { tasks } from '@devflow/db/tables/tasks'
 import { call } from '@orpc/server'
 import { count, eq } from 'drizzle-orm'
 import { afterAll, beforeAll, expect, test } from 'vitest'
@@ -283,4 +285,59 @@ test('cold resumes can restore ordinary dialogue and warm processes can request 
 	})
 	expect(await lookup(id, {}, false)).toEqual({ skill: 'create-prd', conversation: [] })
 	expect((await lookup(id)).conversation).toHaveLength(2)
+})
+
+test('restores through a moved session while the user can edit both tasks', async () => {
+	const original = await sessionWithPrd()
+	const handoffAt = BigInt(Date.now()) + 1n
+	const source = await session(userId, { id: original, at: handoffAt })
+	const current = await session(userId, { id: source, at: handoffAt + 2n })
+	const originalTask = randomUUID()
+	const newTask = randomUUID()
+	const otherOwner = 'shared-task-owner'
+	await testDb.db.insert(tasks).values([
+		{
+			id: originalTask,
+			organization_id: organizationId,
+			name: 'Original task',
+			created_by: otherOwner,
+			resource_owner_user_id: otherOwner,
+		},
+		{
+			id: newTask,
+			organization_id: organizationId,
+			name: 'Moved task',
+			created_by: userId,
+			resource_owner_user_id: userId,
+		},
+	])
+	await testDb.db.insert(taskUserAcl).values({
+		task_id: originalTask,
+		organization_id: organizationId,
+		subject_user_id: userId,
+		resource_owner_user_id: otherOwner,
+		granted_by: otherOwner,
+		permission_level: 'edit',
+	})
+	await testDb.db
+		.update(sessions)
+		.set({ task_id: originalTask, resource_owner_user_id: otherOwner })
+		.where(eq(sessions.id, source))
+	await testDb.db.update(sessions).set({ task_id: newTask }).where(eq(sessions.id, current))
+	const question = 'Should controls have defaults?'
+	await testDb.db.insert(conversationEvents).values({
+		session_id: source,
+		organization_id: organizationId,
+		resource_owner_user_id: otherOwner,
+		created_at: handoffAt + 1n,
+		role: 'assistant',
+		event_type: 'message',
+		content: question,
+	})
+	expect(await lookup(current)).toEqual({
+		skill: 'create-prd',
+		conversation: [{ role: 'assistant', content: question }],
+	})
+	await testDb.db.update(taskUserAcl).set({ permission_level: 'read' }).where(eq(taskUserAcl.task_id, originalTask))
+	expect(await lookup(current)).toEqual({ skill: null, conversation: [] })
 })

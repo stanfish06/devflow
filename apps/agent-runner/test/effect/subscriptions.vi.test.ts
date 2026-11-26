@@ -155,6 +155,59 @@ describe('daemon subscriptions', () => {
 		),
 	)
 
+	it.effect('retires old Codex mounts and credentials on task, worktree, provider or ownership changes', () =>
+		scopedWithoutV2Routing(
+			Effect.gen(function* () {
+				const retire = vi.spyOn(codex, 'retireCodexAppServer').mockReturnValue(undefined)
+				yield* Effect.addFinalizer(() => Effect.sync(() => retire.mockRestore()))
+				const services = createMockDaemonServices()
+				const lifecycle = { reconcileSessionChanges() {}, reconcileTaskChanges() {}, reconcileAllTasks() {} }
+				const old = {
+					id: 'moved',
+					coding_agent: 'codelayer' as const,
+					provider: 'codex',
+					task_id: 'old-task',
+					working_directory: '/old-worktree',
+					resource_owner_user_id: 'old-owner',
+				}
+				for (const patch of [
+					{ task_id: null },
+					{ resource_owner_user_id: 'new-owner' },
+					{ working_directory: '/new-worktree' },
+					{ coding_agent: 'claude' as const },
+					{ provider: 'another-provider' },
+				]) {
+					const change = makeSessionChange({
+						type: 'update',
+						value: { ...old, ...patch, status: 'ready_for_input' },
+						previousValue: old,
+					})
+					yield* processSessionChange(change, services, lifecycle)
+				}
+				// A running task can move to a standalone session; its current turn can drain.
+				yield* processSessionChange(
+					makeSessionChange({
+						type: 'update',
+						value: { ...old, status: 'running', task_id: null },
+						previousValue: old,
+					}),
+					services,
+					lifecycle,
+				)
+				yield* processSessionChange(
+					makeSessionChange({
+						type: 'update',
+						value: { ...old, status: 'ready_for_input', title: 'new title' },
+						previousValue: old,
+					}),
+					services,
+					lifecycle,
+				)
+				expectTable(retire.mock.calls.map(([id]) => id)).toEqual(Array(6).fill('moved'))
+			}),
+		),
+	)
+
 	it.effect('does not block session changes on archived Claude cleanup', ({ expect }) =>
 		scopedWithoutV2Routing(
 			Effect.gen(function* () {
