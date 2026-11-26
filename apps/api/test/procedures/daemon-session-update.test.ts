@@ -9,7 +9,7 @@ import { sessions } from '@devflow/db/tables/sessions'
 import { tasks } from '@devflow/db/tables/tasks'
 import { userSettings } from '@devflow/db/tables/user-settings'
 import { call } from '@orpc/server'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { uuidv7 } from 'uuidv7'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
@@ -151,6 +151,17 @@ describe('daemon/sessions/update context window limit', async () => {
 			.values({ ...message, role: 'assistant', content: 'The PRD is approved and ready for technical design.' })
 			.returning()
 		if (!reply) throw new Error('Unable to create approval reply')
+		// Inject a launch failure after the ready update. A retry must see the original source state.
+		await db.execute(sql`ALTER TABLE sessions ADD CONSTRAINT reject_test_tdd_launch
+			CHECK (title IS DISTINCT FROM 'design-tdd: Stage boundary') NOT VALID`)
+		try {
+			await expect(ready()).rejects.toThrow()
+			const [unchanged] = await db.select().from(sessions).where(eq(sessions.id, source.id))
+			expect(unchanged?.status).toBe('running')
+			expect(unchanged?.next_step_suggestions).toBeNull()
+		} finally {
+			await db.execute(sql`ALTER TABLE sessions DROP CONSTRAINT reject_test_tdd_launch`)
+		}
 		await Promise.all([ready(), ready()])
 		const stages = (await siblings()).filter((stage) => !stage.archived)
 		expect(stages).toHaveLength(2)

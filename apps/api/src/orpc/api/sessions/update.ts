@@ -150,11 +150,17 @@ export const updateSessionApiProcedure = apiBaseOrgRequired.sessions.update.hand
 					}
 				}
 
-				// Validate effort and fastMode against capability rules when provided
-				// Use the effective agent/provider/model (input.* if changing, otherwise current session values)
 				const effectiveCodingAgent = input.codingAgent ?? session.coding_agent
 				const effectiveProvider = input.provider ?? session.provider
 				const effectiveModel = input.model ?? session.model
+				const capabilityFields = ['hostId', 'codingAgent', 'provider', 'model'] as const
+				const codexTargetChanged =
+					effectiveProvider === 'codex' &&
+					(effectiveCodingAgent === 'codelayer' || effectiveCodingAgent === 'fold') &&
+					capabilityFields.some((field) => changedFields.includes(field))
+				// An omitted setting stays on the session and must be valid for the new Codex target.
+				const effort = codexTargetChanged && input.effort === undefined ? session.effort : input.effort
+				const fastMode = codexTargetChanged && input.fastMode === undefined ? session.fast_mode : input.fastMode
 				const modelSettings = await checkHostModelSettings(
 					tx,
 					{
@@ -162,7 +168,8 @@ export const updateSessionApiProcedure = apiBaseOrgRequired.sessions.update.hand
 						userId: input.hostId ? context.auth.userId : session.created_by,
 					},
 					{
-						...input,
+						effort,
+						fastMode,
 						hostId: input.hostId === undefined ? session.host_id : input.hostId,
 						codingAgent: effectiveCodingAgent,
 						provider: effectiveProvider,
@@ -172,7 +179,7 @@ export const updateSessionApiProcedure = apiBaseOrgRequired.sessions.update.hand
 				if (!modelSettings.effortSupported) {
 					throw errors.BAD_REQUEST({
 						data: {
-							message: `effort=${input.effort} not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
+							message: `effort=${effort} not supported for ${effectiveCodingAgent}/${effectiveProvider}/${effectiveModel}`,
 						},
 					})
 				}
@@ -233,7 +240,7 @@ export const updateSessionApiProcedure = apiBaseOrgRequired.sessions.update.hand
 					updateFields.effort = input.effort
 				}
 				if (changedFields.includes('fastMode')) {
-					updateFields.fast_mode = input.fastMode
+					updateFields.fast_mode = input.fastMode ?? false
 				}
 
 				// If archiving an active session, trigger interrupt

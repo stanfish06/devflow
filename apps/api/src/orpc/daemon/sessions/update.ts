@@ -48,6 +48,29 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 
 	try {
 		const txResult = await db.transaction(async (tx) => {
+			// Lock the workflow task before the source session, as session launch and move do.
+			// Keep the ready update, deduplication, and TDD creation in this transaction.
+			const [prdTask] =
+				input.status === 'ready_for_input'
+					? await tx
+							.select({ id: tasks.id, slug: tasks.slug, name: tasks.name })
+							.from(tasks)
+							.innerJoin(sessions, eq(tasks.id, sessions.task_id))
+							.where(
+								and(
+									eq(sessions.id, input.sessionId),
+									eq(sessions.host_id, hostId),
+									eq(sessions.created_by, userId),
+									eq(sessions.organization_id, organizationId),
+									eq(tasks.organization_id, organizationId),
+									eq(sessions.provider, 'codex'),
+									eq(tasks.workflow_type, 'prd_tdd'),
+									sql`(${sessions.labels} #>> '{}')::jsonb @> '[{"name":"rpi:design-prd"}]'::jsonb`,
+								),
+							)
+							.for('no key update', { of: tasks })
+					: []
+
 			// 1. Fetch session with auth-relevant fields (and fields needed for model/usage updates)
 			const [session] = await tx
 				.select({
@@ -58,7 +81,6 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 					host_id: sessions.host_id,
 					provider: sessions.provider,
 					coding_agent: sessions.coding_agent,
-					isPrdSession: sql<boolean>`(${sessions.labels} #>> '{}')::jsonb @> '[{"name":"rpi:design-prd"}]'::jsonb`,
 					total_cost_usd: sessions.total_cost_usd,
 					model_usage: sessions.model_usage,
 					applied_usage_report_keys: sessions.applied_usage_report_keys,
@@ -378,24 +400,27 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 				}
 			}
 
+			const advancedPrd =
+				prdTask && session.task_id === prdTask.id && updateFields.status === 'ready_for_input'
+					? await advanceApprovedCodexPrd(tx, organizationId, prdTask, session.id)
+					: false
 			const txid = await getTxId(tx)
 			return {
 				success: true,
 				txid,
 				conversationEventsResult,
-				readyForInput: updateFields.status === 'ready_for_input',
+				advancedPrd,
 				session,
 				firstTaskCompletedAt,
 			}
 		})
 
 		// Fire-and-forget AI extractions AFTER transaction completes
-		const { session } = txResult
-		const advancedPrd =
-			txResult.readyForInput && session.provider === 'codex' && session.isPrdSession && session.task_id
-				? await advanceApprovedCodexPrd(db, organizationId, session.task_id, session.id)
-				: false
-		if (!advancedPrd && input.status === 'ready_for_input' && txResult.conversationEventsResult.length > 0) {
+		if (
+			!txResult.advancedPrd &&
+			input.status === 'ready_for_input' &&
+			txResult.conversationEventsResult.length > 0
+		) {
 			// Chain extraction → auto-advance (extraction must complete first so auto-advance
 			// can read next_step_suggestions for artifact-less transitions)
 			void runExtractionThenAutoAdvanceAsync(

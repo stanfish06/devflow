@@ -279,6 +279,44 @@ describe('sessions.launch — task_user_settings upsert', async () => {
 		expect(continued).toMatchObject({ status: 'resuming', model, effort: 'high', fast_mode: true })
 	})
 
+	test('checks retained Codex settings on a model change and accepts explicit clears', async () => {
+		const context = makeContext(ownerUserId)
+		const { session } = await call(
+			launchSessionProcedure,
+			{
+				hostId,
+				codingAgent: 'codelayer',
+				provider: 'codex',
+				model: 'gpt-6-sol',
+				effort: 'max',
+				fastMode: true,
+				text: 'Start',
+				title: 'Retained settings',
+				workingDirectory: tmpdir(),
+				permissionsMode: 'bypass',
+			},
+			{ context },
+		)
+		const target = { sessionId: session.id, model: 'codex-without-effort-or-fast-mode' }
+		await expect(call(updateSessionApiProcedure, target, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+			data: { message: expect.stringContaining('effort=max') },
+		})
+		await expect(call(updateSessionApiProcedure, { ...target, effort: null }, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+			data: { message: expect.stringContaining('fastMode') },
+		})
+		await call(updateSessionApiProcedure, { ...target, effort: null, fastMode: null }, { context })
+		const [updated] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(updated).toMatchObject({ model: target.model, effort: null, fast_mode: false })
+
+		// Older sessions may have saved options that the host no longer offers.
+		await db.update(sessions).set({ effort: 'high', fast_mode: true }).where(eq(sessions.id, session.id))
+		await expect(
+			call(updateSessionApiProcedure, { sessionId: session.id, title: 'Edited title' }, { context }),
+		).resolves.toMatchObject({ success: true })
+	})
+
 	test.each(['gpt-6-sol', 'gpt-6-luna'])(
 		'launches CodeLayer Codex %s with max effort and Fast Mode',
 		async (model) => {

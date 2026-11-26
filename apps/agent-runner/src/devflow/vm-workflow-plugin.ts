@@ -78,17 +78,68 @@ const workflowPluginDigest = ${workflowPluginDigest.toString()}`
 			const install = `set -eu
 cache=$1
 staging=$2
-snapshot="$cache/$3"
 destination=$4
+source=devflow-workflow-plugin
 install -d -m 0755 "$cache"
 mkdir -m 0700 "$staging"
-trap 'rm -rf -- "$staging"' EXIT
 mkdir "$staging/plugin"
+cleanup() {
+	for path in "$staging/plugin" "$staging/previous"; do
+		if [ -d "$path" ]; then
+			if mountpoint -q -- "$path"; then umount -l -- "$path"; fi
+			rmdir -- "$path"
+		fi
+	done
+	rmdir -- "$staging"
+}
+trap cleanup EXIT
+mount -t tmpfs -o nodev,nosuid "$source" "$staging/plugin"
 tar --extract --no-same-owner --file=- --directory="$staging/plugin"
 node --input-type=module -e "$5" -- "$staging/plugin" "$3"
 chmod -R a+rX,a-w -- "$staging/plugin"
-if [ ! -d "$snapshot" ]; then mv -T -- "$staging/plugin" "$snapshot"; fi
-mount -o bind,ro -- "$snapshot" "$destination"`
+mount -o remount,ro,nodev,nosuid "$staging/plugin"
+if [ "$(findmnt -nro SOURCE -T "$destination")" = "$source" ]; then
+	# Install beneath the previous repair, then detach it to switch all path lookups atomically.
+	# Open handles to the previous tmpfs keep its files alive until the last reader closes.
+	code=0
+	python3 - "$staging/plugin" "$destination" <<'PYTHON' || code=$?
+import ctypes, errno, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+def checked(result):
+    if result == -1:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return result
+at_fdcwd, open_tree_clone = -100, 1
+move_mount_f_empty_path, move_mount_beneath, mnt_detach = 4, 0x200, 2
+source, destination = map(os.fsencode, sys.argv[1:])
+try:
+    tree = checked(libc.open_tree(at_fdcwd, source, open_tree_clone))
+    checked(libc.move_mount(tree, b"", at_fdcwd, destination, move_mount_f_empty_path | move_mount_beneath))
+except AttributeError:
+    sys.exit(42)
+except OSError as exc:
+    if exc.errno in (errno.ENOSYS, errno.EINVAL, errno.EOPNOTSUPP):
+        sys.exit(42)
+    raise
+checked(libc.umount2(destination, mnt_detach))
+PYTHON
+	case "$code" in
+	0) ;;
+	42|127)
+		# Older kernels lack MOVE_MOUNT_BENEATH. Retain the verified old mount for rollback.
+		mkdir "$staging/previous"
+		mount --bind "$destination" "$staging/previous"
+		umount -l -- "$destination"
+		if ! mount --bind "$staging/plugin" "$destination"; then
+			mount --bind "$staging/previous" "$destination"
+			exit 1
+		fi ;;
+	*) exit "$code" ;;
+	esac
+else
+	mount --bind "$staging/plugin" "$destination"
+fi`
 			await run(install, [cache, staging, snapshotDigest, plugin, verify], input.fd)
 		} finally {
 			await input.close()
