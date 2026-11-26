@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -343,6 +343,55 @@ describe('VmManager', () => {
 		expect(commands(lima.calls)).toEqual(['stop', 'edit', 'start'])
 		expect(next.uncovered([other])).toEqual([])
 		next.release()
+	})
+
+	it('gives the first VM commit the host identity while honoring repository and session identities', async () => {
+		const { manager, lima, root, worktree } = setup()
+		const guestHome = join(root, 'guest')
+		mkdirSync(guestHome)
+		const hostConfig = join(root, 'host.gitconfig')
+		const included = join(root, 'included.gitconfig')
+		const git = (...args: string[]) => execFileSync('git', args, { cwd: worktree })
+		git('init', '-q')
+		const hostName = 'Dev "Q" \\ Example'
+		git('config', '--file', included, 'user.name', hostName)
+		git('config', '--file', included, 'user.email', 'dev@example.org')
+		git('config', '--file', included, 'credential.helper', 'host-only')
+		git('config', '--file', hostConfig, 'include.path', included)
+		const accountConfig = join(root, 'account.gitconfig')
+		git('config', '--file', accountConfig, 'user.name', 'Selected account')
+		git('config', '--file', accountConfig, 'user.email', 'account@example.org')
+		const spawned = { once: vi.fn() }
+		const launch = vi.fn(() => spawned)
+		const vm = new VmManager(manager['config'], lima.run, launch as never)
+		const lease = await vm.acquire({ scope: 'shared', taskId: null, paths: [worktree] })
+		const firstCommit = (env: Record<string, string>) => {
+			lease.run({ label: 'Codex', cwd: worktree, env, command: ['codex'] })
+			const args = (launch.mock.lastCall as unknown as [string, string[]])[1]
+			const envFile = args[args.indexOf('/usr/local/bin/devflow-exec') + 2]!
+			const guest = (cmd: string) =>
+				execFileSync('sh', ['-ec', '. "$1"; ' + cmd, 'sh', envFile], {
+					cwd: worktree,
+					env: { HOME: guestHome, PATH: process.env.PATH },
+					encoding: 'utf8',
+				}).trimEnd()
+			expect(guest('git config --get-all credential.helper || true')).not.toContain('host-only')
+			guest('git commit -q --allow-empty -m test')
+			return guest("git log -1 --format='%an <%ae>|%cn <%ce>'")
+		}
+		vi.stubEnv('GIT_CONFIG_GLOBAL', hostConfig)
+		try {
+			const host = hostName + ' <dev@example.org>'
+			expect(firstCommit({})).toBe(host + '|' + host)
+			const account = 'Selected account <account@example.org>'
+			expect(firstCommit({ GIT_CONFIG_GLOBAL: accountConfig })).toBe(account + '|' + account)
+			git('config', '--local', 'user.name', 'Repository')
+			const local = 'Repository <dev@example.org>'
+			expect(firstCommit({})).toBe(local + '|' + local)
+		} finally {
+			lease.release()
+			vi.unstubAllEnvs()
+		}
 	})
 
 	it('stops agents with procps kill: dash, the guest sh, rejects `kill -TERM -- -pgid`', async () => {
