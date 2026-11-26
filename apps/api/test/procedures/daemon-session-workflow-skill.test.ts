@@ -112,6 +112,59 @@ test('restores the most recent recognized root skill without adding events', asy
 	expect(row?.count).toBe(5)
 })
 
+test('restores the requested stage after the initial launch and its first retry fail before invocation', async () => {
+	const id = await session()
+	const message = {
+		session_id: id,
+		organization_id: organizationId,
+		resource_owner_user_id: userId,
+		event_type: 'message' as const,
+		role: 'user' as const,
+	}
+	await testDb.db.insert(conversationEvents).values([
+		{ ...message, created_at: 1n, content: 'use the rpi:create-structure-outline skill' },
+		{ ...message, created_at: 2n, content: 'continue with outline' },
+		{ ...message, created_at: 3n, content: 'continue' },
+	])
+	expect((await lookup(id, {}, true)).skill).toBe('create-structure-outline')
+})
+
+test('restores the latest explicit request or invocation within its handoff boundary', async () => {
+	const source = await session()
+	const current = await session(userId, { id: source, at: 10n })
+	const message = {
+		session_id: source,
+		organization_id: organizationId,
+		resource_owner_user_id: userId,
+		event_type: 'message' as const,
+		role: 'user' as const,
+	}
+	const invocation = {
+		...message,
+		role: 'assistant' as const,
+		event_type: 'tool_call' as const,
+		tool_name: 'Skill',
+	}
+	await testDb.db.insert(conversationEvents).values([
+		{ ...invocation, created_at: 1n, tool_input_json: { skill: 'rpi:create-prd' } },
+		{ ...message, created_at: 2n, content: '/rpi:create-tdd draft the design' },
+		{ ...message, created_at: 3n, content: 'A colleague said “use the rpi:create-plan skill”' },
+		{ ...message, created_at: 4n, role: 'assistant', content: 'use the rpi:create-plan skill' },
+		{ ...message, created_at: 5n, parent_tool_use_id: 'subagent', content: '/rpi:implement-plan' },
+		{ ...message, created_at: 6n, content: '/rpi:unknown-skill' },
+		{ ...message, created_at: 11n, content: '/rpi:implement-outline' },
+	])
+	expect((await lookup(current, {}, false)).skill).toBe('create-tdd')
+
+	await testDb.db.insert(conversationEvents).values({
+		...invocation,
+		session_id: current,
+		created_at: 12n,
+		tool_input_json: { skill: 'rpi:iterate-tdd' },
+	})
+	expect((await lookup(current, {}, false)).skill).toBe('iterate-tdd')
+})
+
 test('enforces organization, host, creating user and edit permission', async () => {
 	const id = await session()
 	await expect(lookup(id, { organizationId: randomUUID() })).rejects.toMatchObject({ code: 'NOT_FOUND' })

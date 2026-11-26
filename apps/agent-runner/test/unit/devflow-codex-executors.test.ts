@@ -290,19 +290,22 @@ test.each([
 	{ skill: 'iterate-prd', labels: [], reply: '/rpi:iterate-prd Continue with the same choices.' },
 	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
 	{ skill: 'create-tdd', labels: [], reply: 'Use separate processes.' },
+	{ skill: 'create-structure-outline', labels: [], reply: 'continue', failedLaunch: true },
 	{
 		skill: 'iterate-tdd',
 		labels: [{ name: 'rpi:design-tdd', title: 'design' }],
 		reply: 'Proceed with the second option.',
 	},
-])('reactivates $skill with the prior decision on a plain-text reply', async ({ skill, labels, reply }) => {
+])('reactivates $skill with the prior decision on a reply', async ({ skill, labels, reply, failedLaunch }) => {
 	const dir = mkdtempSync(join(tmpdir(), 'devflow-codex-followup-'))
 	try {
 		installTestAppServer(dir)
-		const history = [
-			{ role: 'user', content: 'Only librarians can release a hold.' },
-			{ role: 'assistant', content: 'Should volunteers be able to see the queue?' },
-		]
+		const history = failedLaunch
+			? []
+			: [
+					{ role: 'user', content: 'Only librarians can release a hold.' },
+					{ role: 'assistant', content: 'Should volunteers be able to see the queue?' },
+				]
 		const workflowSkill = vi.fn(async () => ({
 			skill: reply.startsWith('/') ? 'create-prd' : skill,
 			conversation: history,
@@ -313,7 +316,7 @@ test.each([
 				id: 'session',
 				provider: 'codex',
 				working_directory: dir,
-				coding_agent_session_id: 'thread',
+				coding_agent_session_id: failedLaunch ? null : 'thread',
 				labels,
 				prompt: reply,
 			},
@@ -333,22 +336,23 @@ test.each([
 			.trim()
 			.split('\n')
 			.map((line) => JSON.parse(line))
-		expect(requests.find((row) => row.method === 'thread/resume').params.threadId).toBe('thread')
+		if (failedLaunch) expect(requests.some((row) => row.method === 'thread/start')).toBe(true)
+		else expect(requests.find((row) => row.method === 'thread/resume').params.threadId).toBe('thread')
 		const input = requests.find((row) => row.method === 'turn/start').params.input
 		expect(input).toHaveLength(2)
 		expect(input[0].text).toContain(`skills/${skill}/SKILL.md`)
 		const phase = skill.endsWith('-prd') ? 'prd' : 'tdd'
+		const fileName = failedLaunch
+			? 'structure_outline_final_answer_in_worktree.md'
+			: `${phase}_final_answer_resolved.md`
 		const template = readFileSync(
-			new URL(
-				`../../../workflow-skills/skills/${skill}/references/${phase}_final_answer_resolved.md`,
-				import.meta.url,
-			),
+			new URL(`../../../workflow-skills/skills/${skill}/references/${fileName}`, import.meta.url),
 			'utf8',
 		)
 		expect(input[0].text).toContain(template)
 		if (phase === 'prd') expect(input[0].text).toContain('status: approved')
 		else expect(input[0].text).not.toContain('status: approved')
-		expect(input[0].text).toContain(JSON.stringify(history))
+		if (history.length) expect(input[0].text).toContain(JSON.stringify(history))
 		expect(input[1].text).toBe(reply)
 		expect(create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message', role: 'user' }))
 	} finally {

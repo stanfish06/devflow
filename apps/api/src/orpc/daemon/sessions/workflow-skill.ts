@@ -1,5 +1,6 @@
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { sessions } from '@devflow/db/tables/sessions'
+import { rpiSkillRequestPattern } from '@devflow/schemas/effect/session/rpi-skill-request'
 import { and, eq, sql } from 'drizzle-orm'
 
 import { canWriteSession } from '../../../db/task-auth'
@@ -56,15 +57,30 @@ export const workflowSkillProcedure = daemonBase.sessions.workflowSkill.handler(
 			const rootEvents = sql`FROM lineage l JOIN ${conversationEvents} e ON e.session_id = l.id
 		WHERE e.organization_id = ${organizationId} AND e.parent_tool_use_id IS NULL
 			AND (l.cutoff IS NULL OR e.created_at <= l.cutoff)`
-			const calls = await db.execute<{ input: unknown }>(sql`
-		${lineage}
-		SELECT e.tool_input_json AS input ${rootEvents}
-			AND e.event_type = 'tool_call' AND e.role = 'assistant' AND lower(e.tool_name) = 'skill'
-		ORDER BY l.depth, e.created_at DESC, e.id DESC
-	`)
-			const skill =
-				calls.map((call) => extractSkillName('Skill', call.input, 'rpi')).find((name) => name !== undefined) ??
-				null
+			// A launch can fail before a Skill call is recorded. The explicit user command is
+			// already durable, and a later request or invocation supersedes it in the same lineage.
+			const events = await db.execute<{ input: unknown; requested: string | null }>(sql`
+			${lineage}, candidates AS (
+				SELECT l.depth, e.created_at, e.id,
+					CASE WHEN e.role = 'assistant' THEN e.tool_input_json END AS input,
+					CASE WHEN e.role = 'user' THEN regexp_match(e.content, ${rpiSkillRequestPattern.source}, 'i') END AS requested
+				${rootEvents}
+				AND ((e.event_type = 'tool_call' AND e.role = 'assistant' AND lower(e.tool_name) = 'skill')
+					OR (e.event_type = 'message' AND e.role = 'user'))
+			)
+			SELECT input, coalesce(requested[1], requested[2]) AS requested
+			FROM candidates WHERE input IS NOT NULL OR requested IS NOT NULL
+			ORDER BY depth, created_at DESC, id DESC
+		`)
+			let skill = null
+			for (const event of events) {
+				const input = event.requested ? { skill: `rpi:${event.requested.toLowerCase()}` } : event.input
+				const name = extractSkillName('Skill', input, 'rpi')
+				if (name) {
+					skill = name
+					break
+				}
+			}
 			// A live app-server already owns the dialogue. Older runners ask for it implicitly during workflows.
 			const includeConversation =
 				input.includeConversation ?? (skill !== null || session.handoff_source_session_id !== null)

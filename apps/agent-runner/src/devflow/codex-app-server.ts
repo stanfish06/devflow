@@ -25,6 +25,7 @@ import { isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 import { getSystemErrorMap, stripVTControlCharacters } from 'node:util'
 
+import { requestedRpiSkill } from '@devflow/schemas/effect/session/rpi-skill-request'
 import { isSessionStatusAwaitingLaunch } from '@devflow/schemas/effect/session/session-status'
 import { Effect } from 'effect'
 
@@ -385,12 +386,6 @@ type CreateEvent = Parameters<SessionContext['services']['orpc']['sessions']['ev
 /** A notification field that should hold text, or '' when it holds anything else. */
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '')
 
-/** The composer expands a selected slash command to "use the rpi:<name> skill". */
-function requestedRpiSkill(prompt: string): string | undefined {
-	const match = /^(?:use the \/?rpi:([a-z0-9-]+) skill|\/rpi:([a-z0-9-]+))(?=\s|$)/i.exec(prompt.trimStart())
-	return (match?.[1] ?? match?.[2])?.toLowerCase()
-}
-
 /** Deliver handoff templates with the turn so an existing VM can use them even if its plugin mount is stale. */
 async function loadCodexCompletionTemplates(base: string, skill: string): Promise<string> {
 	const references = new Set(skill.match(/\{SKILLBASE\}\/references\/[\w-]+_final_answer[\w-]*\.md\b/g))
@@ -421,7 +416,7 @@ async function prepareCodexWorkflow(
 	const slug = task?.slug ?? sync?.getTaskSlug()
 	const artifacts = taskId && slug ? await setupArtifactPaths(cwd, taskId, slug, services.daemonRuntime) : null
 	const requested = requestedRpiSkill(prompt)
-	// Interrupt/resume can reuse the pre-invocation session snapshot. Read the persisted call on replies.
+	// Recover the requested or invoked skill on replies, including retries after a failed launch.
 	const handoff = Boolean(session.handoff_source_session_id)
 	const previous =
 		handoff || (continuing && (cold || !requested))
