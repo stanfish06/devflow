@@ -1,4 +1,4 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
@@ -196,6 +196,37 @@ export function renderEnvFile(env: Readonly<Record<string, string>>): string {
 		.filter(([key]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key))
 		.map(([key, value]) => `export ${key}=${shellQuote(value)}\n`)
 		.join('')
+}
+
+/** Supply the host identity below guest-global and repository settings, keeping Ubuntu's system config. */
+export function vmGitIdentityConfig(cwd: string): string | undefined {
+	const result = spawnSync('git', ['config', '--null', '--show-scope', '--get-regexp', '^user\\.(name|email)$'], {
+		cwd,
+		encoding: 'utf8',
+	})
+	if (result.status === 1) return undefined // Neither key is configured.
+	if (result.status !== 0)
+		throw new Error('Could not read the host Git identity', { cause: result.error ?? result.stderr })
+	const fields = result.stdout.split('\0')
+	const lines: string[] = []
+	for (let i = 0; i + 1 < fields.length; i += 2) {
+		// Repository/worktree config is already mounted and must stay local to that repository.
+		if (fields[i] !== 'global' && fields[i] !== 'system') continue
+		const entry = fields[i + 1]
+		if (!entry) continue
+		const separator = entry.indexOf('\n')
+		const key = entry.slice('user.'.length, separator)
+		const value = entry
+			.slice(separator + 1)
+			.replaceAll('\\', '\\\\')
+			.replaceAll('"', '\\"')
+			.replaceAll('\n', '\\n')
+			.replaceAll('\t', '\\t')
+			.replaceAll('\b', '\\b')
+		lines.push(`\t${key} = "${value}"`)
+	}
+	if (!lines.length) return undefined
+	return ['[include]', '\tpath = /etc/gitconfig', '[user]', ...lines, ''].join('\n')
 }
 
 const FORWARDABLE_ADDRESSES = new Set(['0.0.0.0', '::', '*', '127.0.0.1', '::1'])
@@ -714,7 +745,13 @@ export class VmManager {
 		const envDirectory = vmEnvDirectory(this.config.devflowHome, name)
 		mkdirSync(envDirectory, { recursive: true, mode: 0o700 })
 		const envFile = join(envDirectory, `${id}.env`)
-		writeFileSync(envFile, renderEnvFile(input.env), { mode: 0o600 })
+		// A bound GitHub account already supplies its own identity. Each other process gets
+		// its own defaults so concurrent tasks on a shared VM cannot overwrite one another.
+		const identity = input.env.GIT_CONFIG_GLOBAL === undefined ? vmGitIdentityConfig(input.cwd) : undefined
+		const gitConfig = join(envDirectory, `${id}.gitconfig`)
+		if (identity !== undefined) writeFileSync(gitConfig, identity, { mode: 0o600 })
+		const env = identity === undefined ? input.env : { ...input.env, GIT_CONFIG_SYSTEM: gitConfig }
+		writeFileSync(envFile, renderEnvFile(env), { mode: 0o600 })
 		const pidFile = `/tmp/devflow-${id}.pid`
 		logger.info({ vm: name, cwd: input.cwd }, `Starting ${input.label} in the devflow VM sandbox`)
 		// setsid makes the agent its own process group, which stop() ends as a whole.
@@ -743,6 +780,7 @@ export class VmManager {
 			if (exited) return
 			exited = true
 			rmSync(envFile, { force: true })
+			if (identity !== undefined) rmSync(gitConfig, { force: true })
 			// A stale pid file would point the next daemon's adoption sweep at a reused pid. After a
 			// stop, the stop command reads and removes it: the spawners kill limactl right after stop().
 			if (!stopped) void this.lima(['shell', name, '--', 'rm', '-f', pidFile])
