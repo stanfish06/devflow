@@ -139,6 +139,7 @@ function useSessionDetailState(sessionId: string) {
 	const artifactPanel = useSessionArtifactPanel({
 		sessionId,
 		taskId: session?.task_id,
+		defaultSidebarTab: autoAdvance.workflowPhases.length > 0 ? 'graph' : 'minimap',
 		workingDirectory: session?.working_directory,
 		events,
 		userId: user?.id,

@@ -4265,6 +4265,14 @@
 		flex-direction: column;
 		min-height: 0;
 	}
+	.task-nav:has(.task-nav-graph) {
+		overflow-y: auto;
+	}
+	.task-nav-graph {
+		flex: none;
+		height: clamp(150px, 29dvh, 320px);
+		margin: 0 8px;
+	}
 	.task-nav-head {
 		display: flex;
 		align-items: flex-start;

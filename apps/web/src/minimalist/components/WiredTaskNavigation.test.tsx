@@ -2,19 +2,23 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import type { Session } from '@devflow/db/tables/sessions'
+import type { TaskWorkflowType } from '@devflow/schemas/effect/taskconfiguration'
 import { createCollection, type SyncConfig } from '@tanstack/db'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { WiredTaskNavigation } from './WiredTaskNavigation'
 
-type NavigationSession = Pick<Session, 'id' | 'task_id' | 'title' | 'summary' | 'archived' | 'status' | 'labels'>
+type NavigationSession = Pick<Session, 'id' | 'task_id' | 'title' | 'summary' | 'archived' | 'status' | 'labels'> &
+	Partial<Pick<Session, 'last_activity_at'>>
 
-const { useSync, data, updateTask } = vi.hoisted(() => ({
+const { useSync, data, updateTask, selectSession, closeTaskSidebarOnNarrow } = vi.hoisted(() => ({
 	useSync: vi.fn(),
+	selectSession: vi.fn(),
+	closeTaskSidebarOnNarrow: vi.fn(),
 	updateTask: vi.fn(async () => ({})),
-	data: { sessions: [] as NavigationSession[] },
+	data: { sessions: [] as NavigationSession[], workflowType: 'oneshot' as TaskWorkflowType },
 }))
 vi.mock('./TaskDetails', () => ({ WiredTaskDetails: () => null }))
 vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: { tasks: { update: updateTask } } }) }))
@@ -29,7 +33,10 @@ vi.mock('./ReviewPanel', () => ({ useDiffTotals: () => null }))
 vi.mock('@/components/providers/SyncProvider', () => ({ useSync }))
 vi.mock('@/minimalist/lib/data', async (importOriginal) => ({
 	...(await importOriginal<typeof import('@/minimalist/lib/data')>()),
-	useTask: () => ({ task: { id: 'task', name: 'Task name' }, sessions: data.sessions }),
+	useTask: () => ({
+		task: { id: 'task', name: 'Task name', workflow_type: data.workflowType },
+		sessions: data.sessions,
+	}),
 	useTaskArtifacts: () => [],
 	canReview: () => false,
 }))
@@ -37,10 +44,10 @@ vi.mock('@tanstack/react-router', () => ({
 	Link: ({ children }: { children: ReactNode }) => <a href="#new-session">{children}</a>,
 }))
 vi.mock('@/minimalist/lib/task-navigation', () => ({
-	useTaskNavigation: () => ({ search: {}, selectSession: vi.fn() }),
+	useTaskNavigation: () => ({ search: {}, selectSession }),
 }))
 vi.mock('@/minimalist/lib/ui-state', () => ({
-	useUi: () => ({ closeTaskSidebarOnNarrow: vi.fn(), toggleTaskSidebar: vi.fn() }),
+	useUi: () => ({ closeTaskSidebarOnNarrow, toggleTaskSidebar: vi.fn() }),
 }))
 
 /** Exercise the same committed collection updates that Electric delivers to useSession. */
@@ -70,6 +77,11 @@ function syncedSession(initial: NavigationSession) {
 	return { collection, update: (fields: Pick<Session, 'title' | 'summary'>) => update(fields) }
 }
 
+afterEach(() => {
+	data.workflowType = 'oneshot'
+	vi.unstubAllGlobals()
+})
+
 describe('task navigation session names', () => {
 	it('shows a generated summary as soon as it syncs and preserves an explicit name on later summary updates', async () => {
 		const initial: NavigationSession = {
@@ -96,18 +108,28 @@ describe('task navigation session names', () => {
 		expect(row).toHaveAttribute('title', 'My session name · The agent finished')
 	})
 
-	it('lists the newest session first', async () => {
-		const session = (id: string, title: string): NavigationSession => ({
+	it('keeps newest sessions first and opens another workflow session from the graph', async () => {
+		vi.stubGlobal(
+			'ResizeObserver',
+			class {
+				observe() {}
+				unobserve() {}
+				disconnect() {}
+			},
+		)
+		data.workflowType = 'prd_tdd'
+		const session = (id: string, title: string, phase: string, activity: bigint): NavigationSession => ({
+			last_activity_at: activity,
 			id,
 			task_id: 'task',
 			title,
 			summary: null,
 			archived: false,
 			status: 'ready_for_input',
-			labels: [],
+			labels: [{ name: `rpi:design-${phase.toLowerCase()}`, title: phase }],
 		})
 		// useTask returns sessions oldest first.
-		data.sessions = [session('older', 'Older session'), session('newer', 'Newer session')]
+		data.sessions = [session('older', 'Older session', 'PRD', 1n), session('newer', 'Newer session', 'TDD', 2n)]
 		const sync: SyncConfig<NavigationSession>['sync'] = ({ begin, write, commit, markReady }) => {
 			begin()
 			for (const value of data.sessions) write({ type: 'insert', value })
@@ -127,6 +149,13 @@ describe('task navigation session names', () => {
 			.getAllByRole('button', { name: /session,/ })
 			.map((row) => row.querySelector('.t')?.textContent)
 		expect(rows).toEqual(['Newer session', 'Older session'])
+		const graph = screen.getByRole('region', { name: 'Workflow graph' })
+		const current = await within(graph).findByText('Newer session')
+		expect(current.closest('[aria-current="step"]')).toBeInTheDocument()
+		expect(within(graph).getByText('Older session').closest('[aria-current="step"]')).toBeNull()
+		fireEvent.click(current)
+		expect(selectSession).toHaveBeenCalledWith('newer')
+		expect(closeTaskSidebarOnNarrow).toHaveBeenCalled()
 	})
 
 	it('renames the task in place from the pencil after its title', async () => {
@@ -201,6 +230,7 @@ describe('task navigation list layout', () => {
 			}).collection,
 		})
 		render(<WiredTaskNavigation taskId="task" />)
+		expect(screen.queryByRole('region', { name: 'Workflow graph' })).toBeNull()
 		const groups = screen.getByRole('navigation', { name: 'Sessions and artifacts' })
 		expect(groups).toHaveClass('task-nav-groups')
 		expect([...groups.children].map((child) => child.getAttribute('aria-label'))).toEqual(['Sessions', 'Artifacts'])

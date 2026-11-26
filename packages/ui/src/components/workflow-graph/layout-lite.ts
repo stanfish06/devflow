@@ -9,6 +9,8 @@ import type {
   WorkflowSession,
 } from './types-lite'
 
+export const defaultWorkflowPhases: WorkflowPhase[] = RPI_LABELS.filter((label) => label.name !== 'rpi:todo')
+
 const SESSION_NODE_WIDTH = 170
 const SESSION_NODE_HEIGHT = 90
 const PLACEHOLDER_NODE_WIDTH = 90
@@ -48,7 +50,7 @@ export function computeLayout(
   isStatic?: boolean,
   compactStaticPreview?: boolean,
 ): LayoutResult {
-  const effectivePhases = phases ?? RPI_LABELS.filter((l) => l.name !== 'rpi:todo')
+  const effectivePhases = phases ?? defaultWorkflowPhases
   if (direction === 'TB') {
     return computePhaseRowLayout(
       sessions,
@@ -85,7 +87,7 @@ function computePhaseColumnLayout(
   isStatic?: boolean,
   compactStaticPreview?: boolean,
 ): LayoutResult {
-  const orderedPhases: WorkflowPhase[] = phases ?? RPI_LABELS.filter((l) => l.name !== 'rpi:todo')
+  const orderedPhases: WorkflowPhase[] = phases ?? defaultWorkflowPhases
 
   const sessionsByPhase = new Map<string, WorkflowSession[]>()
   for (const s of sessions) {
@@ -216,7 +218,7 @@ function computePhaseRowLayout(
   isStatic?: boolean,
   compactStaticPreview?: boolean,
 ): LayoutResult {
-  const orderedPhases: WorkflowPhase[] = phases ?? RPI_LABELS.filter((l) => l.name !== 'rpi:todo')
+  const orderedPhases: WorkflowPhase[] = phases ?? defaultWorkflowPhases
 
   const sessionsByPhase = new Map<string, WorkflowSession[]>()
   for (const s of sessions) {

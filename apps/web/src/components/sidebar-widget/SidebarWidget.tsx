@@ -75,6 +75,7 @@ export interface SidebarWidgetProps {
 	// Workflow graph props
 	workflowSessions: WorkflowSession[]
 	workflowPhases: WorkflowPhase[]
+	selectedWorkflowSessionId?: string
 	onWorkflowSessionClick?: (sessionId: string) => void
 
 	// Tips props
@@ -272,6 +273,7 @@ function SidebarOptionalTabs({
 	onScratchPadCycleBackward,
 	workflowSessions,
 	workflowPhases,
+	selectedWorkflowSessionId,
 	onWorkflowSessionClick,
 	todos,
 	hasAutoAdvance,
@@ -298,6 +300,7 @@ function SidebarOptionalTabs({
 	| 'onScratchPadCycleBackward'
 	| 'workflowSessions'
 	| 'workflowPhases'
+	| 'selectedWorkflowSessionId'
 	| 'onWorkflowSessionClick'
 	| 'todos'
 	| 'questionsToResearchEnabled'
@@ -344,6 +347,7 @@ function SidebarOptionalTabs({
 							fullscreenDirection="LR"
 							controlsLayout="vertical-fullscreen-first"
 							controlsPosition="top-right"
+							selectedNodeId={selectedWorkflowSessionId}
 							onSessionClick={onWorkflowSessionClick}
 						/>
 					</div>
@@ -404,6 +408,7 @@ export const SidebarWidget: FC<SidebarWidgetProps> = ({
 	workspaceHostAction,
 	workflowSessions,
 	workflowPhases,
+	selectedWorkflowSessionId,
 	onWorkflowSessionClick,
 	tipPhase,
 	onTipDontShowAgain,
@@ -589,6 +594,7 @@ export const SidebarWidget: FC<SidebarWidgetProps> = ({
 						onScratchPadCycleBackward={onScratchPadCycleBackward}
 						workflowSessions={workflowSessions}
 						workflowPhases={workflowPhases}
+						selectedWorkflowSessionId={selectedWorkflowSessionId}
 						onWorkflowSessionClick={onWorkflowSessionClick}
 						todos={todos}
 						hasAutoAdvance={hasAutoAdvance}

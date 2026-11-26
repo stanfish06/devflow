@@ -1,5 +1,8 @@
+import type { Session } from '@devflow/db/tables/sessions'
 import type { TaskWorkflowType, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
-import type { WorkflowPhase } from '@devflow/ui/components/workflow-graph'
+import type { WorkflowPhase, WorkflowSession } from '@devflow/ui/components/workflow-graph'
+
+import { mostRecentlyActiveSession } from '@/lib/activitySorting'
 
 const WORKFLOW_PHASE_MAP: Record<TaskWorkflowType, WorkflowPhase[]> = {
 	rpi: [
@@ -60,4 +63,31 @@ export function getWorkflowPhases(
 	}
 
 	return basePhases
+}
+
+type WorkflowSessionRow = Pick<Session, 'id' | 'title' | 'status' | 'labels' | 'archived' | 'last_activity_at'>
+
+export function toWorkflowSessions(
+	rows: readonly WorkflowSessionRow[],
+	phases: readonly WorkflowPhase[],
+): WorkflowSession[] {
+	const phaseNames = phases.map((phase) => phase.name)
+	const nodes = rows.flatMap((row) => {
+		let phaseIndex = -1
+		for (const label of row.labels ?? []) {
+			phaseIndex = Math.max(phaseIndex, phaseNames.indexOf(label.name))
+		}
+		const phase = phases[phaseIndex]
+		return phase ? [{ row, phase }] : []
+	})
+	const current = mostRecentlyActiveSession(nodes.flatMap(({ row }) => (row.archived ? [] : [row])))
+	return nodes.map(({ row, phase }) => ({
+		id: row.id,
+		title: row.title ?? undefined,
+		status: row.status,
+		labelName: phase.name,
+		labelTitle: phase.title,
+		artifacts: [],
+		isCurrentStage: row.id === current?.id,
+	}))
 }

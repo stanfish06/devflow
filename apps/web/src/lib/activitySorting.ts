@@ -16,3 +16,18 @@ export function compareSessionsByActivityMinute(a: SessionActivityTimestamps, b:
 
 	return 0
 }
+
+/** The most recently active candidate; same-timestamp sessions break ties by ID. */
+export function mostRecentlyActiveSession<T extends { id?: string; last_activity_at: bigint | null }>(
+	sessions: readonly T[],
+): T | null {
+	return sessions.reduce<T | null>((latest, session) => {
+		const activity = session.last_activity_at ?? 0n
+		const latestActivity = latest?.last_activity_at ?? 0n
+		return !latest ||
+			activity > latestActivity ||
+			(activity === latestActivity && (session.id ?? '') > (latest.id ?? ''))
+			? session
+			: latest
+	}, null)
+}

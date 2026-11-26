@@ -1,4 +1,5 @@
 import type { Task } from '@devflow/db/tables/tasks'
+import { WorkflowGraphLite } from '@devflow/ui/components/workflow-graph'
 import { Link } from '@tanstack/react-router'
 import {
 	Copy,
@@ -11,13 +12,15 @@ import {
 	Plus,
 	SkipForward,
 } from 'lucide-react'
-import { use, useRef, useState } from 'react'
+import { use, useMemo, useRef, useState } from 'react'
 
 import { TaskDiffContext } from '@/components/diffs/task-diff-context'
 import { groupChecks } from '@/components/github/check-groups'
 import type { TaskArtifact } from '@/hooks/live-queries/useTaskArtifacts'
 import { usePrStatusStream } from '@/hooks/session-detail/usePrStatusStream'
 import { useUnreadStore } from '@/hooks/stores/unreadStore'
+import { useTaskWorkflowInfo } from '@/hooks/task-detail/useTaskWorkflowInfo'
+import { toWorkflowSessions } from '@/lib/workflow-phases'
 import { artifactName, isImageArtifact, isListedArtifact, isPromptArtifact } from '@/minimalist/lib/artifacts'
 import { useTaskAutoAdvance } from '@/minimalist/lib/auto-advance'
 import { canReview, useSession, useTask, useTaskArtifacts } from '@/minimalist/lib/data'
@@ -38,6 +41,8 @@ import { ArtifactRowMenu, type SessionDialog, SessionRowDialog, SessionRowMenu }
 export function WiredTaskNavigation({ taskId, sessionId }: { taskId: string; sessionId?: string }) {
 	const { task, sessions } = useTask(taskId)
 	const artifacts = useTaskArtifacts(taskId)
+	const { workflowPhases } = useTaskWorkflowInfo(task ?? undefined)
+	const workflowSessions = useMemo(() => toWorkflowSessions(sessions, workflowPhases), [sessions, workflowPhases])
 	const navigation = useTaskNavigation(taskId, sessionId)
 	const { taskSidebarOpen, toggleTaskSidebar, closeTaskSidebarOnNarrow } = useUi()
 	// Newest first: the session you are most likely to want sits under the title.
@@ -66,6 +71,26 @@ export function WiredTaskNavigation({ taskId, sessionId }: { taskId: string; ses
 			</header>
 			<WiredTaskTools taskId={taskId} />
 			<WiredTaskDetails taskId={taskId} />
+			{workflowPhases.length > 0 ? (
+				<section className="task-nav-graph" aria-label="Workflow graph">
+					<div className="minimalist-shared h-full">
+						<WorkflowGraphLite
+							sessions={workflowSessions}
+							phases={workflowPhases}
+							selectedNodeId={sessionId}
+							focusCurrentStage
+							direction="TB"
+							fullscreenDirection="LR"
+							controlsLayout="vertical-fullscreen-first"
+							controlsPosition="top-right"
+							onSessionClick={(id) => {
+								navigation.selectSession(id)
+								closeTaskSidebarOnNarrow()
+							}}
+						/>
+					</div>
+				</section>
+			) : null}
 			<nav className="task-nav-groups" aria-label="Sessions and artifacts">
 				<section className="task-nav-group task-nav-sessions" aria-label="Sessions">
 					<div className="section">

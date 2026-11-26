@@ -1,6 +1,7 @@
 import { hasPhaseTip } from '@devflow/ui/components/phase-tip-banner'
 import { getVisibleMinimapEvents } from '@devflow/ui/components/vertical-minimap'
 import { and, eq, useLiveQuery } from '@tanstack/react-db'
+import { useNavigate } from '@tanstack/react-router'
 import { useLocalStorage } from '@uidotdev/usehooks'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -32,6 +33,7 @@ import { useMountEffect } from '@/hooks/useMountEffect'
 import { useSidebarCycleHotkeys } from '@/hooks/useSidebarCycleHotkeys'
 import { useAuth } from '@/integrations/devflow/local-authkit'
 import { DISMISSED_TIP_TYPES_KEY } from '@/lib/preferences'
+import { toWorkflowSessions } from '@/lib/workflow-phases'
 import { deriveWorkspaceHostGroups } from '@/lib/workspace-host-groups'
 import { getLatestInvokedRpiPhase } from '@/utils/phase-tips'
 import { eventsToMinimapEvents, extractTodosFromEvents } from '@/utils/sidebar-transforms'
@@ -54,6 +56,7 @@ interface SessionDiffSidebarOptions {
 	/** Opening the GitHub tab, or leaving it, is what clears its attention dot. */
 	githubScopeKey: string
 	hasArtifacts: boolean
+	hasGraph: boolean
 	hasTips: boolean
 	hasTodos: boolean
 	hasWorkspace: boolean
@@ -72,6 +75,7 @@ function useSessionDiffSidebar({
 	hasGithub,
 	githubScopeKey,
 	hasArtifacts,
+	hasGraph,
 	hasTips,
 	hasTodos,
 	hasWorkspace,
@@ -87,6 +91,7 @@ function useSessionDiffSidebar({
 	const visibleTabs = useMemo(
 		() =>
 			getVisibleSidebarTabs({
+				graph: hasGraph,
 				github: hasGithub,
 				artifacts: hasArtifacts,
 				changes: hasDiffReview,
@@ -97,7 +102,7 @@ function useSessionDiffSidebar({
 				tips: hasTips,
 				todos: hasTodos,
 			}),
-		[hasArtifacts, hasDiffReview, hasGithub, hasTips, hasTodos, hasWorkspace, scratchPadEnabled],
+		[hasArtifacts, hasDiffReview, hasGithub, hasGraph, hasTips, hasTodos, hasWorkspace, scratchPadEnabled],
 	)
 	const onTabChange = useCallback(
 		(nextTab: SidebarTab) => {
@@ -212,7 +217,8 @@ export function WiredSidebarWidget({ pendingFullscreenArtifactId }: { pendingFul
 	const { session, conversation, artifactPanel, fork, isModalOpen, hasTaskEditPermission } = sessionDetail
 	const artifactHost = deriveSessionArtifactHost({ ...sessionDetail, pendingFullscreenArtifactId })
 	const taskDiffReview = useOptionalSessionDiff()
-	const { artifactsMetadataCollection, tasksCollection } = useSync()
+	const { artifactsMetadataCollection, sessionsCollection, tasksCollection } = useSync()
+	const navigate = useNavigate()
 	const { user } = useAuth()
 	const enableCreatingPubliclyShareableLinks = useSettingsStore(
 		(s) => s.orgSettings.enableCreatingPubliclyShareableLinks,
@@ -246,6 +252,30 @@ export function WiredSidebarWidget({ pendingFullscreenArtifactId }: { pendingFul
 
 	const isRunning = session.status === 'running'
 	const taskId = session.task_id
+	const { workflowPhases, isTaskReady } = sessionDetail.autoAdvance
+	const hasGraph = workflowPhases.length > 0
+	const { data: graphSessions } = useLiveQuery(
+		(q) =>
+			taskId && hasGraph
+				? q
+						.from({ sessions: sessionsCollection })
+						.where(({ sessions }) => eq(sessions.task_id, taskId))
+						.select(({ sessions }) => ({
+							id: sessions.id,
+							title: sessions.title,
+							status: sessions.status,
+							labels: sessions.labels,
+							last_activity_at: sessions.last_activity_at,
+							archived: sessions.archived,
+						}))
+						.orderBy(({ sessions }) => sessions.id, 'asc')
+				: undefined,
+		[sessionsCollection, taskId, hasGraph],
+	)
+	const workflowSessions = useMemo(
+		() => toWorkflowSessions(graphSessions ?? [], workflowPhases),
+		[graphSessions, workflowPhases],
+	)
 	const { data: taskData } = useLiveQuery(
 		(q) => (taskId ? q.from({ tasks: tasksCollection }).where(({ tasks }) => eq(tasks.id, taskId)) : undefined),
 		[tasksCollection, taskId],
@@ -335,7 +365,11 @@ export function WiredSidebarWidget({ pendingFullscreenArtifactId }: { pendingFul
 		setHasAutoExpandedArtifacts(true)
 	}, [expandSidebar, setSidebarTab])
 	const autoExpandArtifacts =
-		!hasStoredSidebarState && !hasAutoExpandedArtifacts && artifacts.length > 0 ? (
+		!hasGraph &&
+		(!taskId || isTaskReady) &&
+		!hasStoredSidebarState &&
+		!hasAutoExpandedArtifacts &&
+		artifacts.length > 0 ? (
 			<AutoExpandArtifactsApplier onApply={handleAutoExpandArtifacts} />
 		) : null
 
@@ -362,6 +396,7 @@ export function WiredSidebarWidget({ pendingFullscreenArtifactId }: { pendingFul
 		hasGithub: githubTab !== null,
 		githubScopeKey,
 		hasArtifacts,
+		hasGraph,
 		hasTips,
 		hasTodos,
 		hasWorkspace,
@@ -435,8 +470,10 @@ export function WiredSidebarWidget({ pendingFullscreenArtifactId }: { pendingFul
 					/>
 				) : null
 			}
-			workflowSessions={[]}
-			workflowPhases={[]}
+			workflowSessions={workflowSessions}
+			workflowPhases={workflowPhases}
+			selectedWorkflowSessionId={session.id}
+			onWorkflowSessionClick={(id) => navigate({ to: '/sessions/$sessionId', params: { sessionId: id } })}
 			tipPhase={activeTipPhase}
 			onTipDontShowAgain={handleTipDontShowAgain}
 			taskId={taskId}

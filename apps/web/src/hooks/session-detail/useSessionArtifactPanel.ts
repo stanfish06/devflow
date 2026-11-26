@@ -36,11 +36,13 @@ type ResizableLayout = Record<string, number>
 export function useSessionArtifactPanel({
 	sessionId,
 	taskId,
+	defaultSidebarTab,
 	workingDirectory,
 	events,
 	userId,
 }: {
 	sessionId: string
+	defaultSidebarTab: 'graph' | 'minimap'
 	taskId: string | null | undefined
 	workingDirectory: string | null | undefined
 	events: ConversationEvent[]
@@ -90,7 +92,7 @@ export function useSessionArtifactPanel({
 		hasStoredState: hasStoredSidebarState,
 		setState: setStoredSidebarState,
 		setCurrentTab: setSidebarTab,
-	} = useSessionSidebarState(sessionId)
+	} = useSessionSidebarState(sessionId, defaultSidebarTab)
 	const sidebarTab = sidebarState.currentTab
 	const savedArtifactId = sidebarState.currentArtifactId
 	const rightSidebarMode: RightSidebarMode = sidebarTab === 'artifacts' && savedArtifactId ? 'artifact' : 'normal'

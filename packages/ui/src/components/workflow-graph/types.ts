@@ -1,17 +1,6 @@
-/** Session status values from the database */
-export type SessionStatus =
-  | 'ready_for_launch'
-  | 'draft'
-  | 'launching'
-  | 'running'
-  | 'failed'
-  | 'lost'
-  | 'ready_for_input'
-  | 'needs_approval'
-  | 'waiting_for_usage_limit'
-  | 'interrupt_requested'
-  | 'interrupted'
-  | 'resuming'
+import type { SessionStatus } from '@devflow/schemas/effect/session/session-status'
+
+export type { SessionStatus }
 
 /** User profile info for rendering avatar on session nodes */
 export interface SessionUserProfile {
@@ -33,6 +22,8 @@ export interface WorkflowSession {
   labelName: string
   /** Human-readable label title (e.g. 'research-questions') */
   labelTitle: string
+  /** This session determines the task’s current workflow stage. */
+  isCurrentStage?: boolean
   /** Artifacts produced or consumed by this session */
   artifacts: SessionArtifact[]
   /** User who created this session (shown on shared tasks) */

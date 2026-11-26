@@ -13,9 +13,11 @@ export const SessionNode: FC<NodeProps<WorkflowSessionNode>> = ({ data, selected
   const statusLabel = getStatusLabel(session.status)
   const hasAttention = !!data.attention
   const isSynthetic = !!data.synthetic
+  const PhaseLabel = data.onOpen ? 'button' : 'span'
 
   return (
     <div
+      aria-current={session.isCurrentStage ? 'step' : undefined}
       className={`font-mono relative ${isSynthetic ? '' : 'cursor-pointer'}`}
       style={{
         borderLeft: `2px ${isSynthetic ? 'dotted' : 'solid'} ${isSynthetic ? 'color-mix(in srgb, var(--terminal-fg) 35%, transparent)' : phaseColor}`,
@@ -28,7 +30,7 @@ export const SessionNode: FC<NodeProps<WorkflowSessionNode>> = ({ data, selected
                 ? phaseColor
                 : 'color-mix(in srgb, var(--terminal-fg) 20%, transparent)'
         }`,
-        borderLeftWidth: '2px',
+        borderLeftWidth: session.isCurrentStage ? '4px' : '2px',
         borderLeftColor: isSynthetic
           ? 'color-mix(in srgb, var(--terminal-fg) 35%, transparent)'
           : hasAttention
@@ -90,12 +92,18 @@ export const SessionNode: FC<NodeProps<WorkflowSessionNode>> = ({ data, selected
             )}
           </div>
         )}
-        <span
+        <PhaseLabel
+          type={data.onOpen ? 'button' : undefined}
+          aria-label={data.onOpen ? `Open ${session.title || session.labelTitle} session` : undefined}
+          onClick={data.onOpen && ((event) => {
+            event.stopPropagation()
+            data.onOpen?.(session.id)
+          })}
           style={{ color: isSynthetic ? 'var(--terminal-fg-dim)' : phaseColor }}
-          className="font-medium text-[9px] truncate"
+          className="nodrag font-medium text-[9px] truncate"
         >
           {session.labelTitle}
-        </span>
+        </PhaseLabel>
       </div>
 
       <div className="flex items-center gap-1" style={{ color: statusColor }}>

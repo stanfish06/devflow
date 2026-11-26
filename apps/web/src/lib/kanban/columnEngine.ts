@@ -2,7 +2,7 @@ import type { KanbanCardModel as KanbanCard, KanbanColumns } from '@devflow/ui/c
 import { RPI_LABELS, type SessionLabel } from '@devflow/ui/components/session-label-badge'
 import { Option, Schema } from 'effect'
 
-import { activityMinute } from '@/lib/activitySorting'
+import { activityMinute, mostRecentlyActiveSession } from '@/lib/activitySorting'
 import { aggregateTaskStatus } from '@/lib/taskStatus'
 
 /** Fixed kanban column ids, left-to-right workflow order. */
@@ -110,18 +110,9 @@ interface AssignResult {
  * (e.g. drafts / not-yet-started) fall to `todo`.
  */
 function assignColumnInternal(sessions: KanbanSessionInput[]): AssignResult | null {
-	let winner: KanbanSessionInput | null = null
-	let winnerActivity = -1n
-
-	for (const session of sessions) {
-		if (session.archived) continue
-		if (!nonEmptyLabels(session.labels)) continue
-		const activity = session.last_activity_at ?? 0n
-		if (winner === null || activity > winnerActivity) {
-			winner = session
-			winnerActivity = activity
-		}
-	}
+	const winner = mostRecentlyActiveSession(
+		sessions.filter((session) => !session.archived && nonEmptyLabels(session.labels)),
+	)
 
 	if (winner === null || !nonEmptyLabels(winner.labels)) return null
 

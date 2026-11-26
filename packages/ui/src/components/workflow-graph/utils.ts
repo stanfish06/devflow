@@ -55,6 +55,7 @@ export function getStatusLabel(status: SessionStatus): string {
     case 'needs_approval': return 'needs approval'
     case 'interrupt_requested': return 'interrupting'
     case 'interrupted': return 'interrupted'
+    case 'waiting_for_workspace': return 'waiting for workspace'
     case 'ready_for_launch': return 'queued'
     case 'draft': return 'draft'
     default: return status
