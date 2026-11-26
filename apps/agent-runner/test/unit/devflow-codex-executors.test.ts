@@ -1,4 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
@@ -14,9 +16,10 @@ import {
 	failUnsupportedAgent,
 	isCodexAppServerSession,
 	startAppServer,
+	startVmAppServer,
 	UNSUPPORTED_AGENT_MESSAGE,
 } from '@/devflow/codex-app-server'
-import { vmManager } from '@/devflow/vm-sandbox'
+import { type VmLease, vmManager } from '@/devflow/vm-sandbox'
 
 afterEach(async () => {
 	await Promise.all(['session', 'receiver'].map(closeCodexAppServer))
@@ -65,6 +68,60 @@ describe('devflow agent executors', () => {
 		expect(codexEnvironment(githubEnv, host)).toEqual({ PATH: '/bin', CODEX_HOME: '/home/me/.codex', ...githubEnv })
 		expect(codexEnvironment(null, host)).toEqual(host)
 	})
+})
+
+test('guest app-servers keep a private SQLite directory per mounted Codex profile', async () => {
+	const dir = mkdtempSync(join(tmpdir(), 'devflow-codex-storage-'))
+	const guestHome = join(dir, 'guest home')
+	const output = join(dir, 'launch.json')
+	writeFileSync(
+		join(dir, 'codex'),
+		`#!/usr/bin/env node
+require('node:fs').writeFileSync('launch.json', JSON.stringify({
+  profile: process.env.CODEX_HOME, sqlite: process.env.CODEX_SQLITE_HOME, args: process.argv.slice(2)
+}))
+`,
+		{ mode: 0o700 },
+	)
+	const lease: VmLease = {
+		name: 'test',
+		uncovered: () => [],
+		release: () => {},
+		run: ({ cwd, command, env }) => ({
+			child: spawn(command[0]!, command.slice(1), {
+				cwd,
+				env: { ...env, HOME: guestHome, PATH: dir + delimiter + process.env.PATH },
+			}),
+			stop: () => {},
+		}),
+	}
+	const launch = async (profile: string) => {
+		vi.stubEnv('CODEX_HOME', join(dir, profile))
+		vi.stubEnv('CODEX_SQLITE_HOME', join(dir, profile, 'host-state'))
+		mkdirSync(join(dir, profile), { recursive: true })
+		const child = startVmAppServer(lease, dir, null)
+		expect((await once(child, 'close'))[0]).toBe(0)
+		const result: { profile: string; sqlite: string; args: string[] } = JSON.parse(readFileSync(output, 'utf8'))
+		expect(result.profile).toBe(join(dir, profile))
+		expect(result.sqlite.startsWith(guestHome + '/')).toBe(true)
+		expect(statSync(result.sqlite).mode & 0o777).toBe(0o700)
+		expect(result.args).toEqual([
+			'-c',
+			'sqlite_home=' + result.sqlite,
+			'-c',
+			'log_dir=' + result.sqlite + '/logs',
+			'app-server',
+		])
+		return result.sqlite
+	}
+	try {
+		const first = await launch('mounted profile')
+		expect(await launch('mounted profile')).toBe(first)
+		expect(await launch('another profile')).not.toBe(first)
+	} finally {
+		vi.unstubAllEnvs()
+		rmSync(dir, { recursive: true, force: true })
+	}
 })
 
 function installTestAppServer(dir: string) {
