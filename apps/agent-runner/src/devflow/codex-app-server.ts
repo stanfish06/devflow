@@ -17,11 +17,13 @@
  */
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
+import { getSystemErrorMap, stripVTControlCharacters } from 'node:util'
 
 import { isSessionStatusAwaitingLaunch } from '@devflow/schemas/effect/session/session-status'
 import { Effect } from 'effect'
@@ -76,6 +78,31 @@ type RpcMessage = {
 	error?: { code?: number; message?: string }
 }
 
+// A shell wrapper can print its entire command, environment, or the session prompt. Only copy
+// recognized diagnostic phrases into session records; arbitrary child output stays private.
+const systemErrorPhrases = [...getSystemErrorMap().values()]
+	.flat()
+	.map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+const launchErrorPhrases = [
+	'(?:codex|limactl|setsid|devflow-exec|env|node): (?:command )?not found',
+	'(?:command|executable|instance) not found',
+	'out of memory|cannot allocate memory|exec format error|host key verification failed',
+	'failed to (?:load|read|parse) (?:the )?(?:config(?:uration)?|credentials)',
+	'(?:TOML|configuration) parse error|unsupported (?:model|reasoning effort)',
+	'(?:SQLITE_)?IOERR_SHORT_READ|database disk image is malformed|disk I/O error|database is locked',
+	...systemErrorPhrases,
+]
+const launchDiagnostic = new RegExp('\\b(?:' + launchErrorPhrases.join('|') + ')\\b', 'gi')
+const STDERR_TAIL_LENGTH = 8_192
+
+function appServerExitError(code: number | null, signal: NodeJS.Signals | null, stderr: string): Error {
+	const reason = signal ?? (code === null ? 'unknown status' : `code ${code}`)
+	const lastLine = stripVTControlCharacters(stderr).trimEnd().split(/\r?\n/).at(-1) ?? ''
+	const matches = /\b(?:WARN(?:ING)?|INFO|DEBUG|TRACE)\b/i.test(lastLine) ? null : lastLine.match(launchDiagnostic)
+	const detail = matches ? [...new Set(matches)].slice(-3).join(', ') : ''
+	return new Error(`codex app-server exited (${reason})${detail ? `: ${detail}` : ''}`)
+}
+
 /** Minimal client for the app-server's newline-delimited JSON-RPC over the child's stdio. */
 export class AppServerClient {
 	private nextId = 1
@@ -84,7 +111,8 @@ export class AppServerClient {
 		{ resolve: (v: RpcMessage['result']) => void; reject: (e: Error) => void }
 	>()
 	private notificationHandler?: (method: string, params: Record<string, JsonValue>) => void
-	private exitHandler?: (code: number | null) => void
+	private exitHandler?: (error: Error) => void
+	private stderrTail = ''
 	private requestHandler: ((method: string, params: Record<string, JsonValue>) => Promise<JsonValue>) | null = null
 	private readonly exited: Promise<number | null>
 	/** Set once the process failed to spawn or exited; later requests reject with it. */
@@ -93,23 +121,39 @@ export class AppServerClient {
 	constructor(private readonly child: ChildProcess) {
 		const lines = createInterface({ input: child.stdout! })
 		lines.on('line', (line) => this.onLine(line))
-		child.stderr?.on('data', (chunk: Buffer) =>
-			logger.debug({ stderr: chunk.toString() }, 'codex app-server stderr'),
-		)
+		child.stderr?.setEncoding('utf8').on('data', (chunk: string) => {
+			logger.debug({ stderr: chunk }, 'codex app-server stderr')
+			this.stderrTail = (this.stderrTail + chunk.slice(-STDERR_TAIL_LENGTH)).slice(-STDERR_TAIL_LENGTH)
+		})
 		// Writes to a process that already exited fail with EPIPE; the exit handler reports it.
 		child.stdin?.on('error', (error) => logger.debug({ error }, 'codex app-server stdin closed'))
 		this.exited = new Promise((resolve) => {
+			let drainTimer: NodeJS.Timeout | undefined
 			const close = (error: Error, code: number | null) => {
 				if (this.closedError) return
+				clearTimeout(drainTimer)
+				this.stderrTail = ''
 				this.closedError = error
 				for (const { reject } of this.pending.values()) reject(error)
 				this.pending.clear()
-				this.exitHandler?.(code)
+				this.exitHandler?.(error)
 				resolve(code)
 			}
 			// A missing `codex` binary emits `error` (code ENOENT) and may never emit `exit`.
 			child.once('error', (error) => close(error, null))
-			child.once('exit', (code) => close(new Error(`codex app-server exited (${code})`), code))
+			const finish = (code: number | null, signal: NodeJS.Signals | null) =>
+				close(appServerExitError(code, signal, this.stderrTail), code)
+			// 'close' follows the last stdio data. A descendant can inherit a pipe and hold it open
+			// after Codex exits; bound that drain within the daemon's shutdown window.
+			child.once('close', finish)
+			child.once('exit', (code, signal) => {
+				drainTimer = setTimeout(() => {
+					finish(code, signal)
+					child.stdout?.destroy()
+					child.stderr?.destroy()
+				}, 200)
+				drainTimer.unref()
+			})
 		})
 	}
 
@@ -117,11 +161,13 @@ export class AppServerClient {
 		this.notificationHandler = handler
 	}
 
-	onExit(handler: (code: number | null) => void): void {
-		this.exitHandler = handler
+	onExit(handler: (error: Error) => void): void {
+		if (this.closedError) handler(this.closedError)
+		else this.exitHandler = handler
 	}
 
 	clearTurnHandlers(): void {
+		this.stderrTail = ''
 		this.notificationHandler = undefined
 		this.exitHandler = undefined
 		this.requestHandler = null
@@ -266,11 +312,24 @@ export function vmCodexEnvironment(
 
 /** Start `codex app-server` in the leased VM; killing the returned process also stops it in the guest. */
 export function startVmAppServer(lease: VmLease, cwd: string, githubEnv: GithubEnv | null): ChildProcess {
+	const env = vmCodexEnvironment(githubEnv)
+	const profile = createHash('sha256').update(codexHome()).digest('hex').slice(0, 16)
+	// SQLite WAL and shared memory need a guest-native filesystem. Rollouts and login stay in CODEX_HOME.
 	const { child, stop } = lease.run({
 		label: 'Codex',
 		cwd,
-		env: vmCodexEnvironment(githubEnv),
-		command: ['codex', 'app-server'],
+		env,
+		command: [
+			'sh',
+			'-ec',
+			[
+				'export CODEX_SQLITE_HOME="$HOME/.local/state/devflow/codex/$1"',
+				'(umask 077 && mkdir -p "$CODEX_SQLITE_HOME")',
+				'exec codex -c "sqlite_home=$CODEX_SQLITE_HOME" -c "log_dir=$CODEX_SQLITE_HOME/logs" app-server',
+			].join('\n'),
+			'devflow-codex',
+			profile,
+		],
 	})
 	const kill = child.kill.bind(child)
 	child.kill = (signal?: NodeJS.Signals | number) => {
@@ -618,7 +677,7 @@ export async function executeCodexAppServer(
 	const turnDone = new Promise<Record<string, JsonValue>>((resolve) => {
 		resolveTurn = resolve
 	})
-	client.onExit((code) => resolveTurn({ status: 'failed', error: { message: `codex app-server exited (${code})` } }))
+	client.onExit((error) => resolveTurn({ status: 'failed', error: { message: error.message } }))
 	// Events are written in order; a chain keeps them ordered while notifications arrive.
 	let writes = Promise.resolve()
 	const enqueue = (write: () => Promise<unknown>) => {
