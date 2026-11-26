@@ -200,6 +200,83 @@ describe('daemon/sessions/update context window limit', async () => {
 		expect((await siblings()).filter((stage) => !stage.archived)).toHaveLength(3)
 	})
 
+	test('retries a Codex PRD ready update when its source moves while acquiring the task lock', async () => {
+		const taskFields = {
+			organization_id: organizationId,
+			created_by: userId,
+			resource_owner_user_id: userId,
+			workflow_type: 'prd_tdd' as const,
+			default_working_directory: tmpdir(),
+		}
+		const [original, destination] = await db
+			.insert(tasks)
+			.values([
+				{ ...taskFields, name: 'Original task' },
+				{ ...taskFields, name: 'Destination task' },
+			])
+			.returning()
+		if (!original || !destination) throw new Error('Unable to create tasks')
+		const source = await createSession({
+			task_id: original.id,
+			coding_agent: 'codelayer',
+			provider: 'codex',
+			labels: [{ name: 'rpi:design-prd', title: 'design-prd' }],
+		})
+		const ready = () =>
+			call(updateSessionProcedure, { sessionId: source.id, status: 'ready_for_input' }, createDaemonContext())
+		const { inFlight } = await db.transaction(async (tx) => {
+			const [lockOwner] = await tx
+				.select({ pid: sql<number>`pg_backend_pid()` })
+				.from(tasks)
+				.where(eq(tasks.id, original.id))
+				.for('no key update')
+			if (!lockOwner) throw new Error('Unable to lock the original task')
+			const inFlight = ready().then(
+				() => null,
+				(error: unknown) => error,
+			)
+			await expect
+				.poll(async () => {
+					const [waiter] = await db.execute(sql`SELECT EXISTS (
+					SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
+					AND ${lockOwner.pid}::int = ANY(pg_blocking_pids(pid))
+				) AS waiting`)
+					return waiter?.waiting
+				})
+				.toBe(true)
+			await tx.update(sessions).set({ task_id: destination.id }).where(eq(sessions.id, source.id))
+			return { inFlight }
+		})
+		expect(await inFlight).toMatchObject({ code: 'SERVICE_UNAVAILABLE', status: 503 })
+		const [moved] = await db.select().from(sessions).where(eq(sessions.id, source.id))
+		expect(moved).toMatchObject({ task_id: destination.id, status: 'running' })
+		await call(
+			upsertArtifactProcedure,
+			{
+				taskId: destination.id,
+				sessionId: source.id,
+				fileName: '03-prd.md',
+				content: '---\ntype: design-prd\nstatus: approved\n---\n# Requirements',
+				frontmatter: { type: 'design-prd', status: 'approved' },
+				operationType: 'Edit',
+				operationContents: { file_path: '03-prd.md' },
+			},
+			createDaemonContext(),
+		)
+		await ready()
+		expect(await db.select().from(sessions).where(eq(sessions.task_id, original.id))).toHaveLength(0)
+		const destinationSessions = await db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.task_id, destination.id))
+			.orderBy(asc(sessions.created_at))
+		expect(destinationSessions).toHaveLength(2)
+		expect(destinationSessions[1]).toMatchObject({
+			status: 'ready_for_launch',
+			title: 'design-tdd: Destination task',
+		})
+	})
+
 	test('persists explicit runtime context window limit as-is', async () => {
 		const session = await createSession({
 			coding_agent: 'codelayer',

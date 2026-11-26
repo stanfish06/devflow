@@ -6,6 +6,7 @@ import { tasks } from '@devflow/db/tables/tasks'
 import { userSettings } from '@devflow/db/tables/user-settings'
 import { resolveEffectiveContextWindow } from '@devflow/schemas/effect/model-context'
 import { isStructuredTaskWorkflow } from '@devflow/schemas/effect/taskconfiguration'
+import { ORPCError } from '@orpc/server'
 import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { Effect } from 'effect'
@@ -50,10 +51,16 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 		const txResult = await db.transaction(async (tx) => {
 			// Lock the workflow task before the source session, as session launch and move do.
 			// Keep the ready update, deduplication, and TDD creation in this transaction.
+			const prdLabel = sql<boolean>`(${sessions.labels} #>> '{}')::jsonb @> '[{"name":"rpi:design-prd"}]'::jsonb`
 			const [prdTask] =
 				input.status === 'ready_for_input'
 					? await tx
-							.select({ id: tasks.id, slug: tasks.slug, name: tasks.name })
+							.select({
+								id: tasks.id,
+								slug: tasks.slug,
+								name: tasks.name,
+								workflowType: tasks.workflow_type,
+							})
 							.from(tasks)
 							.innerJoin(sessions, eq(tasks.id, sessions.task_id))
 							.where(
@@ -64,8 +71,7 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 									eq(sessions.organization_id, organizationId),
 									eq(tasks.organization_id, organizationId),
 									eq(sessions.provider, 'codex'),
-									eq(tasks.workflow_type, 'prd_tdd'),
-									sql`(${sessions.labels} #>> '{}')::jsonb @> '[{"name":"rpi:design-prd"}]'::jsonb`,
+									prdLabel,
 								),
 							)
 							.for('no key update', { of: tasks })
@@ -81,6 +87,7 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 					host_id: sessions.host_id,
 					provider: sessions.provider,
 					coding_agent: sessions.coding_agent,
+					isPrdSession: prdLabel,
 					total_cost_usd: sessions.total_cost_usd,
 					model_usage: sessions.model_usage,
 					applied_usage_report_keys: sessions.applied_usage_report_keys,
@@ -104,6 +111,18 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 			const canWrite = await canWriteTaskForSession(tx, session, userId, organizationId)
 			if (!canWrite) {
 				throw errors.FORBIDDEN()
+			}
+
+			// A move can commit between the task lookup and the source lock. Retry with the new task first.
+			if (
+				input.status === 'ready_for_input' &&
+				session.provider === 'codex' &&
+				session.isPrdSession &&
+				(prdTask?.id ?? null) !== session.task_id
+			) {
+				throw new ORPCError('SERVICE_UNAVAILABLE', {
+					message: 'The PRD session changed tasks during its ready update. Retry the update.',
+				})
 			}
 
 			// Build update object with only provided fields
@@ -401,7 +420,7 @@ export const updateSessionProcedure = daemonBase.sessions.update.handler(async (
 			}
 
 			const advancedPrd =
-				prdTask && session.task_id === prdTask.id && updateFields.status === 'ready_for_input'
+				prdTask?.workflowType === 'prd_tdd' && updateFields.status === 'ready_for_input'
 					? await advanceApprovedCodexPrd(tx, organizationId, prdTask, session.id)
 					: false
 			const txid = await getTxId(tx)

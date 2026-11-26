@@ -412,7 +412,14 @@ export class VmManager {
 		try {
 			await this.locked(name, async () => {
 				await this.ensureRunning(entry, required, readOnly)
-				if (input.workflowPluginPath) await ensureVmWorkflowPlugin(this.lima, name, input.workflowPluginPath)
+				if (
+					input.workflowPluginPath &&
+					!(await ensureVmWorkflowPlugin(this.lima, name, input.workflowPluginPath, entry.leases > 1))
+				) {
+					throw new VmBusyError(
+						`VM ${name} needs to replace its workflow plugin and other sessions are using it; retry once they finish`,
+					)
+				}
 			})
 		} catch (error) {
 			// Report what Lima has, not a start that already failed.

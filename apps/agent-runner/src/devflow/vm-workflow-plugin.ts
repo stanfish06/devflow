@@ -46,8 +46,13 @@ async function workflowPluginDigest(
 	return digest.digest('hex')
 }
 
-/** Restore a replaced source directory at the same guest path while other processes keep using the VM. */
-export async function ensureVmWorkflowPlugin(lima: LimaRunner, vm: string, plugin: string): Promise<void> {
+/** Restore the guest plugin in place. Returns false when the kernel needs an idle VM for replacement. */
+export async function ensureVmWorkflowPlugin(
+	lima: LimaRunner,
+	vm: string,
+	plugin: string,
+	otherLeases = false,
+): Promise<boolean> {
 	const digest = await workflowPluginDigest(plugin, false, digestRuntime)
 	// A stale mount can stat entries it can no longer open. Run the same byte check inside the guest.
 	const source = `import * as fs from 'node:fs/promises'; import * as path from 'node:path'; import {createHash} from 'node:crypto';
@@ -57,21 +62,19 @@ const workflowPluginDigest = ${workflowPluginDigest.toString()}`
 		'\ntry { if (await workflowPluginDigest(process.argv[1], false, { ...fs, ...path, createHash }) !== process.argv[2]) process.exitCode = 42 } catch { process.exitCode = 42 }'
 	const shell = ['shell', '--workdir=/', vm, '--']
 	const probe = await lima([...shell, 'node', '--input-type=module', '-e', verify, '--', plugin, digest], 30_000)
-	if (probe.code === 0) return
+	if (probe.code === 0) return true
 	if (probe.code !== 42) throw new Error(`Cannot verify the workflow plugin in ${vm}: ${probe.stderr || probe.code}`)
 
 	const snapshotDigest = await workflowPluginDigest(plugin, true, digestRuntime)
-	const run = async (script: string, args: string[], stdin?: number) => {
-		const result = await lima([...shell, 'sudo', 'sh', '-c', script, 'sh', ...args], 120_000, stdin)
-		if (result.code !== 0)
-			throw new Error(`Cannot restore the workflow plugin in ${vm}: ${result.stderr || result.code}`)
-	}
 	const cache = '/run/devflow-workflow-plugins'
 	const staging = `${cache}/.install-${randomUUID()}`
 	const temp = await mkdtemp(join(tmpdir(), 'devflow-workflow-plugin-'))
 	try {
 		const archive = join(temp, 'plugin.tar')
-		await promisify(execFile)('tar', ['-C', plugin, '-cf', archive, '.'])
+		// Archive the verified tree without macOS resource forks or extended attributes.
+		await promisify(execFile)('tar', ['--no-xattrs', '-C', plugin, '-cf', archive, '.'], {
+			env: { ...process.env, COPYFILE_DISABLE: '1' },
+		})
 		const input = await open(archive, 'r')
 		try {
 			// Only the host supplies archive bytes. A 0700 parent protects extracted paths until publication.
@@ -127,7 +130,8 @@ PYTHON
 	case "$code" in
 	0) ;;
 	42|127)
-		# Older kernels lack MOVE_MOUNT_BENEATH. Retain the verified old mount for rollback.
+		# Older kernels briefly expose the underlying mount. Wait for other leases to finish.
+		[ "$6" = idle ] || exit 43
 		mkdir "$staging/previous"
 		mount --bind "$destination" "$staging/previous"
 		umount -l -- "$destination"
@@ -140,7 +144,28 @@ PYTHON
 else
 	mount --bind "$staging/plugin" "$destination"
 fi`
-			await run(install, [cache, staging, snapshotDigest, plugin, verify], input.fd)
+			const result = await lima(
+				[
+					...shell,
+					'sudo',
+					'sh',
+					'-c',
+					install,
+					'sh',
+					cache,
+					staging,
+					snapshotDigest,
+					plugin,
+					verify,
+					otherLeases ? 'busy' : 'idle',
+				],
+				120_000,
+				input.fd,
+			)
+			if (result.code === 43) return false
+			if (result.code !== 0)
+				throw new Error(`Cannot restore the workflow plugin in ${vm}: ${result.stderr || result.code}`)
+			return true
 		} finally {
 			await input.close()
 		}
