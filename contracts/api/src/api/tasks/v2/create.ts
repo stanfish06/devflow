@@ -1,6 +1,6 @@
 import { TASK_STATUSES, TASK_WORKFLOW_TYPES } from '@devflow/schemas/effect/taskconfiguration'
 import { TaskIntentSchema } from '@devflow/schemas/task-intent'
-import { VmScopeSchema } from '@devflow/schemas/zod/host/agent-sandbox'
+import { VmResourceQuantitySchema, VmScopeSchema } from '@devflow/schemas/zod/host/agent-sandbox'
 import { WorkspaceRepositoriesSchema } from '@devflow/schemas/zod/project-workspace'
 import { StatusCodes } from 'http-status-codes'
 import z from 'zod/v4'
@@ -73,6 +73,12 @@ export const CreateTaskV2InputSchema = z
 		createdWithExperimentFlags: CreatedWithExperimentFlagsSchema.optional(),
 		attachments: z.array(LaunchTaskDraftAttachmentInputSchema).max(50).default([]),
 		githubAccountId: LaunchGithubAccountIdSchema,
+		vmCpus: VmResourceQuantitySchema.optional().describe(
+			"vCPUs for this task's own VM; omitted uses the host default",
+		),
+		vmMemoryGiB: VmResourceQuantitySchema.optional().describe(
+			"GiB of memory for this task's own VM; omitted uses the host default",
+		),
 		vmScope: VmScopeSchema.optional().describe(
 			"For a project whose sandbox is `vm`: the host's shared VM or one of the task's own (default)",
 		),

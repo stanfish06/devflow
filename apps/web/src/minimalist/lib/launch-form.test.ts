@@ -21,6 +21,7 @@ const taskId = '019ab7c2-4f1e-7000-8000-00000000d1a7'
 const projectId = '019ab7c2-4f1e-7000-8000-0000000000aa'
 const project = {
 	id: projectId,
+	sandbox: 'vm' as const,
 	repositories: [
 		{
 			remoteUrl: 'git@github.com:acme/app.git',
@@ -125,7 +126,7 @@ describe('a draft snapshot', () => {
 
 	it('opens blank, saying why, when a newer version saved it', () => {
 		const row = savedRow(snapshot(), null)
-		const { seed, error } = fromDraftLaunch({ ...row, draft_launch: { version: 2, prompt: 'From the future' } })
+		const { seed, error } = fromDraftLaunch({ ...row, draft_launch: { version: 3, prompt: 'From the future' } })
 		expect(error).toBe(NEWER_DRAFT_ERROR)
 		expect(seed).toMatchObject({ text: '', target: null, attachments: [] })
 	})
@@ -208,11 +209,29 @@ describe('starting a draft', () => {
 	})
 
 	it('keeps the VM picked in the composer, and otherwise gives anything but a small task its own', () => {
-		const picked = snapshot({ vmScope: 'task' })
-		expect(fromDraftLaunch(savedRow(picked, null)).seed.vmScope).toBe('task')
-		expect(toStartInput(savedRow(picked, null), project, ids).vmScope).toBe('task')
+		const original = snapshot()
+		const picked = toDraftLaunch({
+			...fromDraftLaunch(savedRow(original, null)).seed,
+			target: original.target,
+			hostId: original.hostId,
+			vmScope: 'task',
+			vmCpus: 8,
+			vmMemoryGiB: 16,
+		})
+		expect(original.version).toBe(1)
+		expect(picked.version).toBe(2)
+		const resources = { vmScope: 'task', vmCpus: 8, vmMemoryGiB: 16 }
+		expect(fromDraftLaunch(savedRow(picked, null)).seed).toMatchObject(resources)
+		expect(toStartInput(savedRow(picked, null), project, ids)).toMatchObject(resources)
 		expect(toStartInput(savedRow(snapshot({ taskSize: 'medium' }), null), project, ids).vmScope).toBe('task')
 		expect(toStartInput(savedRow(snapshot({ taskSize: 'unknown' }), null), project, ids).vmScope).toBe('task')
+	})
+
+	it('uses the current project sandbox when starting a saved VM draft', () => {
+		const snapshotWithSizing = snapshot({ version: 2, vmScope: 'task', vmCpus: 8, vmMemoryGiB: 16 })
+		const row = savedRow(snapshotWithSizing, null)
+		const currentProject = { ...project, sandbox: 'docker' as const }
+		expect(toStartInput(row, currentProject, ids)).toMatchObject({ vmCpus: undefined, vmMemoryGiB: undefined })
 	})
 
 	it('runs a directory draft in its directory', () => {
@@ -226,6 +245,6 @@ describe('starting a draft', () => {
 	it("refuses when the draft's project isn't the one loaded, or the snapshot can't be read", () => {
 		const row = savedRow(snapshot(), null)
 		expect(() => toStartInput(row, undefined, ids)).toThrow("This draft's project isn't available")
-		expect(() => toStartInput({ ...row, draft_launch: { version: 2 } }, project, ids)).toThrow(NEWER_DRAFT_ERROR)
+		expect(() => toStartInput({ ...row, draft_launch: { version: 3 } }, project, ids)).toThrow(NEWER_DRAFT_ERROR)
 	})
 })

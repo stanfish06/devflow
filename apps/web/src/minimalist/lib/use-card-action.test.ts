@@ -16,7 +16,7 @@ const { api, showToast, projects } = vi.hoisted(() => ({
 		sessions: { interrupt: vi.fn(), relaunch: vi.fn(), v2: { continue: vi.fn() } },
 	},
 	showToast: vi.fn(),
-	projects: { data: [] as Array<{ id: string; name: string; repositories: unknown[] }> },
+	projects: { data: [] as Array<{ id: string; name: string; repositories: unknown[]; sandbox?: 'vm' | 'docker' }> },
 }))
 
 vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: api }) }))
@@ -115,8 +115,26 @@ describe("a card's Start", () => {
 		expect(input.sessionId).not.toBe(taskId)
 	})
 
+	it.each(['vm', 'docker'] as const)(
+		'starts a sized v2 draft with its current project sandbox (%s)',
+		async (sandbox) => {
+			projects.data = [{ id: projectId, name: 'app', repositories: [repository], sandbox }]
+			const sized = {
+				...snapshot({ kind: 'project', projectId }),
+				version: 2,
+				vmScope: 'task',
+				vmCpus: 8,
+				vmMemoryGiB: 16,
+			}
+			await run(draft(sized), { kind: 'start' })
+			const [input] = api.tasks.v2.create.mock.calls[0] as [Record<string, unknown>]
+			expect(input.vmCpus).toBe(sandbox === 'vm' ? 8 : undefined)
+			expect(input.vmMemoryGiB).toBe(sandbox === 'vm' ? 16 : undefined)
+		},
+	)
+
 	it("says why when the draft can't be read, and launches nothing", async () => {
-		await run(draft({ version: 2, prompt: 'From the future' }), { kind: 'start' })
+		await run(draft({ version: 3, prompt: 'From the future' }), { kind: 'start' })
 		expect(showToast).toHaveBeenCalledWith(NEWER_DRAFT_ERROR)
 		expect(api.tasks.launchDraft).not.toHaveBeenCalled()
 		expect(api.tasks.v2.create).not.toHaveBeenCalled()

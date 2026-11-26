@@ -13,6 +13,9 @@ export const VM_SCOPES = ['shared', 'task'] as const
 export const VmScopeSchema = z.enum(VM_SCOPES)
 export type VmScope = z.infer<typeof VmScopeSchema>
 
+/** A per-task CPU count or memory size in GiB, stored in a PostgreSQL integer. */
+export const VmResourceQuantitySchema = z.int32().positive()
+
 /** A task's sandbox, fixed at launch from its project. A null task sandbox follows the host default. */
 export const TASK_SANDBOXES = ['docker', 'vm-shared', 'vm-task', 'none'] as const
 export const TaskSandboxSchema = z.enum(TASK_SANDBOXES)

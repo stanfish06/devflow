@@ -35,14 +35,29 @@ export const githubCredentialScope = (sandbox: SessionSandbox): 'sandbox' | 'hos
  * for the row and fails when it never arrives.
  */
 export async function waitForTaskSandbox(
-	get: (taskId: string) => { readonly sandbox?: TaskSandbox | null } | undefined,
+	get: (taskId: string) =>
+		| {
+				readonly sandbox?: TaskSandbox | null
+				readonly vm_cpus?: number | null
+				readonly vm_memory_gib?: number | null
+		  }
+		| undefined,
 	taskId: string,
 	timeoutMs = 15_000,
-): Promise<{ readonly id: string; readonly sandbox: TaskSandbox | null }> {
+) {
 	const deadline = Date.now() + timeoutMs
 	for (;;) {
 		const task = get(taskId)
-		if (task) return { id: taskId, sandbox: task.sandbox ?? null }
+		if (task) {
+			return {
+				id: taskId,
+				sandbox: task.sandbox ?? null,
+				vmResources:
+					task.sandbox === 'vm-task'
+						? { cpus: task.vm_cpus ?? undefined, memoryGiB: task.vm_memory_gib ?? undefined }
+						: undefined,
+			}
+		}
 		if (Date.now() >= deadline)
 			throw new Error(`Task ${taskId} has not synced to this host, so its sandbox is unknown; retry the session`)
 		await new Promise((resolve) => setTimeout(resolve, 250))

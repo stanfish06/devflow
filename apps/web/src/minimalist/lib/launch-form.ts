@@ -1,7 +1,6 @@
 import { DraftLaunchSchema } from '@devflow/api-contract/api/tasks/draft-launch'
 import type { ApiInputs } from '@devflow/api-contract/contract-router'
 import type { Task } from '@devflow/db/tables/tasks'
-import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
 import type { TaskStatus, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
 import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { useState } from 'react'
@@ -23,12 +22,13 @@ import { useAttachments } from '@/minimalist/lib/use-attachments'
 
 /** A board draft's composer snapshot, as `tasks.saveDraft` takes it and `tasks.draft_launch` holds it. */
 export type DraftLaunch = ApiInputs['tasks']['saveDraft']['draftLaunch']
+export type VmSizing = Pick<DraftLaunch, 'vmCpus' | 'vmMemoryGiB'>
 /** Where a draft runs, by id: a project or a directory. */
 export type DraftTarget = DraftLaunch['target']
 export type SaveDraftInput = ApiInputs['tasks']['saveDraft']
 
 /** What the composer opens with: a draft's snapshot, or a blank one. */
-export type LaunchFormSeed = {
+export type LaunchFormSeed = VmSizing & {
 	text: string
 	target: DraftTarget | null
 	hostId: string | null
@@ -127,6 +127,8 @@ export function fromDraftLaunch(task: Task): { seed: LaunchFormSeed; error: stri
 			taskSize: snapshot.taskSize,
 			smallAutoAdvance: snapshot.smallAutoAdvance,
 			vmScope: snapshot.vmScope ?? null,
+			vmCpus: snapshot.vmCpus,
+			vmMemoryGiB: snapshot.vmMemoryGiB,
 			attachments: snapshot.attachments,
 		},
 		error: null,
@@ -134,19 +136,21 @@ export function fromDraftLaunch(task: Task): { seed: LaunchFormSeed; error: stri
 }
 
 /** The composer as a draft snapshot. The inverse of `fromDraftLaunch` for everything but the ticket, which the row keeps. */
-export function toDraftLaunch(state: {
-	text: string
-	target: DraftTarget
-	hostId: string
-	settings: ComposerSettings
-	taskSize: TaskSize
-	smallAutoAdvance: boolean
-	/** Absent or null: follow the task size. */
-	vmScope?: VmScope | null
-	attachments: readonly AttachmentMetadata[]
-}): DraftLaunch {
+export function toDraftLaunch(
+	state: VmSizing & {
+		text: string
+		target: DraftTarget
+		hostId: string
+		settings: ComposerSettings
+		taskSize: TaskSize
+		smallAutoAdvance: boolean
+		/** Absent or null: follow the task size. */
+		vmScope?: VmScope | null
+		attachments: readonly AttachmentMetadata[]
+	},
+): DraftLaunch {
 	return {
-		version: 1,
+		version: state.vmCpus !== undefined || state.vmMemoryGiB !== undefined ? 2 : 1,
 		prompt: state.text,
 		attachments: [...state.attachments],
 		target: state.target,
@@ -155,6 +159,8 @@ export function toDraftLaunch(state: {
 		taskSize: state.taskSize,
 		smallAutoAdvance: state.smallAutoAdvance,
 		vmScope: state.vmScope ?? undefined,
+		vmCpus: state.vmCpus,
+		vmMemoryGiB: state.vmMemoryGiB,
 	}
 }
 
@@ -218,10 +224,13 @@ export function launchInput(args: {
 	/** The account picked in the composer. A draft's snapshot doesn't keep one, so its Start uses the project's or your default. */
 	githubAccount?: StartTaskInput['githubAccount']
 }): StartTaskInput {
-	const { snapshot } = args
+	const { snapshot, target } = args
+	const vmScope = snapshot.vmScope ?? defaultVmScope(snapshot.taskSize)
+	// A saved draft's project may have switched away from VM since it was saved.
+	const ownVm = target.kind === 'project' && target.project.sandbox === 'vm' && vmScope === 'task'
 	const input: StartTaskInput = {
 		ids: args.ids,
-		target: args.target,
+		target,
 		hostId: snapshot.hostId,
 		draft: snapshot.prompt,
 		ticket: args.ticket,
@@ -229,7 +238,9 @@ export function launchInput(args: {
 		settings: snapshot.settings,
 		workflow: taskSizeWorkflow(snapshot.taskSize, snapshot.smallAutoAdvance),
 		directImplementation: snapshot.taskSize === 'small',
-		vmScope: snapshot.vmScope ?? defaultVmScope(snapshot.taskSize),
+		vmScope,
+		vmCpus: ownVm ? snapshot.vmCpus : undefined,
+		vmMemoryGiB: ownVm ? snapshot.vmMemoryGiB : undefined,
 	}
 	if (args.status) input.status = args.status
 	if (args.githubAccount) input.githubAccount = args.githubAccount
@@ -242,7 +253,7 @@ export function launchInput(args: {
  */
 export function toStartInput(
 	task: Task,
-	project: { id: string; repositories: readonly ProjectRepository[] } | undefined,
+	project: Extract<LoadedTarget, { kind: 'project' }>['project'] | undefined,
 	ids: { sessionId: string; eventId: string },
 ): StartTaskInput {
 	const parsed = parseDraftLaunch(task.draft_launch)
@@ -285,6 +296,7 @@ export function useLaunchForm({
 	const [settings, setSettings] = useState<ComposerSettings>(() => seed?.settings ?? savedSettings())
 	const [ticket, setTicket] = useState<Ticket | null>(seed?.ticket ?? null)
 	const [vmScope, setVmScope] = useState<VmScope | null>(seed?.vmScope ?? null)
+	const [vmSizing, setVmSizing] = useState<VmSizing>({ vmCpus: seed?.vmCpus, vmMemoryGiB: seed?.vmMemoryGiB })
 	const attachments = useAttachments(uploads.taskId, uploads.existing, seed?.attachments)
 	const persisted = seed === null
 	return {
@@ -304,6 +316,8 @@ export function useLaunchForm({
 		setSmallAutoAdvance: persisted ? setStoredSmallAutoAdvance : setDraftSmallAutoAdvance,
 		vmScope,
 		setVmScope,
+		vmSizing,
+		setVmSizing,
 		attachments,
 	}
 }

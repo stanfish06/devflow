@@ -196,6 +196,9 @@ describe('startTask', () => {
 			target: { kind: 'project', project: { id: 'p1', repositories: [repository] } },
 			hostId: 'h1',
 			draft: 'Fix the login bug',
+			vmScope: 'task',
+			vmCpus: 6,
+			vmMemoryGiB: 12,
 			ticket: null,
 			attachments: [],
 			settings,
@@ -205,6 +208,9 @@ describe('startTask', () => {
 		const [created] = api.tasks.v2.create.mock.calls[0] as unknown as [Record<string, unknown>]
 		expect(created).toMatchObject({
 			name: 'Fix the login bug',
+			vmScope: 'task',
+			vmCpus: 6,
+			vmMemoryGiB: 12,
 			slug: 'fix-the-login-bug-0001',
 			projectId: 'p1',
 			defaultRepositoryIdentity: 'github.com/acme/app',

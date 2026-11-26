@@ -35,6 +35,8 @@ const task: Task = {
 	workspace_id: workspaceId,
 	project_id: null,
 	sandbox: null,
+	vm_cpus: null,
+	vm_memory_gib: null,
 	team_id: null,
 	created_by: 'user-1',
 	resource_owner_user_id: 'user-1',

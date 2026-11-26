@@ -190,6 +190,54 @@ function expectPlainLanding(container: HTMLElement, heading: string) {
 
 vi.mock('@/minimalist/components/WiredTaskNavigation', () => ({ WiredTaskNavigation: () => null }))
 
+describe('task VM sizing', () => {
+	beforeEach(() => {
+		useProjects.mockReturnValue({
+			data: [{ id: 'project', name: 'simulation', repositories: [], sandbox: 'vm' }],
+			isPending: false,
+		})
+	})
+
+	it('launches with the resources applied to the task VM', async () => {
+		render(<NewTask projectId="project" />)
+		fireEvent.click(screen.getByRole('button', { name: 'VM: Own VM' }))
+		const cpus = screen.getByRole('spinbutton', { name: 'vCPUs' })
+		const memory = screen.getByRole('spinbutton', { name: 'Memory (GiB)' })
+		expect(cpus).toHaveValue(null)
+		expect(memory).toHaveValue(null)
+		fireEvent.change(cpus, { target: { value: '0' } })
+		expect(cpus).toBeInvalid()
+		fireEvent.change(cpus, { target: { value: '8' } })
+		fireEvent.change(memory, { target: { value: '16' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+		expect(screen.getByRole('button', { name: 'VM: Own VM · 8 vCPUs · 16 GiB' })).toBeInTheDocument()
+
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Run the simulation' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		expect(startTask.mock.calls[0]?.[1]).toMatchObject({ vmScope: 'task', vmCpus: 8, vmMemoryGiB: 16 })
+	})
+
+	it('drops the overrides when switching to the shared VM', async () => {
+		render(<NewTask projectId="project" />)
+		fireEvent.click(screen.getByRole('button', { name: 'VM: Own VM' }))
+		fireEvent.change(screen.getByRole('spinbutton', { name: 'Memory (GiB)' }), { target: { value: '12' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+		fireEvent.click(screen.getByRole('button', { name: 'VM: Own VM · 12 GiB' }))
+		fireEvent.click(screen.getByRole('button', { name: /^Shared VM/ }))
+		fireEvent.click(screen.getByRole('button', { name: 'VM: Shared VM' }))
+		expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+		fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Use the shared VM' } })
+		fireEvent.click(screen.getByRole('button', { name: 'Start' }))
+		await waitFor(() => expect(startTask).toHaveBeenCalledOnce())
+		expect(startTask.mock.calls[0]?.[1]).toMatchObject({
+			vmScope: 'shared',
+			vmCpus: undefined,
+			vmMemoryGiB: undefined,
+		})
+	})
+})
+
 describe('minimalist launch landing', () => {
 	it('shows only the greeting above the input for a new task and keeps the project picker', () => {
 		const { container } = render(<NewTask projectId="project" />)
@@ -765,7 +813,7 @@ describe('an opened draft', () => {
 
 	it('says so instead of guessing when a newer version saved it', () => {
 		useTask.mockReturnValue({
-			task: { ...draftTask, draft_launch: { ...draftTask.draft_launch, version: 2 } },
+			task: { ...draftTask, draft_launch: { ...draftTask.draft_launch, version: 3 } },
 			sessions: [],
 			isReady: true,
 		})

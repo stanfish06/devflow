@@ -66,6 +66,6 @@ describe('startBlocker', () => {
 	})
 
 	it('says so when a newer version saved the draft, rather than guessing', () => {
-		expect(startBlocker(draft({ version: 2 }), [host('laptop')], projects)).toBe(NEWER_DRAFT_ERROR)
+		expect(startBlocker(draft({ version: 3 }), [host('laptop')], projects)).toBe(NEWER_DRAFT_ERROR)
 	})
 })

@@ -338,6 +338,8 @@ interface VmEntry {
 	forwardGeneration: number
 }
 
+export type VmResources = Pick<VmConfig, 'cpus' | 'memoryGiB'>
+
 export interface VmProcess {
 	readonly child: ChildProcess
 	readonly stop: () => void
@@ -412,6 +414,7 @@ export class VmManager {
 	 */
 	async acquire(input: {
 		readonly scope: VmScope
+		readonly resources?: Partial<VmResources>
 		readonly taskId: string | null
 		readonly paths: readonly (string | undefined)[]
 		/** The agent loads this host plugin read-only at the same path in the guest. */
@@ -441,8 +444,9 @@ export class VmManager {
 		entry.deleteWhenIdle = false
 		clearTimeout(entry.idleTimer)
 		try {
+			const resources = kind === 'task' ? input.resources : undefined
 			await this.locked(name, async () => {
-				await this.ensureRunning(entry, required, readOnly)
+				await this.ensureRunning(entry, required, readOnly, resources)
 				if (
 					input.workflowPluginPath &&
 					!(await ensureVmWorkflowPlugin(this.lima, name, input.workflowPluginPath, entry.leases > 1))
@@ -607,6 +611,7 @@ export class VmManager {
 		entry: VmEntry,
 		required: readonly string[],
 		readOnly: readonly string[],
+		resources?: Partial<VmResources>,
 	): Promise<void> {
 		let instance = await this.instance(entry.name)
 		if (!instance) {
@@ -618,8 +623,8 @@ export class VmManager {
 					'clone',
 					base,
 					entry.name,
-					`--cpus=${this.config.cpus}`,
-					`--memory=${this.config.memoryGiB}`,
+					`--cpus=${resources?.cpus ?? this.config.cpus}`,
+					`--memory=${resources?.memoryGiB ?? this.config.memoryGiB}`,
 					'--set',
 					mountExpression(mounts, readOnly),
 				],

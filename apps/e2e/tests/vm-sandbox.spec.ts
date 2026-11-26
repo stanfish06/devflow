@@ -49,6 +49,32 @@ test.describe('VM sandbox', () => {
 		await page.close()
 	})
 
+	test('own VM uses the CPU and memory requested in the composer', async ({ page }) => {
+		const cpus = 8
+		const memoryGiB = 16
+		await openE2eProject(page)
+		await setProjectSandbox(page, 'VM (Docker inside)')
+		await openE2eProject(page)
+		const taskId = await startTask(page, {
+			prompt: 'Run nproc and report its output.',
+			vm: 'Own VM',
+			vmResources: { cpus, memoryGiB },
+		})
+		await waitForTurnEnd(page, 40 * 60_000)
+		const guest = spawnSync(
+			'limactl',
+			['shell', taskVmName(taskId), '--', 'sh', '-c', "nproc && awk '/^MemTotal:/ { print $2 }' /proc/meminfo"],
+			{ encoding: 'utf8', timeout: 30_000 },
+		)
+		expect(guest.status, guest.stderr).toBe(0)
+		const [onlineCpus, totalKiB] = guest.stdout.trim().split(/\s+/).map(Number)
+		expect(onlineCpus).toBe(cpus)
+		// Linux excludes kernel-reserved memory from MemTotal.
+		expect(totalKiB).toBeGreaterThan((memoryGiB - 1) * 1024 ** 2)
+		expect(totalKiB).toBeLessThanOrEqual(memoryGiB * 1024 ** 2)
+		await archiveTask(page, taskId)
+	})
+
 	test("a task runs Docker in its own VM, the VM's port opens on the host, and archiving deletes the VM", async ({
 		page,
 	}) => {
