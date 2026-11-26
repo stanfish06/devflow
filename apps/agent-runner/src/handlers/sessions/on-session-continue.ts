@@ -5,6 +5,7 @@ import { Effect } from 'effect'
 import type { DaemonServices } from '@/agents/claudecode/types'
 import { parseSessionForExecution, runSession, type SessionContinuationKind } from '@/agents/shared/run-session'
 import type { SessionChangeMessage } from '@/collections/types'
+import { closeCodexAppServer } from '@/devflow/codex-app-server'
 import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import logger from '@/logger'
 
@@ -107,6 +108,11 @@ export async function handleContinueSession(change: SessionChangeMessage, servic
 		logger.info({ sessionId: session.id, outcome }, 'Live Claude send unavailable; falling back to resume')
 	}
 
+	// A lost update may already be stale in the collection. The recovery command itself proves
+	// the old turn was abandoned, so replace its process before delivering the new prompt.
+	if (launchableAgent.data === 'codelayer' && continuationKindFor(change) === 'lost-resume') {
+		await closeCodexAppServer(session.id)
+	}
 	// Update status to running before continuing through a persisted resume.
 	await markSessionRunningBeforeDelivery()
 	logger.info(`Marked session ${session.id} as running and continuing`)

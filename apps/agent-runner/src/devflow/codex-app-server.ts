@@ -30,6 +30,7 @@ import { getWorkflowRoutingContext } from '@/agents/claudecode/hooks/workflow-ro
 import { handleInterruptOutcome, subscribeToSessionInterrupt } from '@/agents/claudecode/interrupts'
 import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } from '@/agents/shared/run-session'
 import { isVmSandbox, sessionSandbox, waitForTaskSandbox, whileLaunching } from '@/devflow/agent-sandbox'
+import { CodexSessionClosedError, CodexSessionProcesses } from '@/devflow/codex-session-processes'
 import { DEVFLOW_SECRET_ENV, githubCredentialMounts, gitCommonDir } from '@/devflow/docker-sandbox'
 import { vmManager, type VmLease } from '@/devflow/vm-sandbox'
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
@@ -82,7 +83,8 @@ export class AppServerClient {
 		number,
 		{ resolve: (v: RpcMessage['result']) => void; reject: (e: Error) => void }
 	>()
-	private readonly notificationHandlers: Array<(method: string, params: Record<string, JsonValue>) => void> = []
+	private notificationHandler?: (method: string, params: Record<string, JsonValue>) => void
+	private exitHandler?: (code: number | null) => void
 	private requestHandler: ((method: string, params: Record<string, JsonValue>) => Promise<JsonValue>) | null = null
 	private readonly exited: Promise<number | null>
 	/** Set once the process failed to spawn or exited; later requests reject with it. */
@@ -102,6 +104,7 @@ export class AppServerClient {
 				this.closedError = error
 				for (const { reject } of this.pending.values()) reject(error)
 				this.pending.clear()
+				this.exitHandler?.(code)
 				resolve(code)
 			}
 			// A missing `codex` binary emits `error` (code ENOENT) and may never emit `exit`.
@@ -111,7 +114,17 @@ export class AppServerClient {
 	}
 
 	onNotification(handler: (method: string, params: Record<string, JsonValue>) => void): void {
-		this.notificationHandlers.push(handler)
+		this.notificationHandler = handler
+	}
+
+	onExit(handler: (code: number | null) => void): void {
+		this.exitHandler = handler
+	}
+
+	clearTurnHandlers(): void {
+		this.notificationHandler = undefined
+		this.exitHandler = undefined
+		this.requestHandler = null
 	}
 
 	onRequest(handler: (method: string, params: Record<string, JsonValue>) => Promise<JsonValue>): void {
@@ -134,9 +147,22 @@ export class AppServerClient {
 		return this.exited
 	}
 
-	close(): void {
+	close(graceful = false): void {
+		if (this.closedError) return
 		this.child.stdin?.end()
-		this.child.kill('SIGTERM')
+		if (!graceful) {
+			this.child.kill('SIGTERM')
+			return
+		}
+		// Allow a rollout flush, then finish escalation within the daemon's 2.5s session drain.
+		const terminate = setTimeout(() => this.child.kill('SIGTERM'), 1_000)
+		const kill = setTimeout(() => this.child.kill('SIGKILL'), 2_000)
+		terminate.unref()
+		kill.unref()
+		void this.exited.then(() => {
+			clearTimeout(terminate)
+			clearTimeout(kill)
+		})
 	}
 
 	private send(message: RpcMessage): void {
@@ -174,8 +200,7 @@ export class AppServerClient {
 				)
 			return
 		}
-		if (message.method)
-			for (const handler of this.notificationHandlers) handler(message.method, message.params ?? {})
+		if (message.method) this.notificationHandler?.(message.method, message.params ?? {})
 	}
 }
 
@@ -307,7 +332,13 @@ function requestedRpiSkill(prompt: string): string | undefined {
 	return (match?.[1] ?? match?.[2])?.toLowerCase()
 }
 
-async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: string, continuing: boolean) {
+async function prepareCodexWorkflow(
+	ctx: SessionContext,
+	cwd: string,
+	prompt: string,
+	continuing: boolean,
+	cold: boolean,
+) {
 	const { session, services } = ctx
 	const taskId = session.task_id
 	const task = taskId ? services.collections.tasks.get(taskId) : undefined
@@ -316,8 +347,33 @@ async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: st
 	const artifacts = taskId && slug ? await setupArtifactPaths(cwd, taskId, slug, services.daemonRuntime) : null
 	const requested = requestedRpiSkill(prompt)
 	// Interrupt/resume can reuse the pre-invocation session snapshot. Read the persisted call on replies.
+	const handoff = Boolean(session.handoff_source_session_id)
 	const previous =
-		continuing && !requested ? await services.orpc.sessions.workflowSkill({ sessionId: session.id }) : null
+		handoff || (continuing && (cold || !requested))
+			? await services.orpc.sessions.workflowSkill({
+					sessionId: session.id,
+					includeConversation: cold && continuing,
+				})
+			: null
+	const context: string[] = []
+	if (cold && handoff && slug) {
+		const briefPath = `.devflow/tasks/${slug}/task.md`
+		const brief = sync?.getCollection()?.toArray.find((artifact) => artifact.file_name === 'task.md')?.content
+		// Larger briefs stay available in full through the task's mounted artifact directory.
+		context.push(
+			brief && brief.length <= 8192
+				? `Original task brief (${briefPath}):\n${brief}`
+				: `Read the original task brief at ${briefPath} when you need the task request.`,
+		)
+	}
+	// The launch prompt already contains the frozen handoff transcript. On replies, restore
+	// the recent exchanges even when neither provider recorded a workflow skill.
+	if (cold && continuing && previous?.conversation.length) {
+		context.push(
+			'Recent Devflow conversation, oldest first. Use it to interpret the current user reply below.',
+			JSON.stringify(previous.conversation),
+		)
+	}
 	const skillName = requested ?? previous?.skill
 	// A resumed turn can still reference files from the skill loaded on an earlier turn.
 	const pluginPath =
@@ -337,14 +393,15 @@ async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: st
 		const instructions = [
 			`Devflow loaded ${name} from ${path}. Follow its instructions using your available tools. Where a named research agent is unavailable, perform its research with your own tools.`,
 			contents.replaceAll('{SKILLBASE}', () => base),
-			previous?.skill &&
+			!requested &&
+				previous?.skill &&
 				[
 					`Use ${name} again for this turn. Continue from the last exchange and the existing task artifacts${slug ? ` in .devflow/tasks/${slug}` : ''}.`,
-					"Apply the user's reply to the pending decision. Preserve settled decisions in the artifact. During an unfinished interview, ask the next single unresolved question and wait for the user's answer. Follow the skill's completion criteria before offering the next phase.",
+					continuing
+						? "Apply the user's reply to the pending decision."
+						: "Resume at the last exchange. If a question is pending, present it and wait for the user's answer.",
+					"Preserve settled decisions in the artifact. During an unfinished interview, ask the next single unresolved question and wait for the user's answer. Follow the skill's completion criteria before offering the next phase.",
 					'Follow an explicit request to pause, stop, or change direction.',
-					// The provider's resumed thread can have incomplete history on a VM-mounted Codex home.
-					'Recent messages from this Devflow session, oldest first. They are conversation history. The current user reply follows separately.',
-					JSON.stringify(previous.conversation),
 				].join(' '),
 			routing,
 		]
@@ -366,7 +423,100 @@ async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: st
 						signal,
 					})
 			: undefined
-	return { skill, pluginPath, artifacts, syncArtifacts }
+	return { skill, context, pluginPath, artifacts, syncArtifacts }
+}
+
+type CodexProcess = {
+	client: AppServerClient
+	threadId: string | null
+	github: Awaited<ReturnType<typeof prepareCodexGithubCredentials>>
+	close(): Promise<void>
+	whenExited(): Promise<number | null>
+}
+
+const codexProcesses = new CodexSessionProcesses<CodexProcess>()
+
+export const closeCodexAppServer = (sessionId: string) => codexProcesses.forceClose(sessionId)
+export const shutdownCodexAppServers = () => codexProcesses.shutdown()
+export function retireCodexAppServer(sessionId: string): void {
+	void codexProcesses
+		.retire(sessionId)
+		.catch((error: unknown) => logger.error({ error, sessionId }, 'Could not retire Codex app-server'))
+}
+
+async function openCodexProcess(
+	ctx: SessionContext,
+	cwd: string,
+	sandbox: ReturnType<typeof sessionSandbox>,
+	workflow: Awaited<ReturnType<typeof prepareCodexWorkflow>>,
+	continuing: boolean,
+	signal: AbortSignal,
+): Promise<CodexProcess> {
+	const { session, services } = ctx
+	const { orpc } = services
+	const inVm = isVmSandbox(sandbox)
+	// Fails the session rather than start Codex as some other GitHub identity.
+	const github = await prepareCodexGithubCredentials(session, services, inVm ? 'sandbox' : 'host')
+	let lease: VmLease | null = null
+	let client: AppServerClient
+	try {
+		signal.throwIfAborted()
+		if (inVm) {
+			// A later turn can select an RPI skill while this process still holds the same VM lease.
+			const pluginPath = workflow.pluginPath ?? (await ensureRpiPluginOnDisk())
+			signal.throwIfAborted()
+			// The dispatcher marks a launch as launching and a continuation as running.
+			const activeStatus = continuing ? 'running' : 'launching'
+			lease = await whileLaunching(
+				vmManager.acquire({
+					scope: sandbox === 'vm-task' ? 'task' : 'shared',
+					taskId: session.task_id,
+					paths: [
+						...taskWorkspaceMounts(cwd),
+						codexHome(),
+						...githubCredentialMounts(github.githubEnv),
+						pluginPath,
+						workflow.artifacts?.storagePath,
+					],
+					readOnlyPaths: [pluginPath],
+				}),
+				// Only while still launching: a stop request must not be overwritten.
+				() =>
+					services.collections.sessions.get(session.id)?.status === activeStatus
+						? orpc.sessions.update({ sessionId: session.id, status: activeStatus })
+						: Promise.resolve(),
+			)
+			// Electric may still show the dispatching row until the daemon's status write arrives.
+			const status = services.collections.sessions.get(session.id)?.status
+			const awaitingDispatch =
+				status && (continuing ? status === 'resuming' : isSessionStatusAwaitingLaunch(status))
+			if (status !== activeStatus && !awaitingDispatch) {
+				throw new Error('The session stopped while its VM was starting')
+			}
+		}
+		signal.throwIfAborted()
+		client = new AppServerClient(
+			lease
+				? startVmAppServer(lease, cwd, github.githubEnv)
+				: startAppServer(cwd, codexEnvironment(github.githubEnv)),
+		)
+	} catch (error) {
+		lease?.release()
+		await github.release()
+		throw error
+	}
+	return {
+		client,
+		threadId: null,
+		github,
+		whenExited: () => client.whenExited(),
+		close: async () => {
+			client.close(true)
+			await client.whenExited()
+			lease?.release()
+			await github.release()
+		},
+	}
 }
 
 export async function executeCodexAppServer(
@@ -386,53 +536,30 @@ export async function executeCodexAppServer(
 		session.task_id ? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id) : null,
 	)
 	const inVm = isVmSandbox(sandbox)
-	const workflow = await prepareCodexWorkflow(ctx, cwd, prompt, resumeSessionId !== undefined)
-	// Fails the session rather than start Codex as some other GitHub identity.
-	const github = await prepareCodexGithubCredentials(session, services, inVm ? 'sandbox' : 'host')
-	let lease: VmLease | null = null
-	let client: AppServerClient
-	try {
-		if (inVm) {
-			// The dispatcher marks a launch as launching and a continuation as running.
-			const activeStatus = resumeSessionId ? 'running' : 'launching'
-			lease = await whileLaunching(
-				vmManager.acquire({
-					scope: sandbox === 'vm-task' ? 'task' : 'shared',
-					taskId: session.task_id,
-					paths: [
-						...taskWorkspaceMounts(cwd),
-						codexHome(),
-						...githubCredentialMounts(github.githubEnv),
-						workflow.pluginPath,
-						workflow.artifacts?.storagePath,
-					],
-					readOnlyPaths: [workflow.pluginPath],
-				}),
-				// Only while still launching: a stop request must not be overwritten.
-				() =>
-					services.collections.sessions.get(session.id)?.status === activeStatus
-						? orpc.sessions.update({ sessionId: session.id, status: activeStatus })
-						: Promise.resolve(),
-			)
-			// Electric may still show the dispatching row until the daemon's status write arrives.
-			const status = services.collections.sessions.get(session.id)?.status
-			const awaitingDispatch =
-				status && (resumeSessionId ? status === 'resuming' : isSessionStatusAwaitingLaunch(status))
-			if (status !== activeStatus && !awaitingDispatch) {
-				throw new Error('The session stopped while its VM was starting')
-			}
-		}
-		client = new AppServerClient(
-			lease
-				? startVmAppServer(lease, cwd, github.githubEnv)
-				: startAppServer(cwd, codexEnvironment(github.githubEnv)),
+	const continuing = resumeSessionId !== undefined
+	const prepareWorkflow = (cold: boolean) => prepareCodexWorkflow(ctx, cwd, prompt, continuing, cold)
+	let workflow: Awaited<ReturnType<typeof prepareWorkflow>> | undefined
+	// The VM mounts and GitHub identity belong to the task that opened the process.
+	const processScope = JSON.stringify([session.task_id, session.resource_owner_user_id, cwd, sandbox])
+	const slot = await codexProcesses
+		.acquire(
+			session.id,
+			async (signal) => {
+				workflow = await prepareWorkflow(true)
+				signal.throwIfAborted()
+				return openCodexProcess(ctx, cwd, sandbox, workflow, continuing, signal)
+			},
+			processScope,
 		)
-	} catch (error) {
-		lease?.release()
-		await github.release()
-		throw error
-	}
-	let threadId = session.coding_agent_session_id ?? ''
+		.catch((error: unknown) => {
+			if (error instanceof CodexSessionClosedError) return null
+			throw error
+		})
+	if (!slot) return
+	const live = slot.process
+	const { client, github } = live
+	const warm = live.threadId !== null
+	let threadId = live.threadId ?? session.coding_agent_session_id ?? ''
 	const emit = (event: Omit<CreateEvent, 'sessionId' | 'codingAgentSessionId'>) =>
 		orpc.sessions.events.create({ ...event, sessionId: session.id, codingAgentSessionId: threadId } as CreateEvent)
 
@@ -473,6 +600,7 @@ export async function executeCodexAppServer(
 	const turnDone = new Promise<Record<string, JsonValue>>((resolve) => {
 		resolveTurn = resolve
 	})
+	client.onExit((code) => resolveTurn({ status: 'failed', error: { message: `codex app-server exited (${code})` } }))
 	// Events are written in order; a chain keeps them ordered while notifications arrive.
 	let writes = Promise.resolve()
 	const enqueue = (write: () => Promise<unknown>) => {
@@ -588,47 +716,54 @@ export async function executeCodexAppServer(
 		})
 	}
 
-	const unsubscribeInterrupt = subscribeToSessionInterrupt({
-		sessionId: session.id,
-		interruptState,
-		eventIterator: { interrupt: interruptTurn },
-		closeInputStream: undefined,
-		sessionsCollection: services.collections.sessions,
-	})
-
+	let unsubscribeInterrupt: (() => void) | undefined
 	let currentTurnId = ''
+	let keepAlive = false
 	try {
-		await client.request('initialize', { clientInfo: { name: 'devflow', title: 'devflow', version: '1' } })
-		client.notify('initialized')
-		const threadSettings = {
-			cwd,
-			model: session.model ?? null,
-			approvalPolicy: bypass ? 'never' : 'on-request',
-			// In a VM the VM is the boundary, and Codex's own sandbox would keep commands off its Docker socket.
-			sandbox: bypass || inVm ? 'danger-full-access' : 'workspace-write',
-			// Agents install dependencies and fetch docs, so the workspace sandbox keeps network access.
-			config: {
-				sandbox_workspace_write: {
-					network_access: true,
-					writable_roots: workflow.artifacts ? [workflow.artifacts.storagePath] : undefined,
+		workflow ??= await prepareWorkflow(false)
+		if (slot.wasCancelled()) return
+		unsubscribeInterrupt = subscribeToSessionInterrupt({
+			sessionId: session.id,
+			interruptState,
+			eventIterator: { interrupt: interruptTurn },
+			closeInputStream: undefined,
+			sessionsCollection: services.collections.sessions,
+		})
+
+		if (!warm) {
+			await client.request('initialize', { clientInfo: { name: 'devflow', title: 'devflow', version: '1' } })
+			client.notify('initialized')
+			const threadSettings = {
+				cwd,
+				model: session.model ?? null,
+				approvalPolicy: bypass ? 'never' : 'on-request',
+				// In a VM the VM is the boundary, and Codex's own sandbox would keep commands off its Docker socket.
+				sandbox: bypass || inVm ? 'danger-full-access' : 'workspace-write',
+				// Agents install dependencies and fetch docs, so the workspace sandbox keeps network access.
+				config: {
+					sandbox_workspace_write: {
+						network_access: true,
+						writable_roots: workflow.artifacts ? [workflow.artifacts.storagePath] : undefined,
+					},
 				},
-			},
-		}
-		if (threadId) {
-			await client.request('thread/resume', { threadId, ...threadSettings, excludeTurns: true })
-		} else {
-			const started = (await client.request('thread/start', threadSettings)) as { thread: { id: string } }
-			threadId = started.thread.id
-			await orpc.sessions.update({ sessionId: session.id, codingAgentSessionId: threadId })
+			}
+			if (threadId) {
+				await client.request('thread/resume', { threadId, ...threadSettings, excludeTurns: true })
+			} else {
+				const started = (await client.request('thread/start', threadSettings)) as { thread: { id: string } }
+				threadId = started.thread.id
+				await orpc.sessions.update({ sessionId: session.id, codingAgentSessionId: threadId })
+			}
+			live.threadId = threadId
 		}
 		await orpc.sessions.update({ sessionId: session.id, status: 'running' })
 
 		// Launch and continue already persist the user messages before dispatching this turn.
+		const preamble = [workflow.skill?.instructions, ...workflow.context].filter(Boolean).join('\n\n')
 		const turnInput = [{ type: 'text', text: prompt, text_elements: [] }]
+		if (preamble) turnInput.unshift({ type: 'text', text: preamble + '\n\n', text_elements: [] })
 		if (workflow.skill) {
-			const { name, path, instructions } = workflow.skill
-			// Keep the actual reply last, so a bare confirmation answers the pending interview question.
-			turnInput.unshift({ type: 'text', text: instructions + '\n\n', text_elements: [] })
+			const { name, path } = workflow.skill
 			// The API applies phase labels when it records a Skill call. Codex's adapter loaded it above.
 			const toolCallId = crypto.randomUUID()
 			await emit({
@@ -650,18 +785,24 @@ export async function executeCodexAppServer(
 		const started = (await client.request('turn/start', {
 			threadId,
 			input: turnInput,
+			model: session.model ?? null,
+			approvalPolicy: bypass ? 'never' : 'on-request',
+			sandboxPolicy:
+				bypass || inVm
+					? { type: 'dangerFullAccess' }
+					: {
+							type: 'workspaceWrite',
+							writableRoots: workflow.artifacts ? [cwd, workflow.artifacts.storagePath] : [cwd],
+							networkAccess: true,
+						},
 			...(effort ? { effort } : {}),
 		})) as { turn: { id: string } }
 		currentTurnId = started.turn.id
 		logger.info({ sessionId: session.id, threadId, turnId: currentTurnId }, 'Codex app-server turn started')
 
-		const turn = await Promise.race([
-			turnDone,
-			client
-				.whenExited()
-				.then((code) => ({ status: 'failed', error: { message: `codex app-server exited (${code})` } })),
-		])
+		const turn = await turnDone
 		await writes
+		if (slot.wasCancelled()) return
 		if (!(await Effect.runPromise(interruptState.wasInterrupted))) {
 			if (turn.status === 'failed') {
 				const message = (turn.error as { message?: string } | undefined)?.message ?? 'Codex turn failed'
@@ -669,18 +810,20 @@ export async function executeCodexAppServer(
 			} else {
 				// The ready transition checks uploaded artifact frontmatter to launch the next phase.
 				await workflow.syncArtifacts?.(abort.signal)
-				if (!(await Effect.runPromise(interruptState.wasInterrupted))) {
+				if (!slot.wasCancelled() && !(await Effect.runPromise(interruptState.wasInterrupted))) {
 					await orpc.sessions.update({ sessionId: session.id, status: 'ready_for_input' })
 				}
 			}
 		}
+		keepAlive = turn.status !== 'failed'
 	} catch (error) {
+		if (slot.wasCancelled()) return
 		if (!(await Effect.runPromise(interruptState.wasInterrupted))) throw error
 	} finally {
-		unsubscribeInterrupt()
-		client.close()
-		lease?.release()
-		await github.release()
+		unsubscribeInterrupt?.()
+		abort.abort()
+		client.clearTurnHandlers()
+		await slot.release(!keepAlive)
 	}
 
 	await handleInterruptOutcome({
@@ -691,7 +834,11 @@ export async function executeCodexAppServer(
 		onResume: async (nextPrompt) => {
 			const { runSession } = await import('@/agents/shared/run-session')
 			await runSession({
-				session: { ...session, prompt: nextPrompt, coding_agent_session_id: threadId },
+				session: {
+					...(services.collections.sessions.get(session.id) ?? session),
+					prompt: nextPrompt,
+					coding_agent_session_id: threadId,
+				},
 				resumeSessionId: session.id,
 				services,
 				execute: executeCodexAppServer,

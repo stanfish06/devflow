@@ -8,6 +8,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { ShutdownCoordinator } from '@/agents/claudecode/shutdown'
 import type { DaemonServices, ORPCClient } from '@/agents/claudecode/types'
 import type { SessionExecutor } from '@/agents/shared/run-session'
+import * as codex from '@/devflow/codex-app-server'
 import type { DaemonRuntime } from '@/effects/runtime'
 import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import {
@@ -574,7 +575,7 @@ describe('handleContinueSession', () => {
 		).toBe('ordinary')
 	})
 
-	test('keeps the pre-delivery running report for a lost CodeLayer continuation', async () => {
+	test('waits for a lost Codex process to close before reporting running and delivering recovery', async () => {
 		const { mockServices, mockSessionsUpdate } = createMockServices()
 		const change = makeSessionChange({
 			type: 'update',
@@ -587,7 +588,19 @@ describe('handleContinueSession', () => {
 			previousValue: { status: 'lost' },
 		})
 
-		await handleContinueSession(change, mockServices)
+		const closed = Promise.withResolvers<void>()
+		const close = vi.spyOn(codex, 'closeCodexAppServer').mockReturnValue(closed.promise)
+		try {
+			const resume = handleContinueSession(change, mockServices)
+			expect(close).toHaveBeenCalledExactlyOnceWith(change.value.id)
+			expect(mockSessionsUpdate).not.toHaveBeenCalled()
+			expect(mockServices.executors.codelayer).not.toHaveBeenCalled()
+			closed.resolve()
+			await resume
+		} finally {
+			closed.resolve()
+			close.mockRestore()
+		}
 
 		expect(mockSessionsUpdate).toHaveBeenCalledWith({
 			sessionId: '00000000-0000-4000-8000-000000000008',

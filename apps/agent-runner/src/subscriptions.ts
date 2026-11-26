@@ -6,6 +6,7 @@ import * as Schema from 'effect/Schema'
 import type { DaemonServices } from '@/agents/claudecode/types'
 import { parseSessionLaunchCandidate } from '@/collections/parse-session-launch-candidate'
 import type { SessionChangeMessage } from '@/collections/types'
+import { closeCodexAppServer, retireCodexAppServer } from '@/devflow/codex-app-server'
 import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import {
 	DaemonCollections,
@@ -164,6 +165,37 @@ export const processSessionChange = (
 			yield* services.automationLifecycle.recordSessionActivity(session.status)
 		}
 		lifecycle.reconcileSessionChanges([change])
+		const previous = change.previousValue
+		if (
+			change.type === 'update' &&
+			previous?.coding_agent === 'codelayer' &&
+			(previous.task_id !== session.task_id ||
+				previous.resource_owner_user_id !== session.resource_owner_user_id ||
+				previous.working_directory !== session.working_directory ||
+				previous.coding_agent !== session.coding_agent ||
+				previous.provider !== session.provider)
+		) {
+			// A move may arrive mid-turn. Queue new deliveries behind the retirement of its old VM and credentials.
+			retireCodexAppServer(session.id)
+		}
+		if (
+			session.coding_agent === 'codelayer' &&
+			(change.type === 'delete' || session.archived || session.status === 'failed' || session.status === 'lost')
+		) {
+			// A queued terminal update can already have been superseded by an unarchive or a retry.
+			const latest = services.collections.sessions.get(session.id)
+			if (!latest || latest.archived || latest.status === 'failed' || latest.status === 'lost') {
+				const closing = closeCodexAppServer(session.id)
+				services.daemonRuntime.runFork(
+					Effect.promise(() => closing).pipe(
+						Effect.catchCause((cause) =>
+							observeDaemonChangeFailure('Codex session cleanup failed', attributes, cause),
+						),
+					),
+				)
+			}
+			return
+		}
 		if (change.type === 'delete' || session.archived) {
 			handleArchivedSessionChange(change, services)
 			return
@@ -376,7 +408,7 @@ const restartClaudeSessionAfterTurn = (sessionId: string, services: DaemonServic
  * - To or from the host's own gh login: the running agent's environment can't follow (it was fixed
  *   when the agent started). An account's directory is locked at once, so nothing more goes out as
  *   the old account, and a Claude session is restarted after its current turn so its next one runs
- *   with the new choice. Codex already starts a new process for every turn.
+ *   with the new choice. A Codex app-server also retires once its active turn ends.
  */
 export const processTaskUserSettingsChange = (change: TaskUserSettingsChangeMessage, services: DaemonServices) => {
 	const taskId = change.value.task_id
@@ -388,6 +420,7 @@ export const processTaskUserSettingsChange = (change: TaskUserSettingsChangeMess
 		for (const { sessionId, outcome } of refreshed) {
 			if (outcome !== 'restart') continue
 			const session = services.collections.sessions.get(sessionId)
+			if (session === undefined || session.coding_agent === 'codelayer') retireCodexAppServer(sessionId)
 			if (session !== undefined && session.coding_agent !== 'claude') continue
 			services.daemonRuntime.runFork(restartClaudeSessionAfterTurn(sessionId, services))
 		}

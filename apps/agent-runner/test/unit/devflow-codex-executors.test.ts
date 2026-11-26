@@ -3,11 +3,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
 import { Effect } from 'effect'
-import { describe, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { createInterruptState } from '@/agents/shared/interrupt-state.service'
 import type { SessionContext } from '@/agents/shared/run-session'
 import {
+	closeCodexAppServer,
 	codexEnvironment,
 	executeCodelayerSlot,
 	failUnsupportedAgent,
@@ -16,6 +17,10 @@ import {
 	UNSUPPORTED_AGENT_MESSAGE,
 } from '@/devflow/codex-app-server'
 import { vmManager } from '@/devflow/vm-sandbox'
+
+afterEach(async () => {
+	await Promise.all(['session', 'receiver'].map(closeCodexAppServer))
+})
 
 /** Only `session.id`, `session.provider` and `orpc.sessions.update` are read on the fail-fast path. */
 function contextFor(provider: string | null) {
@@ -70,7 +75,7 @@ function installTestAppServer(dir: string) {
 require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
 	const { id, method, params } = JSON.parse(line)
 	if (id === undefined) return
-	require('node:fs').appendFileSync('requests.jsonl', JSON.stringify({ method, params }) + '\\n')
+	require('node:fs').appendFileSync('requests.jsonl', JSON.stringify({ pid: process.pid, method, params }) + '\\n')
 	const send = (message) => console.log(JSON.stringify(message))
 	if (method === 'turn/start') {
 		send({ id, result: { turn: { id: 'turn' } } })
@@ -145,7 +150,15 @@ describe('Codex conversation events', () => {
 			}
 			await turn
 			if (sandbox === 'vm') {
+				// A taskless first prompt still needs the workflow plugin mounted for future turns.
+				expect(acquire).toHaveBeenCalledWith(
+					expect.objectContaining({
+						readOnlyPaths: [expect.stringMatching(/workflow-skills$/)],
+					}),
+				)
 				expect(run).toHaveBeenCalledOnce()
+				expect(release).not.toHaveBeenCalled()
+				await closeCodexAppServer('session')
 				expect(release).toHaveBeenCalledOnce()
 			}
 			expect(create).toHaveBeenCalledExactlyOnceWith(
@@ -217,6 +230,7 @@ test('loads the bundled research skill, routes it to PRD and uploads the artifac
 })
 
 test.each([
+	{ skill: 'iterate-prd', labels: [], reply: '/rpi:iterate-prd Continue with the same choices.' },
 	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
 	{
 		skill: 'iterate-tdd',
@@ -231,7 +245,10 @@ test.each([
 			{ role: 'user', content: 'Only librarians can release a hold.' },
 			{ role: 'assistant', content: 'Should volunteers be able to see the queue?' },
 		]
-		const workflowSkill = vi.fn(async () => ({ skill, conversation: history }))
+		const workflowSkill = vi.fn(async () => ({
+			skill: reply.startsWith('/') ? 'create-prd' : skill,
+			conversation: history,
+		}))
 		const create = vi.fn(async () => ({}))
 		const ctx = {
 			session: {
@@ -250,7 +267,7 @@ test.each([
 			},
 		} as unknown as SessionContext
 		await executeCodelayerSlot(ctx, 'session')
-		expect(workflowSkill).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session' })
+		expect(workflowSkill).toHaveBeenCalledExactlyOnceWith({ sessionId: 'session', includeConversation: true })
 		expect(create).toHaveBeenCalledWith(
 			expect.objectContaining({ toolName: 'Skill', toolInputJson: { skill: `rpi:${skill}` } }),
 		)
@@ -264,6 +281,92 @@ test.each([
 		expect(input[0].text).toContain(`skills/${skill}/SKILL.md`)
 		expect(input[0].text).toContain(JSON.stringify(history))
 		expect(input[1].text).toBe(reply)
+		expect(create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message', role: 'user' }))
+	} finally {
+		vi.unstubAllEnvs()
+		rmSync(dir, { recursive: true, force: true })
+	}
+})
+
+test.each(['iterate-prd', null])('keeps the task and choices across a handoff with skill %s', async (skill) => {
+	const dir = mkdtempSync(join(tmpdir(), 'devflow-codex-handoff-'))
+	try {
+		installTestAppServer(dir)
+		vi.stubEnv('HOME', dir)
+		const task = { id: 'task', slug: 'sample', sandbox: 'none' }
+		const brief = 'Design a lending policy for the mobile library.'
+		const transcript = 'This session was handed off from Claude Code. Prior conversation about library routes.'
+		const question = 'Which locations should offer pickup? A. Schools B. Parks C. Both'
+		const reply = 'Yes, do C.'
+		const conversation = [{ role: 'assistant', content: question }]
+		const workflowSkill = vi
+			.fn()
+			.mockResolvedValueOnce({ skill, conversation: [] })
+			.mockResolvedValueOnce({ skill, conversation })
+		const getCollection = () => ({ toArray: [{ file_name: 'task.md', content: brief }] })
+		const create = vi.fn(async () => ({}))
+		const ctx = {
+			session: {
+				id: 'receiver',
+				provider: 'codex',
+				task_id: task.id,
+				handoff_source_session_id: 'source',
+				working_directory: dir,
+				prompt: transcript,
+			},
+			interruptState: await createInterruptState(),
+			services: {
+				collections: {
+					tasks: { get: () => task },
+					sessions: { subscribeChanges: () => ({ unsubscribe: vi.fn() }) },
+				},
+				orpc: { sessions: { update: vi.fn(), workflowSkill, events: { create } } },
+				daemonRuntime: { runPromise: vi.fn().mockResolvedValue(null) },
+				syncService: {
+					ensureTaskSync: async () => ({ getCollection, createSessionManager: () => ({ getCollection }) }),
+				},
+			},
+		} as unknown as SessionContext
+		await executeCodelayerSlot(ctx)
+		const next = { ...ctx, session: { ...ctx.session, coding_agent_session_id: 'thread', prompt: reply } }
+		await executeCodelayerSlot(next, 'receiver')
+		const followUp = 'Apply that pickup decision.'
+		workflowSkill.mockResolvedValue({ skill, conversation })
+		await executeCodelayerSlot({ ...next, session: { ...next.session, prompt: followUp } }, 'receiver')
+		// A daemon restart releases the process, but the synchronized session still owns its thread.
+		await closeCodexAppServer('receiver')
+		await executeCodelayerSlot(next, 'receiver')
+
+		const requests = readFileSync(join(dir, 'requests.jsonl'), 'utf8')
+			.trim()
+			.split('\n')
+			.map((line) => JSON.parse(line))
+		const turns = requests.filter((rpc) => rpc.method === 'turn/start')
+		expect(workflowSkill.mock.calls.map(([input]) => input.includeConversation)).toEqual([
+			false,
+			false,
+			false,
+			true,
+		])
+		expect(turns).toHaveLength(4)
+		expect(turns.slice(0, 3).map((rpc) => rpc.pid)).toEqual(Array(3).fill(turns[0].pid))
+		expect(turns[3].pid).not.toBe(turns[0].pid)
+		expect(requests.filter((rpc) => rpc.method === 'thread/start')).toHaveLength(1)
+		const resumes = requests.filter((rpc) => rpc.method === 'thread/resume')
+		expect(resumes).toHaveLength(1)
+		expect(resumes[0].params.threadId).toBe('thread')
+		expect(new Set(turns.map((rpc) => rpc.params.threadId))).toEqual(new Set(['thread']))
+		expect(turns.map((rpc) => rpc.params.input.at(-1).text)).toEqual([transcript, reply, followUp, reply])
+		const launch = turns[0].params.input[0].text
+		const recovered = turns[3].params.input[0].text
+		expect(launch).not.toContain(transcript)
+		expect(launch).toContain(brief)
+		expect(recovered).toContain(brief)
+		expect(recovered).toContain(question)
+		expect(recovered).not.toContain(reply)
+		if (skill) {
+			for (const turn of turns) expect(turn.params.input[0].text).toContain(`skills/${skill}/SKILL.md`)
+		}
 		expect(create).not.toHaveBeenCalledWith(expect.objectContaining({ eventType: 'message', role: 'user' }))
 	} finally {
 		vi.unstubAllEnvs()
