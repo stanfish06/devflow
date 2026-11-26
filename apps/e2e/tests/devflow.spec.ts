@@ -149,6 +149,26 @@ test('Codex runs through codex app-server', async ({ page }) => {
 	await expect.poll(() => worktreeFile('create-codex-e2e-txt', 'codex-e2e.txt')?.trim()).toBe('papaya')
 })
 
+test('Codex Large task advances from research questions through research to PRD', async ({ page }) => {
+	test.skip(!existsSync(join(homedir(), '.codex', 'auth.json')), 'No Codex CLI login (codex login)')
+	await openE2eProject(page)
+	const taskId = await startTask(page, {
+		prompt: 'Design a contribution guide for first-time contributors to this repository.',
+		size: 'Large',
+		model: process.env.DEVFLOW_E2E_CODEX_MODEL ?? /^GPT/,
+		permission: 'Bypass permissions',
+	})
+	await expect(page.getByText(/^research-questions:/).first()).toBeVisible()
+	await expect(page.getByText(/^research:/).first()).toBeVisible({ timeout: 240_000 })
+	await expect(page.getByText(/^design-prd:/).first()).toBeVisible({ timeout: 240_000 })
+	// PRD drafting pauses for the user's first answer after writing the skeleton.
+	const artifactDir = join(homedir(), '.devflow', 'artifacts', taskId)
+	await expect
+		.poll(() => readdirSync(artifactDir).some((name) => /^\d+-prd-.*\.md$/.test(name)), { timeout: 120_000 })
+		.toBe(true)
+	await archiveTask(page, taskId)
+})
+
 // A host started with `bun run devflow remote <ssh-host>`, by the name it shows in the host menu.
 const REMOTE_HOST = process.env.DEVFLOW_E2E_REMOTE_HOST
 

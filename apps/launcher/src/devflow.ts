@@ -748,7 +748,17 @@ async function remote(): Promise<void> {
 		`set -e; mkdir -p ~/${REMOTE_DIR}; cd ~/${REMOTE_DIR}; find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +; tar -xzf -`,
 		archive.stdout,
 	)
-	ssh(`cd ~/${REMOTE_DIR} && bun install --frozen-lockfile`)
+	// Pin Lima for NixOS runners missing it. Evaluate only the flake files: the archive has no .git
+	// and evaluating its root would copy node_modules into the Nix store.
+	const limaLink = '.devflow-lima'
+	ssh(`set -e
+		cd ~/${REMOTE_DIR}
+		bun install --frozen-lockfile
+		if [ -e /etc/NIXOS ] && [ -z "\${DEVFLOW_LIMACTL:-}" ] && ! command -v limactl >/dev/null; then
+			mkdir -p .devflow-nix
+			cp flake.nix flake.lock .devflow-nix/
+			nix --extra-experimental-features 'nix-command flakes' build --inputs-from 'path:./.devflow-nix' 'nixpkgs#lima' --out-link ${limaLink}
+		fi`)
 
 	const lines = Object.entries(hostEnvironment()).flatMap(([name, value]) =>
 		value === undefined ? [] : [`${name}=${quote(value)}`],
@@ -757,7 +767,7 @@ async function remote(): Promise<void> {
 
 	const forward = `127.0.0.1:${HTTPS_PORT}:127.0.0.1:${HTTPS_PORT}`
 	// -tt gives the remote command a terminal, so it stops when this connection closes.
-	const start = `cd ~/${REMOTE_DIR} && set -a && . ~/.devflow/host.env && set +a && exec bun run devflow host`
+	const start = `cd ~/${REMOTE_DIR} && set -a && . ~/.devflow/host.env && set +a && if [ -d ${limaLink}/bin ]; then export PATH="$PWD/${limaLink}/bin:$PATH"; fi && exec bun run devflow host`
 	let stopping = false
 	let child: ReturnType<typeof spawn> | undefined
 	const stop = () => {

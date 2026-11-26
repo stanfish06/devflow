@@ -18,12 +18,15 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
 
+import { isSessionStatusAwaitingLaunch } from '@devflow/schemas/effect/session/session-status'
 import { Effect } from 'effect'
 
+import { getWorkflowRoutingContext } from '@/agents/claudecode/hooks/workflow-routing-hook'
 import { handleInterruptOutcome, subscribeToSessionInterrupt } from '@/agents/claudecode/interrupts'
 import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } from '@/agents/shared/run-session'
 import { isVmSandbox, sessionSandbox, waitForTaskSandbox, whileLaunching } from '@/devflow/agent-sandbox'
@@ -34,8 +37,13 @@ import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github
 import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
 import { matchGithubRejection } from '@/effects/services/github-credentials/rejection-signatures'
 import { stopRunOnGithubRejection } from '@/effects/services/github-credentials/stop-on-github-rejection'
+import { setupArtifactPaths } from '@/lib/artifact-paths'
+import { createArtifactSyncLedger } from '@/lib/artifact-sync-ledger'
+import { syncShellCreatedArtifacts } from '@/lib/artifact-sync-utils'
 import { normalizePath } from '@/lib/utils'
+import { isInGitWorktree } from '@/lib/workspace/detect-worktree'
 import logger from '@/logger'
+import { ensureRpiPluginOnDisk } from '@/plugins/ensure-plugin'
 
 export function isCodexAppServerSession(session: Pick<SessionForExecution, 'provider'>): boolean {
 	return session.provider === 'codex'
@@ -293,9 +301,64 @@ type CreateEvent = Parameters<SessionContext['services']['orpc']['sessions']['ev
 /** A notification field that should hold text, or '' when it holds anything else. */
 const textOf = (value: unknown): string => (typeof value === 'string' ? value : '')
 
+/** The composer expands a selected slash command to "use the rpi:<name> skill". */
+function requestedRpiSkill(prompt: string): string | undefined {
+	const match = /^(?:use the \/?rpi:([a-z0-9-]+) skill|\/rpi:([a-z0-9-]+))(?=\s|$)/i.exec(prompt.trimStart())
+	return (match?.[1] ?? match?.[2])?.toLowerCase()
+}
+
+async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: string) {
+	const { session, services } = ctx
+	const taskId = session.task_id
+	const task = taskId ? services.collections.tasks.get(taskId) : undefined
+	const sync = taskId ? await services.syncService.ensureTaskSync(taskId, cwd) : null
+	const slug = task?.slug ?? sync?.getTaskSlug()
+	const artifacts = taskId && slug ? await setupArtifactPaths(cwd, taskId, slug, services.daemonRuntime) : null
+	const skillName = requestedRpiSkill(prompt)
+	// A resumed turn can still reference files from the skill loaded on an earlier turn.
+	const pluginPath =
+		taskId || skillName || session.coding_agent_session_id ? await ensureRpiPluginOnDisk() : undefined
+	let skill: { name: string; path: string; instructions: string } | undefined
+	if (skillName && pluginPath) {
+		const base = join(pluginPath, 'skills', skillName)
+		const path = join(base, 'SKILL.md')
+		const contents = await readFile(path, 'utf8')
+		const name = `rpi:${skillName}`
+		const routing = getWorkflowRoutingContext(
+			task?.workflow_type ?? null,
+			task?.worktree_timing ?? null,
+			name,
+			await isInGitWorktree(cwd),
+		)
+		const instructions = [
+			`Devflow loaded ${name} from ${path}. Follow its instructions using your available tools. Where a named research agent is unavailable, perform its research with your own tools.`,
+			contents.replaceAll('{SKILLBASE}', () => base),
+			routing,
+		]
+			.filter(Boolean)
+			.join('\n\n')
+		skill = { name, path, instructions }
+	}
+	const syncArtifacts =
+		sync && taskId
+			? (signal: AbortSignal) =>
+					syncShellCreatedArtifacts({
+						syncManager: sync.createSessionManager(session.id),
+						sessionId: session.id,
+						cwd,
+						taskId,
+						taskSlug: slug ?? null,
+						ledger: createArtifactSyncLedger(),
+						failOnUploadError: true,
+						signal,
+					})
+			: undefined
+	return { skill, pluginPath, artifacts, syncArtifacts }
+}
+
 export async function executeCodexAppServer(
 	ctx: SessionContext,
-	_resumeSessionId?: string,
+	resumeSessionId?: string,
 	forkMeta?: ForkMeta,
 ): Promise<void> {
 	if (forkMeta) throw new Error('Forking a Codex app-server session is not supported')
@@ -310,28 +373,41 @@ export async function executeCodexAppServer(
 		session.task_id ? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id) : null,
 	)
 	const inVm = isVmSandbox(sandbox)
+	const workflow = await prepareCodexWorkflow(ctx, cwd, prompt)
 	// Fails the session rather than start Codex as some other GitHub identity.
 	const github = await prepareCodexGithubCredentials(session, services, inVm ? 'sandbox' : 'host')
 	let lease: VmLease | null = null
 	let client: AppServerClient
 	try {
 		if (inVm) {
+			// The dispatcher marks a launch as launching and a continuation as running.
+			const activeStatus = resumeSessionId ? 'running' : 'launching'
 			lease = await whileLaunching(
 				vmManager.acquire({
 					scope: sandbox === 'vm-task' ? 'task' : 'shared',
 					taskId: session.task_id,
-					paths: [...taskWorkspaceMounts(cwd), codexHome(), ...githubCredentialMounts(github.githubEnv)],
+					paths: [
+						...taskWorkspaceMounts(cwd),
+						codexHome(),
+						...githubCredentialMounts(github.githubEnv),
+						workflow.pluginPath,
+						workflow.artifacts?.storagePath,
+					],
+					readOnlyPaths: [workflow.pluginPath],
 				}),
 				// Only while still launching: a stop request must not be overwritten.
 				() =>
-					services.collections.sessions.get(session.id)?.status === 'launching'
-						? orpc.sessions.update({ sessionId: session.id, status: 'launching' })
+					services.collections.sessions.get(session.id)?.status === activeStatus
+						? orpc.sessions.update({ sessionId: session.id, status: activeStatus })
 						: Promise.resolve(),
 			)
-		}
-		// A stop requested while the VM was starting wins over starting the agent.
-		if (lease && services.collections.sessions.get(session.id)?.status !== 'launching') {
-			throw new Error('The session stopped while its VM was starting')
+			// Electric may still show the dispatching row until the daemon's status write arrives.
+			const status = services.collections.sessions.get(session.id)?.status
+			const awaitingDispatch =
+				status && (resumeSessionId ? status === 'resuming' : isSessionStatusAwaitingLaunch(status))
+			if (status !== activeStatus && !awaitingDispatch) {
+				throw new Error('The session stopped while its VM was starting')
+			}
 		}
 		client = new AppServerClient(
 			lease
@@ -518,7 +594,12 @@ export async function executeCodexAppServer(
 			// In a VM the VM is the boundary, and Codex's own sandbox would keep commands off its Docker socket.
 			sandbox: bypass || inVm ? 'danger-full-access' : 'workspace-write',
 			// Agents install dependencies and fetch docs, so the workspace sandbox keeps network access.
-			config: { sandbox_workspace_write: { network_access: true } },
+			config: {
+				sandbox_workspace_write: {
+					network_access: true,
+					writable_roots: workflow.artifacts ? [workflow.artifacts.storagePath] : undefined,
+				},
+			},
 		}
 		if (threadId) {
 			await client.request('thread/resume', { threadId, ...threadSettings, excludeTurns: true })
@@ -528,13 +609,33 @@ export async function executeCodexAppServer(
 			await orpc.sessions.update({ sessionId: session.id, codingAgentSessionId: threadId })
 		}
 		await orpc.sessions.update({ sessionId: session.id, status: 'running' })
-		await emit({ eventType: 'message', role: 'user', content: prompt })
 
+		// Launch and continue already persist the user messages before dispatching this turn.
+		const turnInput = [{ type: 'text', text: prompt, text_elements: [] }]
+		if (workflow.skill) {
+			const { name, path, instructions } = workflow.skill
+			turnInput.push({ type: 'text', text: instructions, text_elements: [] })
+			// The API applies phase labels when it records a Skill call. Codex's adapter loaded it above.
+			const toolCallId = crypto.randomUUID()
+			await emit({
+				eventType: 'tool_call',
+				role: 'assistant',
+				toolName: 'Skill',
+				toolCallId,
+				toolInputJson: { skill: name },
+			})
+			await emit({
+				eventType: 'tool_result',
+				role: 'user',
+				toolResultForId: toolCallId,
+				toolResultContent: `Loaded ${path}`,
+			})
+		}
 		const effort =
 			session.effort && ['low', 'medium', 'high', 'xhigh'].includes(session.effort) ? session.effort : null
 		const started = (await client.request('turn/start', {
 			threadId,
-			input: [{ type: 'text', text: prompt, text_elements: [] }],
+			input: turnInput,
 			...(effort ? { effort } : {}),
 		})) as { turn: { id: string } }
 		currentTurnId = started.turn.id
@@ -552,7 +653,11 @@ export async function executeCodexAppServer(
 				const message = (turn.error as { message?: string } | undefined)?.message ?? 'Codex turn failed'
 				await orpc.sessions.update({ sessionId: session.id, status: 'failed', errorMessage: message })
 			} else {
-				await orpc.sessions.update({ sessionId: session.id, status: 'ready_for_input' })
+				// The ready transition checks uploaded artifact frontmatter to launch the next phase.
+				await workflow.syncArtifacts?.(abort.signal)
+				if (!(await Effect.runPromise(interruptState.wasInterrupted))) {
+					await orpc.sessions.update({ sessionId: session.id, status: 'ready_for_input' })
+				}
 			}
 		}
 	} catch (error) {

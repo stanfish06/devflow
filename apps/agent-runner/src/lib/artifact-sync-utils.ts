@@ -502,6 +502,7 @@ export async function syncShellCreatedArtifacts(params: {
 	taskId: string
 	taskSlug: string | null
 	ledger: ArtifactSyncLedger
+	failOnUploadError?: boolean
 	signal?: AbortSignal
 }): Promise<SyncResult[]> {
 	const { syncManager, sessionId, cwd, taskId, taskSlug, ledger, signal } = params
@@ -531,6 +532,7 @@ export async function syncShellCreatedArtifacts(params: {
 			)
 			ledger.record(file.fileName, file.fingerprint)
 		} catch (error) {
+			if (params.failOnUploadError) throw error
 			logger.warn(
 				{ err: error, sessionId, filePath: file.path },
 				'Failed to sync artifact created by shell command',
