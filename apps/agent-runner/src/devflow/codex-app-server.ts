@@ -462,6 +462,9 @@ async function openCodexProcess(
 	try {
 		signal.throwIfAborted()
 		if (inVm) {
+			// A later turn can select an RPI skill while this process still holds the same VM lease.
+			const pluginPath = workflow.pluginPath ?? (await ensureRpiPluginOnDisk())
+			signal.throwIfAborted()
 			// The dispatcher marks a launch as launching and a continuation as running.
 			const activeStatus = continuing ? 'running' : 'launching'
 			lease = await whileLaunching(
@@ -472,10 +475,10 @@ async function openCodexProcess(
 						...taskWorkspaceMounts(cwd),
 						codexHome(),
 						...githubCredentialMounts(github.githubEnv),
-						workflow.pluginPath,
+						pluginPath,
 						workflow.artifacts?.storagePath,
 					],
-					readOnlyPaths: [workflow.pluginPath],
+					readOnlyPaths: [pluginPath],
 				}),
 				// Only while still launching: a stop request must not be overwritten.
 				() =>

@@ -150,6 +150,12 @@ describe('Codex conversation events', () => {
 			}
 			await turn
 			if (sandbox === 'vm') {
+				// A taskless first prompt still needs the workflow plugin mounted for future turns.
+				expect(acquire).toHaveBeenCalledWith(
+					expect.objectContaining({
+						readOnlyPaths: [expect.stringMatching(/workflow-skills$/)],
+					}),
+				)
 				expect(run).toHaveBeenCalledOnce()
 				expect(release).not.toHaveBeenCalled()
 				await closeCodexAppServer('session')
