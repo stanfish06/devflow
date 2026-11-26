@@ -34,7 +34,7 @@ afterAll(async () => {
 	await testDb?.cleanup()
 }, 30_000)
 
-async function session(ownerId = userId) {
+async function session(ownerId = userId, source?: { id: string; at: bigint }) {
 	const [row] = await testDb.db
 		.insert(sessions)
 		.values({
@@ -44,6 +44,8 @@ async function session(ownerId = userId) {
 			host_id: hostId,
 			working_directory: tmpdir(),
 			status: 'ready_for_input',
+			handoff_source_session_id: source?.id,
+			created_at: source?.at,
 		})
 		.returning()
 	if (!row) throw new Error('Could not create test session')
@@ -64,10 +66,14 @@ async function sessionWithPrd() {
 	return id
 }
 
-function lookup(sessionId: string, auth: { hostId?: string; userId?: string; organizationId?: string } = {}) {
+function lookup(
+	sessionId: string,
+	auth: { hostId?: string; userId?: string; organizationId?: string } = {},
+	includeConversation?: boolean,
+) {
 	return call(
 		workflowSkillProcedure,
-		{ sessionId },
+		{ sessionId, includeConversation },
 		{
 			context: createMockDaemonContext({
 				auth: createMockDaemonAuth({ userId, hostId, organizationId, ...auth }),
@@ -115,7 +121,10 @@ test('enforces organization, host, creating user and edit permission', async () 
 test('returns completed question and answer exchanges before this dispatch, including batched replies', async () => {
 	const id = await sessionWithPrd()
 	const other = await session()
-	await testDb.db.update(sessions).set({ handoff_source_session_id: other }).where(eq(sessions.id, id))
+	await testDb.db
+		.update(sessions)
+		.set({ handoff_source_session_id: other, created_at: 1n })
+		.where(eq(sessions.id, id))
 	const event = {
 		session_id: id,
 		organization_id: organizationId,
@@ -152,12 +161,126 @@ test('bounds the number and size of replayed messages and retains the question a
 			event_type: 'message' as const,
 			role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
 			created_at: BigInt(index),
-			content: index === 29 ? 'x'.repeat(4096) + 'Which one?' : String(index),
+			content: index === 29 ? 'x'.repeat(16_384) + 'Which one?' : String(index),
 		})),
 	)
 	const { conversation } = await lookup(id)
 	expect(conversation).toHaveLength(12)
 	expect(conversation[0]?.content).toBe('18')
 	expect(conversation.at(-1)?.content).toMatch(/^x+\n\[…\]\nx+Which one\?$/)
-	expect(conversation.at(-1)?.content.length).toBeLessThan(2100)
+	expect(conversation.at(-1)?.content.length).toBeLessThan(8_200)
+})
+
+test('replays the conversations and exact skill inherited at each handoff', async () => {
+	const source = await session()
+	const middle = await session(userId, { id: source, at: 10n })
+	const current = await session(userId, { id: middle, at: 20n })
+	const event = { organization_id: organizationId, resource_owner_user_id: userId }
+	const skill = { ...event, event_type: 'tool_call' as const, role: 'assistant' as const, tool_name: 'Skill' }
+	const message = { ...event, event_type: 'message' as const }
+	const choices =
+		'A: ' +
+		'first choice rationale '.repeat(115) +
+		'B: second choice. C: calibrated mesh. ' +
+		'comparison '.repeat(180)
+	await testDb.db.insert(conversationEvents).values([
+		{ ...skill, session_id: source, created_at: 2n, tool_input_json: { skill: 'rpi:iterate-prd' } },
+		{ ...message, session_id: source, created_at: 1n, role: 'user', content: 'Original request' },
+		{ ...message, session_id: source, created_at: 3n, role: 'assistant', content: choices },
+		{ ...message, session_id: source, created_at: 4n, role: 'user', content: 'Use option C' },
+		{ ...message, session_id: source, created_at: 11n, role: 'assistant', content: 'Later source reply' },
+		{ ...skill, session_id: source, created_at: 12n, tool_input_json: { skill: 'rpi:implement-plan' } },
+		{ ...message, session_id: middle, created_at: 10n, role: 'user', content: 'First handoff wrapper' },
+		{ ...message, session_id: middle, created_at: 13n, role: 'assistant', content: 'What is the measurement?' },
+		{
+			...message,
+			session_id: middle,
+			created_at: 18n,
+			role: 'assistant',
+			content: 'Nested question',
+			parent_tool_use_id: 'subagent',
+		},
+		{ ...skill, session_id: middle, created_at: 21n, tool_input_json: { skill: 'rpi:create-tdd' } },
+		{ ...message, session_id: current, created_at: 20n, role: 'user', content: 'Second handoff wrapper' },
+	])
+	const inherited = [
+		{ role: 'user', content: 'Original request' },
+		{ role: 'assistant', content: choices },
+		{ role: 'user', content: 'Use option C' },
+		{ role: 'assistant', content: 'What is the measurement?' },
+	]
+	expect(await lookup(current)).toEqual({ skill: 'iterate-prd', conversation: inherited })
+
+	await testDb.db.insert(conversationEvents).values([
+		{ ...skill, session_id: current, created_at: 22n, tool_input_json: { skill: 'rpi:iterate-tdd' } },
+		{
+			...message,
+			session_id: current,
+			created_at: 23n,
+			role: 'assistant',
+			content: 'Which design should we compare?',
+		},
+		{ ...message, session_id: current, created_at: 24n, role: 'user', content: 'Compare the two' },
+	])
+	expect(await lookup(current)).toEqual({
+		skill: 'iterate-tdd',
+		conversation: [...inherited, { role: 'assistant', content: 'Which design should we compare?' }],
+	})
+})
+
+test('replays a handoff with no RPI skill and stops at a mismatched owner or cycle', async () => {
+	const outside = await session('another-owner')
+	const source = await session(userId, { id: outside, at: 10n })
+	const current = await session(userId, { id: source, at: 20n })
+	const message = { organization_id: organizationId, resource_owner_user_id: userId, event_type: 'message' as const }
+	await testDb.db.insert(conversationEvents).values([
+		{ ...message, session_id: outside, created_at: 1n, role: 'assistant', content: 'Other owner choice' },
+		{ ...message, session_id: source, created_at: 10n, role: 'user', content: 'Source wrapper' },
+		{ ...message, session_id: source, created_at: 11n, role: 'assistant', content: 'C is the third design' },
+		{ ...message, session_id: current, created_at: 20n, role: 'user', content: 'Destination wrapper' },
+		{ ...message, session_id: current, created_at: 21n, role: 'assistant', content: 'Which design?' },
+		{ ...message, session_id: current, created_at: 22n, role: 'user', content: 'C' },
+	])
+	const expected = {
+		skill: null,
+		conversation: [
+			{ role: 'assistant', content: 'C is the third design' },
+			{ role: 'assistant', content: 'Which design?' },
+		],
+	}
+	expect(await lookup(current)).toEqual(expected)
+	await testDb.db.update(sessions).set({ handoff_source_session_id: current }).where(eq(sessions.id, source))
+	expect(await lookup(current)).toEqual(expected)
+})
+
+test('cold resumes can restore ordinary dialogue and warm processes can request the skill alone', async () => {
+	const id = await session()
+	const message = {
+		session_id: id,
+		organization_id: organizationId,
+		resource_owner_user_id: userId,
+		event_type: 'message' as const,
+	}
+	await testDb.db.insert(conversationEvents).values([
+		{ ...message, created_at: 1n, role: 'user', content: 'Initial request' },
+		{ ...message, created_at: 2n, role: 'assistant', content: 'Should we use the first or second?' },
+		{ ...message, created_at: 3n, role: 'user', content: 'Second' },
+	])
+	expect(await lookup(id)).toEqual({ skill: null, conversation: [] })
+	expect(await lookup(id, {}, true)).toEqual({
+		skill: null,
+		conversation: [
+			{ role: 'user', content: 'Initial request' },
+			{ role: 'assistant', content: 'Should we use the first or second?' },
+		],
+	})
+	await testDb.db.insert(conversationEvents).values({
+		...message,
+		event_type: 'tool_call',
+		role: 'assistant',
+		tool_name: 'Skill',
+		tool_input_json: { skill: 'rpi:create-prd' },
+	})
+	expect(await lookup(id, {}, false)).toEqual({ skill: 'create-prd', conversation: [] })
+	expect((await lookup(id)).conversation).toHaveLength(2)
 })

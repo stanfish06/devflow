@@ -12,7 +12,8 @@ import { uuidv7 } from 'uuidv7'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
 import { handoffSessionProcedure } from '../../src/orpc/api/sessions/handoff'
-import { createMockApiAuth, createMockApiContext } from '../mocks'
+import { workflowSkillProcedure } from '../../src/orpc/daemon/sessions/workflow-skill'
+import { createMockApiAuth, createMockApiContext, createMockDaemonAuth, createMockDaemonContext } from '../mocks'
 import { requireExternalTestServices } from '../utils/external-test-services'
 import { createTestDb } from '../utils/test-db'
 
@@ -187,6 +188,88 @@ describe('api/sessions/handoff', async () => {
 		expect(content).toContain('Fix the auth bug')
 		expect(content).toContain('### Tool call: Read')
 		expect(content).toContain('/auth.ts')
+	})
+
+	test('resumes the PRD interview after a Codex to Claude to Codex handoff', async () => {
+		const sourceSessionId = await createHandoffSource({ withConversation: false })
+		await db
+			.update(sessions)
+			.set({ coding_agent: 'codelayer', provider: 'codex', model: 'gpt-5.4' })
+			.where(eq(sessions.id, sourceSessionId))
+		const event = { organization_id: organizationId, resource_owner_user_id: userId }
+		const originalPrompt = 'Plan configurable experiment controls.'
+		await db.insert(conversationEvents).values([
+			{ ...event, session_id: sourceSessionId, event_type: 'message', role: 'user', content: originalPrompt },
+			{
+				...event,
+				session_id: sourceSessionId,
+				event_type: 'tool_call',
+				role: 'assistant',
+				tool_name: 'Skill',
+				tool_input_json: { skill: 'rpi:create-prd' },
+			},
+		])
+
+		const claude = await call(
+			handoffSessionProcedure,
+			{
+				sourceSessionId,
+				codingAgent: 'claude',
+				provider: 'anthropic',
+				model: 'opus',
+				includeToolCalls: true,
+			},
+			{ context: makeContext() },
+		)
+		await db.insert(conversationEvents).values({
+			...event,
+			session_id: claude.session.id,
+			event_type: 'message',
+			role: 'assistant',
+			content: 'Should each experiment define its own controls?',
+		})
+		await db.update(sessions).set({ status: 'ready_for_input' }).where(eq(sessions.id, claude.session.id))
+		const codex = await handoff(claude.session.id)
+		const transcript = await initialEventContent(codex.session.id)
+		expect(transcript).toContain(originalPrompt)
+
+		const choices = 'A) Fixed controls. B) Custom controls. C) Custom controls with defaults. Which do you prefer?'
+		const reply = 'yes do C'
+		const now = BigInt(Date.now())
+		await db.insert(conversationEvents).values([
+			{
+				...event,
+				session_id: codex.session.id,
+				event_type: 'message',
+				role: 'assistant',
+				content: choices,
+				created_at: now + 1n,
+			},
+			{
+				...event,
+				session_id: codex.session.id,
+				event_type: 'message',
+				role: 'user',
+				content: reply,
+				created_at: now + 2n,
+			},
+		])
+		const recovered = await call(
+			workflowSkillProcedure,
+			{ sessionId: codex.session.id },
+			{
+				context: createMockDaemonContext({
+					auth: createMockDaemonAuth({ userId, organizationId, hostId }),
+					services: { db, dbReadReplica: db },
+				}),
+			},
+		)
+		expect(recovered.skill).toBe('create-prd')
+		expect(recovered.conversation.at(-1)).toEqual({ role: 'assistant', content: choices })
+		expect(recovered.conversation.some(({ content }) => content.includes('This session was handed off'))).toBe(
+			false,
+		)
+		expect(recovered.conversation).not.toContainEqual({ role: 'user', content: reply })
 	})
 
 	test('omits tool calls when includeToolCalls is false', async () => {

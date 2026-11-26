@@ -1,9 +1,10 @@
 import { describe, it } from '@effect/vitest'
 import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Queue, type Scope, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
-import { describe as describeTable, expect as expectTable, it as itTable } from 'vitest'
+import { describe as describeTable, expect as expectTable, it as itTable, vi } from 'vitest'
 
 import type { DaemonServices } from '@/agents/claudecode/types'
+import * as codex from '@/devflow/codex-app-server'
 import type { DaemonRuntime } from '@/effects/runtime'
 import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import type { TaskUserSettingsChangeMessage } from '@/effects/services/daemon-collections/daemon-collections.service'
@@ -101,6 +102,55 @@ describe('daemon subscriptions', () => {
 					)
 				}
 				expect(yield* Queue.size(stoppedSessionIds)).toBe(0)
+			}),
+		),
+	)
+
+	it.effect('closes Codex on terminal changes and leaves a newer live session alone', () =>
+		scopedWithoutV2Routing(
+			Effect.gen(function* () {
+				const close = vi.spyOn(codex, 'closeCodexAppServer').mockResolvedValue(undefined)
+				yield* Effect.addFinalizer(() => Effect.sync(() => close.mockRestore()))
+				const services = createMockDaemonServices()
+				let latest: ReturnType<typeof makeSessionChange>['value'] | undefined
+				const get = vi.spyOn(services.collections.sessions, 'get').mockImplementation(() => latest)
+				yield* Effect.addFinalizer(() => Effect.sync(() => get.mockRestore()))
+				const lifecycle = { reconcileSessionChanges() {}, reconcileTaskChanges() {}, reconcileAllTasks() {} }
+				for (const status of ['failed', 'lost', 'interrupted', 'ready_for_input'] as const) {
+					const change = makeSessionChange({
+						type: 'update',
+						value: { id: status, coding_agent: 'codelayer', status },
+					})
+					latest = change.value
+					yield* processSessionChange(change, services, lifecycle)
+				}
+				const archive = makeSessionChange({
+					type: 'update',
+					value: { id: 'archive', coding_agent: 'codelayer', status: 'interrupted', archived: true },
+				})
+				latest = archive.value
+				yield* processSessionChange(archive, services, lifecycle)
+				const deletion = makeSessionChange({
+					type: 'delete',
+					value: { id: 'delete', coding_agent: 'codelayer', status: 'ready_for_input' },
+				})
+				latest = undefined
+				yield* processSessionChange(deletion, services, lifecycle)
+				for (const stale of [
+					archive,
+					deletion,
+					makeSessionChange({
+						type: 'update',
+						value: { id: 'recovered', coding_agent: 'codelayer', status: 'lost' },
+					}),
+				]) {
+					latest = makeSessionChange({
+						type: 'update',
+						value: { id: stale.value.id, coding_agent: 'codelayer', status: 'running' },
+					}).value
+					yield* processSessionChange(stale, services, lifecycle)
+				}
+				expectTable(close.mock.calls.map(([id]) => id)).toEqual(['failed', 'lost', 'archive', 'delete'])
 			}),
 		),
 	)
@@ -477,23 +527,25 @@ describe('a mid-run GitHub account switch', () => {
 	)
 
 	// Live clock: the restart runs on the daemon runtime, outside this test's TestClock.
-	it.live('restarts an idle Claude session whose switch needs a new process, and nothing else', ({ expect }) =>
+	it.live('retires the Codex and Claude processes whose GitHub switch needs a new environment', ({ expect }) =>
 		Effect.scoped(
 			Effect.gen(function* () {
+				const retire = vi.spyOn(codex, 'retireCodexAppServer').mockReturnValue(undefined)
+				yield* Effect.addFinalizer(() => Effect.sync(() => retire.mockRestore()))
 				const { stopped, process } = yield* harness(
 					{
 						'claude-restart': { status: 'ready_for_input', coding_agent: 'claude' },
 						'claude-applied': { status: 'ready_for_input', coding_agent: 'claude' },
-						'codex-restart': { status: 'ready_for_input', coding_agent: 'codex' },
+						'codex-restart': { status: 'ready_for_input', coding_agent: 'codelayer' },
 					},
 					[
 						{ sessionId: 'claude-restart', outcome: 'restart' },
 						{ sessionId: 'claude-applied', outcome: 'applied' },
-						// Codex starts a new app-server for every turn, so its next turn needs nothing.
 						{ sessionId: 'codex-restart', outcome: 'restart' },
 					],
 				)
 				yield* process(settingsChange('update', hostLogin, picked))
+				expect(retire).toHaveBeenCalledExactlyOnceWith('codex-restart')
 				expect(yield* Queue.take(stopped)).toEqual({
 					sessionId: 'claude-restart',
 					reason: 'github_account_changed',

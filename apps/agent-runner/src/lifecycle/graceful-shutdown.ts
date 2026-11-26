@@ -1,6 +1,7 @@
 import { Effect } from 'effect'
 
 import { shutdownAllSessions } from '@/agents/claudecode/shutdown'
+import { shutdownCodexAppServers } from '@/devflow/codex-app-server'
 import type { DaemonRuntime } from '@/effects/runtime'
 import { ClaudeSessions } from '@/effects/services/claude-sessions/claude-sessions.service'
 import { sendShutdown } from '@/lib/heartbeat'
@@ -56,6 +57,8 @@ export const createGracefulShutdown = (options: ShutdownOptions) => {
 			}
 
 			await attempt('self_update', () => options.stopSelfUpdate?.())
+			// Close active and idle app-servers before disposing their VM leases and credential service.
+			await attempt('codex_app_servers', shutdownCodexAppServers)
 			await attempt('sessions', async () => {
 				await options.runtime.runPromise(
 					Effect.gen(function* () {
