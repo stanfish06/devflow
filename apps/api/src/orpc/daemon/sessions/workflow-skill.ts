@@ -42,6 +42,8 @@ export const workflowSkillProcedure = daemonBase.sessions.workflowSkill.handler(
 		.orderBy(desc(conversationEvents.created_at), desc(conversationEvents.id))
 	const skill =
 		calls.map((call) => extractSkillName('Skill', call.input, 'rpi')).find((name) => name !== undefined) ?? null
+	if (!skill) return { skill: null, conversation: [] }
+
 	// The API persists the current input (possibly several queued user messages) before dispatch.
 	// End at the latest completed assistant reply. Keep only the last assistant message between
 	// user replies so a long sequence of progress updates cannot displace the interview questions.

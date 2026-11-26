@@ -315,12 +315,9 @@ async function prepareCodexWorkflow(ctx: SessionContext, cwd: string, prompt: st
 	const slug = task?.slug ?? sync?.getTaskSlug()
 	const artifacts = taskId && slug ? await setupArtifactPaths(cwd, taskId, slug, services.daemonRuntime) : null
 	const requested = requestedRpiSkill(prompt)
-	// Phase labels cover both create and iterate. The last root Skill call records the exact invocation.
-	const resumeWorkflow =
-		!requested &&
-		continuing &&
-		(task?.workflow_type === 'prd_tdd' || session.labels?.some((label) => label.name.startsWith('rpi:')))
-	const previous = resumeWorkflow ? await services.orpc.sessions.workflowSkill({ sessionId: session.id }) : null
+	// Interrupt/resume can reuse the pre-invocation session snapshot. Read the persisted call on replies.
+	const previous =
+		continuing && !requested ? await services.orpc.sessions.workflowSkill({ sessionId: session.id }) : null
 	const skillName = requested ?? previous?.skill
 	// A resumed turn can still reference files from the skill loaded on an earlier turn.
 	const pluginPath =

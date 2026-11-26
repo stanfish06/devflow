@@ -124,7 +124,13 @@ describe('Codex conversation events', () => {
 				},
 				services: {
 					daemonRuntime: { runPromise: vi.fn().mockResolvedValue(null) },
-					orpc: { sessions: { update: vi.fn(), events: { create } } },
+					orpc: {
+						sessions: {
+							update: vi.fn(),
+							workflowSkill: vi.fn(async () => ({ skill: null, conversation: [] })),
+							events: { create },
+						},
+					},
 					collections: {
 						sessions: { get: () => ({ status }), subscribeChanges: () => ({ unsubscribe: vi.fn() }) },
 					},
@@ -211,9 +217,13 @@ test('loads the bundled research skill, routes it to PRD and uploads the artifac
 })
 
 test.each([
-	{ skill: 'create-prd', label: 'rpi:design-prd', reply: 'Yes, that describes the problem.' },
-	{ skill: 'iterate-tdd', label: 'rpi:design-tdd', reply: 'Proceed with the second option.' },
-])('reactivates $skill with the prior decision on a plain-text reply', async ({ skill, label, reply }) => {
+	{ skill: 'create-prd', labels: [], reply: 'Yes, that describes the problem.' },
+	{
+		skill: 'iterate-tdd',
+		labels: [{ name: 'rpi:design-tdd', title: 'design' }],
+		reply: 'Proceed with the second option.',
+	},
+])('reactivates $skill with the prior decision on a plain-text reply', async ({ skill, labels, reply }) => {
 	const dir = mkdtempSync(join(tmpdir(), 'devflow-codex-followup-'))
 	try {
 		installTestAppServer(dir)
@@ -229,7 +239,7 @@ test.each([
 				provider: 'codex',
 				working_directory: dir,
 				coding_agent_session_id: 'thread',
-				labels: [{ name: label, title: 'design' }],
+				labels,
 				prompt: reply,
 			},
 			interruptState: await createInterruptState(),

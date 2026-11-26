@@ -50,6 +50,20 @@ async function session(ownerId = userId) {
 	return row.id
 }
 
+async function sessionWithPrd() {
+	const id = await session()
+	await testDb.db.insert(conversationEvents).values({
+		session_id: id,
+		organization_id: organizationId,
+		resource_owner_user_id: userId,
+		event_type: 'tool_call',
+		role: 'assistant',
+		tool_name: 'Skill',
+		tool_input_json: { skill: 'rpi:create-prd' },
+	})
+	return id
+}
+
 function lookup(sessionId: string, auth: { hostId?: string; userId?: string; organizationId?: string } = {}) {
 	return call(
 		workflowSkillProcedure,
@@ -99,7 +113,7 @@ test('enforces organization, host, creating user and edit permission', async () 
 })
 
 test('returns completed question and answer exchanges before this dispatch, including batched replies', async () => {
-	const id = await session()
+	const id = await sessionWithPrd()
 	const other = await session()
 	await testDb.db.update(sessions).set({ handoff_source_session_id: other }).where(eq(sessions.id, id))
 	const event = {
@@ -120,6 +134,7 @@ test('returns completed question and answer exchanges before this dispatch, incl
 		{ ...event, created_at: 9n, role: 'assistant', content: '  ' },
 		{ ...event, created_at: 10n, role: 'assistant', session_id: other, content: 'Unrelated session' },
 	])
+	expect(await lookup(other)).toEqual({ skill: null, conversation: [] })
 	expect((await lookup(id)).conversation).toEqual([
 		{ role: 'assistant', content: 'Which behavior matters?' },
 		{ role: 'user', content: 'Simulation output' },
@@ -128,7 +143,7 @@ test('returns completed question and answer exchanges before this dispatch, incl
 })
 
 test('bounds the number and size of replayed messages and retains the question at the end', async () => {
-	const id = await session()
+	const id = await sessionWithPrd()
 	await testDb.db.insert(conversationEvents).values(
 		Array.from({ length: 30 }, (_, index) => ({
 			session_id: id,
