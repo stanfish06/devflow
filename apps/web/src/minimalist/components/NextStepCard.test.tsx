@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NextStepCard } from './NextStepCard'
 
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn() }))
+const { navigate, sibling } = vi.hoisted(() => ({ navigate: vi.fn(), sibling: vi.fn() }))
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => navigate }))
 vi.mock('@/orpc/client', () => ({ useApi: () => ({ client: {} }) }))
 vi.mock('@/minimalist/lib/use-action', () => ({ useAction: () => ({ pending: false, run: vi.fn() }) }))
 vi.mock('@/hooks/live-queries/useExistingSessionForNextStep', () => ({
-	useExistingSessionForNextStep: () => ({ siblingSessionId: null }),
+	useExistingSessionForNextStep: sibling,
 }))
 
 const session = (id: string) =>
@@ -35,10 +36,39 @@ const session = (id: string) =>
 const task = { id: 'task', workspace_id: null }
 const host = { online: true } as Parameters<typeof NextStepCard>[0]['host']
 
-beforeEach(() => localStorage.clear())
+beforeEach(() => {
+	localStorage.clear()
+	navigate.mockClear()
+	sibling.mockReturnValue({ siblingSessionId: null })
+})
 afterEach(cleanup)
 
 describe('NextStepCard', () => {
+	it('opens the TDD that Devflow started from the Codex PRD', () => {
+		const prd = session('prd')
+		prd.provider = 'codex'
+		prd.next_step_suggestions = [
+			{
+				parsedAt: 1,
+				extraction: {
+					type: 'next_step_found',
+					nextStepType: 'create-tdd',
+					nextStepSummary: 'Create TDD',
+					nextStepPrompt: '/rpi:create-tdd for .devflow/tasks/example',
+					taskReference: '.devflow/tasks/example',
+				},
+			},
+		]
+		sibling.mockReturnValue({ siblingSessionId: 'tdd' })
+		render(<NextStepCard session={prd} task={task} host={null} />)
+		expect(sibling).toHaveBeenCalledWith(task.id, 'rpi:design-tdd', prd.created_at, prd.id)
+		fireEvent.click(screen.getByRole('button', { name: /Open TDD/ }))
+		expect(navigate).toHaveBeenCalledWith({
+			to: '/tasks/$taskId',
+			params: { taskId: task.id },
+			search: { session: 'tdd' },
+		})
+	})
 	it('folds into a thin row for that session and opens again from it', () => {
 		const { rerender } = render(<NextStepCard session={session('a')} task={task} host={host} />)
 		expect(screen.getByRole('group', { name: 'Next step' })).toHaveTextContent('Write the plan')

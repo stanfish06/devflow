@@ -1,9 +1,9 @@
-import { isEffortSupported, isFastModeSupported } from '@devflow/ai/config'
 import { conversationEvents } from '@devflow/db/tables/conversation-events'
 import { sessions } from '@devflow/db/tables/sessions'
 import { ORPCError } from '@orpc/server'
 import { and, eq, sql } from 'drizzle-orm'
 
+import { checkHostModelSettings } from '../../../db/check-host-model-settings'
 import { getTxId } from '../../../db/get-tx-id'
 import { tryEnsureSessionStreamHydrated } from '../../../effects/services/durable-streams/streams'
 import {
@@ -37,6 +37,7 @@ export const continueSessionProcedure = apiBaseOrgRequired.sessions.continue.han
 						resource_owner_user_id: sessions.resource_owner_user_id,
 						created_by: sessions.created_by,
 						status: sessions.status,
+						host_id: sessions.host_id,
 						coding_agent: sessions.coding_agent,
 						provider: sessions.provider,
 						model: sessions.model,
@@ -72,19 +73,34 @@ export const continueSessionProcedure = apiBaseOrgRequired.sessions.continue.han
 					throw errors.FORBIDDEN({ data: { message: 'Write permission required on session' } })
 				}
 
-				const effectiveModel = model ?? session.model
+				// Codex continues on its selected model. Other classic callers historically default to opus.
+				const effectiveModel = model ?? (session.provider === 'codex' ? session.model : 'opus')
 				const effectiveEffort = effort !== undefined ? effort : session.effort
 				const effectiveFastMode = fastMode !== undefined ? fastMode : session.fast_mode
 
-				// Validate effort and fastMode against capability rules
-				if (!isEffortSupported(session.coding_agent, session.provider, effectiveModel, effectiveEffort)) {
+				const modelSettings = await checkHostModelSettings(
+					tx,
+					{
+						userId: session.created_by,
+						organizationId: context.auth.organizationId,
+					},
+					{
+						hostId: session.host_id,
+						codingAgent: session.coding_agent,
+						provider: session.provider,
+						model: effectiveModel,
+						effort: effectiveEffort,
+						fastMode: effectiveFastMode,
+					},
+				)
+				if (!modelSettings.effortSupported) {
 					throw errors.BAD_REQUEST({
 						data: {
 							message: `effort=${effectiveEffort} not supported for ${session.coding_agent}/${session.provider}/${effectiveModel}`,
 						},
 					})
 				}
-				if (!isFastModeSupported(session.coding_agent, session.provider, effectiveModel, effectiveFastMode)) {
+				if (!modelSettings.fastModeSupported) {
 					throw errors.BAD_REQUEST({
 						data: {
 							message: `fastMode not supported for ${session.coding_agent}/${session.provider}/${effectiveModel}`,

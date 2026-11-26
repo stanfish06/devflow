@@ -28,6 +28,7 @@ import { Effect, Layer } from 'effect'
 import { formatBytes, parseCleanArgs, planClean } from './lib/clean'
 import { renderStackEnvLines, type StackEnvProjection } from './lib/env-block'
 import { ensureEnvFileValue } from './lib/env-file'
+import { REMOTE_STAGING } from './lib/install-remote-tree'
 import { OrganizationSeed, OrganizationSeedLive, OrganizationSeedPersistenceLive } from './lib/seed'
 
 // ---- Options (edit here) ----------------------------------------------------
@@ -743,9 +744,15 @@ async function remote(): Promise<void> {
 		maxBuffer: 1 << 30,
 	})
 	if (archive.status !== 0) throw new Error('git archive failed')
-	// Replace the tree but keep node_modules, so the install only applies changes.
+	// Extract completely before publishing files. Existing guests keep their plugin directory mount.
 	ssh(
-		`set -e; mkdir -p ~/${REMOTE_DIR}; cd ~/${REMOTE_DIR}; find . -mindepth 1 -maxdepth 1 ! -name node_modules -exec rm -rf {} +; tar -xzf -`,
+		`set -e
+		mkdir -p ~/${REMOTE_DIR}/${REMOTE_STAGING}
+		cd ~/${REMOTE_DIR}
+		incoming=$(mktemp -d "$PWD/${REMOTE_STAGING}/archive.XXXXXXXX")
+		trap 'rm -rf "$incoming"' EXIT
+		tar -xzf - -C "$incoming"
+		bun "$incoming/apps/launcher/src/lib/install-remote-tree.ts" "$incoming"`,
 		archive.stdout,
 	)
 	// Pin Lima for NixOS runners missing it. Evaluate only the flake files: the archive has no .git

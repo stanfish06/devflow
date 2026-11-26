@@ -17,7 +17,7 @@ interface CreateSessionForLaunchParams {
 	hostId: string
 	codingAgent: CodingAgent
 	provider: string
-	model: string
+	model: string | null
 	effort?: string
 	fastMode?: boolean
 	permissionsMode: string

@@ -39,6 +39,7 @@ import type { GithubEnv } from '@/effects/services/github-credentials/credential
 import logger from '@/logger'
 
 import { outermost, sandboxLaunch } from './docker-sandbox'
+import { ensureVmWorkflowPlugin } from './vm-workflow-plugin'
 
 export interface VmToolVersions {
 	readonly claudeCode: string
@@ -232,7 +233,7 @@ export interface LimaResult {
 	readonly stderr: string
 }
 
-export type LimaRunner = (args: readonly string[], timeoutMs?: number) => Promise<LimaResult>
+export type LimaRunner = (args: readonly string[], timeoutMs?: number, stdin?: number) => Promise<LimaResult>
 
 /** limactl and ssh only need to find qemu and the instance directory; nothing else of the daemon's env. */
 export function limaEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -241,18 +242,18 @@ export function limaEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
 }
 
 function defaultRunner(limactl: string): LimaRunner {
-	return (args, timeoutMs = 120_000) =>
+	return (args, timeoutMs = 120_000, stdin) =>
 		new Promise((resolve) => {
 			const child = spawn(limactl, ['--tty=false', ...args], {
 				env: limaEnvironment(),
-				stdio: ['ignore', 'pipe', 'pipe'],
+				stdio: [stdin ?? 'ignore', 'pipe', 'pipe'],
 			})
 			let stdout = ''
 			let stderr = ''
-			child.stdout.on('data', (chunk: Buffer) => {
+			child.stdout?.on('data', (chunk: Buffer) => {
 				stdout += chunk.toString()
 			})
-			child.stderr.on('data', (chunk: Buffer) => {
+			child.stderr?.on('data', (chunk: Buffer) => {
 				stderr += chunk.toString()
 			})
 			const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs)
@@ -382,8 +383,8 @@ export class VmManager {
 		readonly scope: VmScope
 		readonly taskId: string | null
 		readonly paths: readonly (string | undefined)[]
-		/** Paths in `paths` the agent only reads (plugin directories). */
-		readonly readOnlyPaths?: readonly (string | undefined)[]
+		/** The agent loads this host plugin read-only at the same path in the guest. */
+		readonly workflowPluginPath?: string
 	}): Promise<VmLease> {
 		// Adoption sweeps agent processes left by an earlier daemon; it must not reach this session's.
 		await this.adoption.catch(() => undefined)
@@ -398,10 +399,10 @@ export class VmManager {
 		]) {
 			mkdirSync(directory, { recursive: true, mode: 0o700 })
 		}
-		const required = existingPaths([...input.paths, envDirectory])
+		const required = existingPaths([...input.paths, envDirectory, input.workflowPluginPath])
 		const readOnly = [
 			...READ_ONLY_ROOTS.map((root) => join(this.config.devflowHome, root)),
-			...(input.readOnlyPaths ?? []).filter((path): path is string => !!path),
+			...(input.workflowPluginPath ? [input.workflowPluginPath] : []),
 		]
 		const entry = this.entry(name, kind, kind === 'task' ? input.taskId : null)
 		// Counted before the VM is ready, so an idle stop or a delete cannot race the start.
@@ -409,7 +410,17 @@ export class VmManager {
 		entry.deleteWhenIdle = false
 		clearTimeout(entry.idleTimer)
 		try {
-			await this.locked(name, () => this.ensureRunning(entry, required, readOnly))
+			await this.locked(name, async () => {
+				await this.ensureRunning(entry, required, readOnly)
+				if (
+					input.workflowPluginPath &&
+					!(await ensureVmWorkflowPlugin(this.lima, name, input.workflowPluginPath, entry.leases > 1))
+				) {
+					throw new VmBusyError(
+						`VM ${name} needs to replace its workflow plugin and other sessions are using it; retry once they finish`,
+					)
+				}
+			})
 		} catch (error) {
 			// Report what Lima has, not a start that already failed.
 			const instance = await this.instance(name).catch(() => undefined)

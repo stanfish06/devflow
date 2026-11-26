@@ -14,7 +14,10 @@ import { and, eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 
+import { continueSessionProcedure } from '../../src/orpc/api/sessions/continue'
+import { handoffSessionProcedure } from '../../src/orpc/api/sessions/handoff'
 import { launchSessionProcedure } from '../../src/orpc/api/sessions/launch'
+import { updateSessionApiProcedure } from '../../src/orpc/api/sessions/update'
 import type { Services } from '../../src/orpc/base'
 import { createMockApiAuth, createMockApiContext } from '../mocks'
 import { requireExternalTestServices } from '../utils/external-test-services'
@@ -194,6 +197,124 @@ describe('sessions.launch — task_user_settings upsert', async () => {
 			effort: 'max',
 			fast_mode: false,
 		})
+	})
+
+	test('uses the selected host Codex catalog on launch, model updates and replies after a handoff', async () => {
+		const catalogHostId = randomUUID()
+		const model = 'host-advertised-codex'
+		const context = makeContext(ownerUserId)
+		const catalogEntry = {
+			provider: 'codex' as const,
+			value: model,
+			label: model,
+			hidden: false,
+			isDefault: false,
+			effortLevels: ['medium', 'high'],
+			supportsAutoMode: false,
+			supportsFastMode: true,
+		}
+		await db.insert(onlineHosts).values({
+			host_id: catalogHostId,
+			organization_id: organizationId,
+			user_id: ownerUserId,
+			supported_models: {
+				probedAt: Date.now(),
+				codex: { status: 'ok', models: [catalogEntry] },
+				anthropic: { status: 'ok', models: [{ ...catalogEntry, provider: 'anthropic' }] },
+			},
+		})
+		const launch = {
+			hostId: catalogHostId,
+			text: 'Begin work',
+			title: 'Catalog test',
+			workingDirectory: tmpdir(),
+			codingAgent: 'codelayer',
+			provider: 'codex',
+			model,
+			effort: 'high',
+			permissionsMode: 'bypass',
+		} as const
+		const launched = await call(launchSessionProcedure, launch, { context })
+		await call(updateSessionApiProcedure, { sessionId: launched.session.id, effort: 'medium' }, { context })
+		await expect(call(launchSessionProcedure, { ...launch, effort: 'low' }, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+		})
+		await expect(call(launchSessionProcedure, { ...launch, hostId }, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+		})
+		await expect(
+			call(launchSessionProcedure, { ...launch, codingAgent: 'claude', provider: 'anthropic' }, { context }),
+		).rejects.toMatchObject({ code: 'BAD_REQUEST' })
+
+		const source = await call(
+			launchSessionProcedure,
+			{
+				...launch,
+				codingAgent: 'claude',
+				provider: 'anthropic',
+				model: 'opus',
+				effort: null,
+			},
+			{ context },
+		)
+		await db.update(sessions).set({ status: 'ready_for_input' }).where(eq(sessions.id, source.session.id))
+		const destination = await call(
+			handoffSessionProcedure,
+			{
+				sourceSessionId: source.session.id,
+				codingAgent: 'codelayer',
+				provider: 'codex',
+				model,
+				effort: 'high',
+				fastMode: true,
+				includeToolCalls: false,
+			},
+			{ context },
+		)
+		await db.update(sessions).set({ status: 'ready_for_input' }).where(eq(sessions.id, destination.session.id))
+		await expect(
+			call(continueSessionProcedure, { sessionId: destination.session.id, text: 'C' }, { context }),
+		).resolves.toMatchObject({ success: true })
+		const [continued] = await db.select().from(sessions).where(eq(sessions.id, destination.session.id))
+		expect(continued).toMatchObject({ status: 'resuming', model, effort: 'high', fast_mode: true })
+	})
+
+	test('checks retained Codex settings on a model change and accepts explicit clears', async () => {
+		const context = makeContext(ownerUserId)
+		const { session } = await call(
+			launchSessionProcedure,
+			{
+				hostId,
+				codingAgent: 'codelayer',
+				provider: 'codex',
+				model: 'gpt-6-sol',
+				effort: 'max',
+				fastMode: true,
+				text: 'Start',
+				title: 'Retained settings',
+				workingDirectory: tmpdir(),
+				permissionsMode: 'bypass',
+			},
+			{ context },
+		)
+		const target = { sessionId: session.id, model: 'codex-without-effort-or-fast-mode' }
+		await expect(call(updateSessionApiProcedure, target, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+			data: { message: expect.stringContaining('effort=max') },
+		})
+		await expect(call(updateSessionApiProcedure, { ...target, effort: null }, { context })).rejects.toMatchObject({
+			code: 'BAD_REQUEST',
+			data: { message: expect.stringContaining('fastMode') },
+		})
+		await call(updateSessionApiProcedure, { ...target, effort: null, fastMode: null }, { context })
+		const [updated] = await db.select().from(sessions).where(eq(sessions.id, session.id))
+		expect(updated).toMatchObject({ model: target.model, effort: null, fast_mode: false })
+
+		// Older sessions may have saved options that the host no longer offers.
+		await db.update(sessions).set({ effort: 'high', fast_mode: true }).where(eq(sessions.id, session.id))
+		await expect(
+			call(updateSessionApiProcedure, { sessionId: session.id, title: 'Edited title' }, { context }),
+		).resolves.toMatchObject({ success: true })
 	})
 
 	test.each(['gpt-6-sol', 'gpt-6-luna'])(

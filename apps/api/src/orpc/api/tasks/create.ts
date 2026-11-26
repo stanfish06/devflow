@@ -1,4 +1,3 @@
-import { isEffortSupported, isFastModeSupported } from '@devflow/ai/config'
 import {
 	buildCreatedWithExperimentFlags,
 	getTaskComposerSnapshotWithV2Default,
@@ -14,6 +13,7 @@ import { Effect } from 'effect'
 import { hash } from 'ohash'
 import { uuidv7 } from 'uuidv7'
 
+import { checkHostModelSettings } from '../../../db/check-host-model-settings'
 import { createSessionForLaunch } from '../../../db/create-session-for-launch'
 import { getTxId } from '../../../db/get-tx-id'
 import { validateHostOwnership } from '../../../db/host-auth'
@@ -279,26 +279,11 @@ export const createTaskProcedure = apiBaseOrgRequired.tasks.create
 					data: { slug: normalizedSlug, message: slugInTaskUsedMessage(normalizedSlug) },
 				})
 			}
-			if (
-				firstSession &&
-				!isEffortSupported(
-					firstSession.codingAgent,
-					firstSession.provider,
-					firstSession.model,
-					firstSession.effort,
-				)
-			) {
+			const modelSettings = firstSession ? await checkHostModelSettings(db, context.auth, firstSession) : null
+			if (modelSettings && !modelSettings.effortSupported) {
 				throw errors.BAD_REQUEST({ data: { message: 'The selected effort is not supported by this model' } })
 			}
-			if (
-				firstSession &&
-				!isFastModeSupported(
-					firstSession.codingAgent,
-					firstSession.provider,
-					firstSession.model,
-					firstSession.fastMode,
-				)
-			) {
+			if (modelSettings && !modelSettings.fastModeSupported) {
 				throw errors.BAD_REQUEST({ data: { message: 'Fast mode is not supported by this model' } })
 			}
 
