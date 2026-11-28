@@ -29,6 +29,9 @@ const STATIC_PREVIEW_HEIGHT = 760
 const SESSION_STACK_GAP = 8
 /** Spacing between sessions spread horizontally within a phase */
 const SESSION_SPREAD_GAP = 16
+/** Spacing between snake grid columns and rows */
+const SNAKE_GAP_X = 48
+const SNAKE_GAP_Y = 44
 /** Outer margin */
 const MARGIN = 16
 /** Clearance above intermediate nodes for routed artifact edges */
@@ -49,8 +52,21 @@ export function computeLayout(
   phases?: WorkflowPhase[],
   isStatic?: boolean,
   compactStaticPreview?: boolean,
+  /** Snake only: phases per row; see {@link snakeColumnCount}. */
+  snakeColumns?: number,
 ): LayoutResult {
   const effectivePhases = phases ?? defaultWorkflowPhases
+  if (direction === 'snake') {
+    return computeSnakeLayout(
+      sessions,
+      artifactFlows,
+      autoAdvanceEdges,
+      effectivePhases,
+      snakeColumns ?? snakeColumnCount(effectivePhases.length, 0, 0),
+      isStatic,
+      compactStaticPreview,
+    )
+  }
   if (direction === 'TB') {
     return computePhaseRowLayout(
       sessions,
@@ -176,6 +192,136 @@ function computePhaseColumnLayout(
 
   const edges = buildEdges(visiblePhases, sessionsByPhase, artifactFlows, autoAdvanceEdges, allNodeIds, nodes, 'LR', centerY, isStatic)
 
+  return { nodes, edges }
+}
+
+/**
+ * Phases per snake row for a pane of `width` × `height`: the count that shows the cards largest
+ * once the whole grid is fitted. Without a measured pane, a square-ish grid.
+ */
+export function snakeColumnCount(phaseCount: number, width: number, height: number): number {
+  if (phaseCount <= 1) return 1
+  if (width <= 0 || height <= 0) return Math.ceil(Math.sqrt(phaseCount))
+  let best = 1
+  let bestScale = 0
+  for (let columns = 1; columns <= phaseCount; columns++) {
+    const rows = Math.ceil(phaseCount / columns)
+    const gridWidth = 2 * MARGIN + columns * SESSION_NODE_WIDTH + (columns - 1) * SNAKE_GAP_X
+    const gridHeight = 2 * MARGIN + rows * SESSION_NODE_HEIGHT + (rows - 1) * SNAKE_GAP_Y
+    const scale = Math.min(width / gridWidth, height / gridHeight)
+    // Ties keep the fewer columns.
+    if (scale > bestScale + 1e-9) {
+      best = columns
+      bestScale = scale
+    }
+  }
+  return best
+}
+
+/**
+ * Snake layout: phases fill an evenly spaced grid row by row, alternating direction, so a long
+ * workflow reads as one path in a compact pane. Each row turn drops straight down a column.
+ *
+ * [questions] → [research] → [design]
+ *                                 ↓
+ *   [plan]    ←  [outline]  ←  [...]
+ *      ↓
+ *   [impl]    →    [pr]
+ *
+ * Every cell is one session wide and as tall as the tallest stack of sessions in any phase.
+ */
+function computeSnakeLayout(
+  sessions: WorkflowSession[],
+  artifactFlows: ArtifactFlow[],
+  autoAdvanceEdges: AutoAdvanceEdge[] | undefined,
+  phases: WorkflowPhase[],
+  columns: number,
+  isStatic?: boolean,
+  compactStaticPreview?: boolean,
+): LayoutResult {
+  const sessionsByPhase = new Map<string, WorkflowSession[]>()
+  for (const s of sessions) {
+    const arr = sessionsByPhase.get(s.labelName) ?? []
+    arr.push(s)
+    sessionsByPhase.set(s.labelName, arr)
+  }
+  const perRow = Math.max(1, Math.min(columns, phases.length))
+  const stackHeight = (count: number) => count * SESSION_NODE_HEIGHT + (count - 1) * SESSION_STACK_GAP
+  const cellHeight = Math.max(
+    SESSION_NODE_HEIGHT,
+    ...phases.map((phase) => stackHeight((sessionsByPhase.get(phase.name) ?? []).length)),
+  )
+  const placeholderWidth = compactStaticPreview
+    ? COMPACT_STATIC_PLACEHOLDER_NODE_WIDTH
+    : isStatic
+      ? STATIC_PLACEHOLDER_NODE_WIDTH
+      : PLACEHOLDER_NODE_WIDTH
+  const placeholderHeight = compactStaticPreview
+    ? COMPACT_STATIC_PLACEHOLDER_NODE_HEIGHT
+    : isStatic
+      ? STATIC_PLACEHOLDER_NODE_HEIGHT
+      : PLACEHOLDER_NODE_HEIGHT
+  const cellWidth = Math.max(SESSION_NODE_WIDTH, placeholderWidth)
+
+  const nodes: WorkflowGraphNode[] = []
+  const allNodeIds = new Set<string>()
+  for (const [index, phase] of phases.entries()) {
+    const row = Math.floor(index / perRow)
+    const inRow = index % perRow
+    const forward = row % 2 === 0
+    const column = forward ? inRow : perRow - 1 - inRow
+    const x = MARGIN + column * (cellWidth + SNAKE_GAP_X)
+    const y = MARGIN + row * (cellHeight + SNAKE_GAP_Y)
+    const along = forward ? Position.Right : Position.Left
+    const against = forward ? Position.Left : Position.Right
+    // The path enters a row's first cell from above and leaves its last cell downward.
+    const targetPosition = inRow === 0 && index > 0 ? Position.Top : against
+    const lastInRow = inRow === perRow - 1 || index === phases.length - 1
+    const sourcePosition = lastInRow && index < phases.length - 1 ? Position.Bottom : along
+
+    const phaseSessions = sessionsByPhase.get(phase.name) ?? []
+    if (phaseSessions.length === 0) {
+      const id = `placeholder-${phase.title}`
+      nodes.push({
+        id,
+        type: 'phasePlaceholder',
+        position: {
+          x: x + (cellWidth - placeholderWidth) / 2,
+          y: y + (cellHeight - placeholderHeight) / 2,
+        },
+        sourcePosition,
+        targetPosition,
+        data: {
+          kind: 'phase',
+          labelName: phase.name,
+          labelTitle: phase.title,
+          isStatic,
+          compactStaticPreview,
+          synthetic: phase.synthetic,
+        },
+      })
+      allNodeIds.add(id)
+      continue
+    }
+    const startY = y + (cellHeight - stackHeight(phaseSessions.length)) / 2
+    for (const [i, session] of phaseSessions.entries()) {
+      nodes.push({
+        id: session.id,
+        type: 'session',
+        position: {
+          x: x + (cellWidth - SESSION_NODE_WIDTH) / 2,
+          y: startY + i * (SESSION_NODE_HEIGHT + SESSION_STACK_GAP),
+        },
+        sourcePosition,
+        targetPosition,
+        data: { kind: 'session', session, synthetic: phase.synthetic },
+      })
+      allNodeIds.add(session.id)
+    }
+  }
+
+  // Artifact edges are not routed around cards here: the routing in buildEdges is per axis.
+  const edges = buildEdges(phases, sessionsByPhase, artifactFlows, autoAdvanceEdges, allNodeIds, nodes, 'snake', 0, isStatic)
   return { nodes, edges }
 }
 

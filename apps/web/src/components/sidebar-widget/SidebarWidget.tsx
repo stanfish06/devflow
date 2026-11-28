@@ -343,8 +343,7 @@ function SidebarOptionalTabs({
 						<WorkflowGraphLite
 							sessions={workflowSessions}
 							phases={workflowPhases}
-							direction="TB"
-							fullscreenDirection="LR"
+							direction="snake"
 							controlsLayout="vertical-fullscreen-first"
 							controlsPosition="top-right"
 							selectedNodeId={selectedWorkflowSessionId}

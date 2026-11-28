@@ -8,10 +8,11 @@ import { Button } from '../button'
 import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
-import { computeLayout, defaultWorkflowPhases } from './layout-lite'
+import { computeLayout, defaultWorkflowPhases, snakeColumnCount } from './layout-lite'
 import { PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
+  LayoutDirection,
   WorkflowGraphProps,
   WorkflowGraphNode,
 } from './types-lite'
@@ -20,7 +21,7 @@ import { snapViewportToDevicePixels } from './viewport'
 const nodeTypes = { session: SessionNode, phasePlaceholder: PhasePlaceholderNode }
 const edgeTypes = { artifact: ArtifactEdge, autoAdvance: AutoAdvanceEdge }
 
-function getFitViewPadding(direction: 'LR' | 'TB', isStatic?: boolean): number {
+function getFitViewPadding(direction: LayoutDirection, isStatic?: boolean): number {
   if (isStatic && direction === 'TB') return 0.14
   if (isStatic) return 0.06
   return 0.02
@@ -31,7 +32,7 @@ const emptyFlows: ArtifactFlow[] = []
 const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => void }> = ({
   sessions,
   artifactFlows = emptyFlows,
-  direction = 'TB',
+  direction = 'snake',
   selectedNodeId,
   focusCurrentStage,
   attentionNodeId,
@@ -52,9 +53,14 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
   const onArtifactClickRef = useRef(onArtifactClick)
   onArtifactClickRef.current = onArtifactClick
 
+  // The pane's size, measured below; the snake layout picks its column count from it.
+  const [paneSize, setPaneSize] = useState({ width: 0, height: 0 })
+  const snakeColumns =
+    direction === 'snake' ? snakeColumnCount(phases.length, paneSize.width, paneSize.height) : undefined
   const layout = useMemo(
-    () => computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview),
-    [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview],
+    () =>
+      computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview, snakeColumns),
+    [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview, snakeColumns],
   )
   const currentSession = sessions.find((session) => session.isCurrentStage)
   const currentPhase = phases.find((phase) => phase.name === currentSession?.labelName)
@@ -86,8 +92,8 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
       .sort()
       .join('|')
     const p = (phases ?? []).map((phase) => `${phase.name}:${phase.synthetic ? 'synthetic' : 'phase'}`).join('|')
-    return `${s};;${f};;${a};;${p};;${direction};;${isStatic ? 'static' : 'interactive'};;${compactStaticPreview ? 'compact' : 'default'}`
-  }, [sessions, artifactFlows, autoAdvanceEdges, phases, direction, isStatic, compactStaticPreview])
+    return `${s};;${f};;${a};;${p};;${direction}${snakeColumns ?? ''};;${isStatic ? 'static' : 'interactive'};;${compactStaticPreview ? 'compact' : 'default'}`
+  }, [sessions, artifactFlows, autoAdvanceEdges, phases, direction, snakeColumns, isStatic, compactStaticPreview])
 
   const [viewportState, setViewportState] = useState<{
     structureKey: string
@@ -211,7 +217,14 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
   useMountEffect(() => {
     const el = containerRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
-    const resizeObserver = new ResizeObserver(() => fitToViewportRef.current())
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (entry) {
+        const width = Math.round(entry.contentRect.width)
+        const height = Math.round(entry.contentRect.height)
+        setPaneSize((size) => (size.width === width && size.height === height ? size : { width, height }))
+      }
+      fitToViewportRef.current()
+    })
     resizeObserver.observe(el)
     return () => resizeObserver.disconnect()
   })

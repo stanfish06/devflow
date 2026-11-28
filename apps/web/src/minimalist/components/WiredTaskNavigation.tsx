@@ -79,8 +79,7 @@ export function WiredTaskNavigation({ taskId, sessionId }: { taskId: string; ses
 							phases={workflowPhases}
 							selectedNodeId={sessionId}
 							focusCurrentStage
-							direction="TB"
-							fullscreenDirection="LR"
+							direction="snake"
 							controlsLayout="vertical-fullscreen-first"
 							controlsPosition="top-right"
 							onSessionClick={(id) => {

@@ -73,8 +73,8 @@ export interface ArtifactFlow {
   category: 'source' | 'edited' | 'new'
 }
 
-/** Layout direction */
-export type LayoutDirection = 'LR' | 'TB'
+/** Layout direction; `snake` fills a grid row by row, alternating left-right and right-left. */
+export type LayoutDirection = 'LR' | 'TB' | 'snake'
 
 /** Controls layout */
 export type ControlsLayout = 'horizontal' | 'vertical-fullscreen-first'
