@@ -8,7 +8,7 @@ import { Button } from '../button'
 import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
-import { computeLayout, defaultWorkflowPhases, snakeColumnCount } from './layout-lite'
+import { computeLayout, defaultWorkflowPhases, snakeCellSize, snakeColumnCount } from './layout-lite'
 import { PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
@@ -55,8 +55,12 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
 
   // The pane's size, measured below; the snake layout picks its column count from it.
   const [paneSize, setPaneSize] = useState({ width: 0, height: 0 })
+  const snakeCell = useMemo(
+    () => snakeCellSize(sessions, phases, isStatic, compactStaticPreview),
+    [sessions, phases, isStatic, compactStaticPreview],
+  )
   const snakeColumns =
-    direction === 'snake' ? snakeColumnCount(phases.length, paneSize.width, paneSize.height) : undefined
+    direction === 'snake' ? snakeColumnCount(phases.length, paneSize.width, paneSize.height, snakeCell) : undefined
   const layout = useMemo(
     () =>
       computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview, snakeColumns),

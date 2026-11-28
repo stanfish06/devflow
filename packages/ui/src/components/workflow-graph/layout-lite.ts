@@ -195,19 +195,55 @@ function computePhaseColumnLayout(
   return { nodes, edges }
 }
 
+/** Card size for a phase with no session yet. */
+function placeholderSize(isStatic?: boolean, compactStaticPreview?: boolean): { width: number; height: number } {
+  if (compactStaticPreview) {
+    return { width: COMPACT_STATIC_PLACEHOLDER_NODE_WIDTH, height: COMPACT_STATIC_PLACEHOLDER_NODE_HEIGHT }
+  }
+  if (isStatic) return { width: STATIC_PLACEHOLDER_NODE_WIDTH, height: STATIC_PLACEHOLDER_NODE_HEIGHT }
+  return { width: PLACEHOLDER_NODE_WIDTH, height: PLACEHOLDER_NODE_HEIGHT }
+}
+
+const stackHeight = (count: number) => count * SESSION_NODE_HEIGHT + (count - 1) * SESSION_STACK_GAP
+
+/** A snake grid cell: as wide as the widest card, as tall as the tallest stack of sessions in a phase. */
+export function snakeCellSize(
+  sessions: WorkflowSession[],
+  phases: WorkflowPhase[],
+  isStatic?: boolean,
+  compactStaticPreview?: boolean,
+): { width: number; height: number } {
+  const counts = new Map<string, number>()
+  for (const s of sessions) counts.set(s.labelName, (counts.get(s.labelName) ?? 0) + 1)
+  const placeholder = placeholderSize(isStatic, compactStaticPreview)
+  return {
+    width: Math.max(SESSION_NODE_WIDTH, placeholder.width),
+    height: Math.max(
+      SESSION_NODE_HEIGHT,
+      placeholder.height,
+      ...phases.map((phase) => stackHeight(counts.get(phase.name) ?? 0)),
+    ),
+  }
+}
+
 /**
- * Phases per snake row for a pane of `width` × `height`: the count that shows the cards largest
- * once the whole grid is fitted. Without a measured pane, a square-ish grid.
+ * Phases per snake row for a pane of `width` × `height` and grid cells of `cell`: the count that
+ * shows the cards largest once the whole grid is fitted. Without a measured pane, a square-ish grid.
  */
-export function snakeColumnCount(phaseCount: number, width: number, height: number): number {
+export function snakeColumnCount(
+  phaseCount: number,
+  width: number,
+  height: number,
+  cell: { width: number; height: number } = { width: SESSION_NODE_WIDTH, height: SESSION_NODE_HEIGHT },
+): number {
   if (phaseCount <= 1) return 1
   if (width <= 0 || height <= 0) return Math.ceil(Math.sqrt(phaseCount))
   let best = 1
   let bestScale = 0
   for (let columns = 1; columns <= phaseCount; columns++) {
     const rows = Math.ceil(phaseCount / columns)
-    const gridWidth = 2 * MARGIN + columns * SESSION_NODE_WIDTH + (columns - 1) * SNAKE_GAP_X
-    const gridHeight = 2 * MARGIN + rows * SESSION_NODE_HEIGHT + (rows - 1) * SNAKE_GAP_Y
+    const gridWidth = 2 * MARGIN + columns * cell.width + (columns - 1) * SNAKE_GAP_X
+    const gridHeight = 2 * MARGIN + rows * cell.height + (rows - 1) * SNAKE_GAP_Y
     const scale = Math.min(width / gridWidth, height / gridHeight)
     // Ties keep the fewer columns.
     if (scale > bestScale + 1e-9) {
@@ -228,7 +264,7 @@ export function snakeColumnCount(phaseCount: number, width: number, height: numb
  *      ↓
  *   [impl]    →    [pr]
  *
- * Every cell is one session wide and as tall as the tallest stack of sessions in any phase.
+ * Every cell has the size {@link snakeCellSize} gives, the same one the column count was picked for.
  */
 function computeSnakeLayout(
   sessions: WorkflowSession[],
@@ -246,25 +282,13 @@ function computeSnakeLayout(
     sessionsByPhase.set(s.labelName, arr)
   }
   const perRow = Math.max(1, Math.min(columns, phases.length))
-  const stackHeight = (count: number) => count * SESSION_NODE_HEIGHT + (count - 1) * SESSION_STACK_GAP
-  const cellHeight = Math.max(
-    SESSION_NODE_HEIGHT,
-    ...phases.map((phase) => stackHeight((sessionsByPhase.get(phase.name) ?? []).length)),
-  )
-  const placeholderWidth = compactStaticPreview
-    ? COMPACT_STATIC_PLACEHOLDER_NODE_WIDTH
-    : isStatic
-      ? STATIC_PLACEHOLDER_NODE_WIDTH
-      : PLACEHOLDER_NODE_WIDTH
-  const placeholderHeight = compactStaticPreview
-    ? COMPACT_STATIC_PLACEHOLDER_NODE_HEIGHT
-    : isStatic
-      ? STATIC_PLACEHOLDER_NODE_HEIGHT
-      : PLACEHOLDER_NODE_HEIGHT
-  const cellWidth = Math.max(SESSION_NODE_WIDTH, placeholderWidth)
+  const { width: cellWidth, height: cellHeight } = snakeCellSize(sessions, phases, isStatic, compactStaticPreview)
+  const { width: placeholderWidth, height: placeholderHeight } = placeholderSize(isStatic, compactStaticPreview)
 
   const nodes: WorkflowGraphNode[] = []
   const allNodeIds = new Set<string>()
+  // Where each session sits on the path, for routing artifact edges below.
+  const sessionSlots = new Map<string, { index: number; row: number }>()
   for (const [index, phase] of phases.entries()) {
     const row = Math.floor(index / perRow)
     const inRow = index % perRow
@@ -317,11 +341,27 @@ function computeSnakeLayout(
         data: { kind: 'session', session, synthetic: phase.synthetic },
       })
       allNodeIds.add(session.id)
+      sessionSlots.set(session.id, { index, row })
     }
   }
 
-  // Artifact edges are not routed around cards here: the routing in buildEdges is per axis.
   const edges = buildEdges(phases, sessionsByPhase, artifactFlows, autoAdvanceEdges, allNodeIds, nodes, 'snake', 0, isStatic)
+  // An artifact flow between cards that are not next to each other on the path goes around the
+  // cards between them: above the row when both ends share it, else past the grid's right edge.
+  const gridRight = MARGIN + perRow * cellWidth + (perRow - 1) * SNAKE_GAP_X
+  let stagger = 0
+  for (const edge of edges) {
+    if (edge.type !== 'artifact' || !edge.data) continue
+    const from = sessionSlots.get(edge.source)
+    const to = sessionSlots.get(edge.target)
+    if (!from || !to || Math.abs(from.index - to.index) <= 1) continue
+    const offset = ROUTE_MARGIN + stagger * ROUTE_STAGGER
+    edge.data =
+      from.row === to.row
+        ? { ...edge.data, routeY: MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset }
+        : { ...edge.data, routeX: gridRight + offset }
+    stagger += 1
+  }
   return { nodes, edges }
 }
 

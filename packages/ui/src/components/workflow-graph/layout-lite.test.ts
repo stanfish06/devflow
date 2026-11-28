@@ -1,7 +1,7 @@
 import { Position } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
 
-import { computeLayout, snakeColumnCount } from './layout-lite'
+import { computeLayout, snakeCellSize, snakeColumnCount } from './layout-lite'
 import type { WorkflowPhase, WorkflowSession } from './types-lite'
 
 const phases: WorkflowPhase[] = ['questions', 'research', 'design', 'outline', 'plan', 'implement', 'pr'].map(
@@ -22,6 +22,15 @@ describe('snakeColumnCount', () => {
     expect(snakeColumnCount(7, 220, 300)).toBe(2)
     // A wide dialog.
     expect(snakeColumnCount(7, 1600, 500)).toBe(4)
+  })
+
+  it('sizes the grid by its real cells, so a tall session stack can call for more columns', () => {
+    const stacked = [session('a', 'research'), session('b', 'research'), session('c', 'research')]
+    const cell = snakeCellSize(stacked, phases)
+    expect(cell.height).toBe(3 * 90 + 2 * 8)
+    expect(snakeColumnCount(7, 600, 400, cell)).toBe(4)
+    // With the 90px estimate the same pane would get 3 columns and smaller cards.
+    expect(snakeColumnCount(7, 600, 400)).toBe(3)
   })
 
   it('falls back to a square-ish grid before the pane is measured', () => {
@@ -64,5 +73,21 @@ describe('computeLayout snake', () => {
     expect(byPhase('pr')?.targetPosition).toBe(Position.Top)
     // One structural edge per step of the path once the started phases end.
     expect(edges.filter((edge) => edge.id.startsWith('structural-'))).toHaveLength(6)
+  })
+
+  it('routes artifact flows that skip cards around them instead of through them', () => {
+    const all = phases.map((phase, index) => session(`s${index}`, phase.title))
+    const flow = (from: string, to: string) => ({ fromSessionId: from, toSessionId: to, fileName: `${from}-${to}.md`, category: 'source' as const })
+    const routed = computeLayout(all, [flow('s0', 's1'), flow('s0', 's2'), flow('s0', 's5')], 'snake', undefined, phases, false, false, 3)
+    const data = (to: string) => routed.edges.find((edge) => edge.target === to && edge.type === 'artifact')?.data
+    const top = (id: string) => routed.nodes.find((node) => node.id === id)?.position.y ?? 0
+    const right = Math.max(...routed.nodes.map((node) => node.position.x)) + 170
+    // Next on the path: a direct curve.
+    expect(data('s1')?.routeY).toBeUndefined()
+    expect(data('s1')?.routeX).toBeUndefined()
+    // Same row, skipping s1: above the row.
+    expect(Number(data('s2')?.routeY)).toBeLessThan(top('s0'))
+    // Another row: past the grid's right edge.
+    expect(Number(data('s5')?.routeX)).toBeGreaterThan(right)
   })
 })
