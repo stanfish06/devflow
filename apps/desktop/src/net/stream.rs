@@ -76,6 +76,9 @@ pub fn subscribe_session(
             &format!("/streams/sessions/{session_id}"),
         );
         let mut failures = 0u32;
+        // Consecutive restarts without a successful read: a stream the proxy keeps losing must
+        // not spin hydrate -> read -> reset.
+        let mut restarts = 0u32;
         'session: loop {
             if sender.is_closed() {
                 return;
@@ -95,12 +98,19 @@ pub fn subscribe_session(
                     read_catch_up(&net, &url, &mut offset, &mut caught_up, &sender).await
                 };
                 match outcome {
-                    Read::Next => failures = 0,
+                    Read::Next => {
+                        failures = 0;
+                        restarts = 0;
+                    }
                     Read::Stop => return,
                     Read::Restart => {
                         if sender.send(StreamUpdate::Reset).await.is_err() {
                             return;
                         }
+                        if restarts > 0 {
+                            tokio::time::sleep(backoff(restarts - 1)).await;
+                        }
+                        restarts += 1;
                         continue 'session;
                     }
                     Read::Failed(error) => {
@@ -134,13 +144,13 @@ async fn authorized_get(
     timeout: Option<Duration>,
 ) -> Result<reqwest::Response, String> {
     let token = net.token().await.map_err(|e| format!("{e:#}"))?;
-    let mut request = net.http().get(url.clone()).query(query).bearer_auth(token);
+    let mut request = net.http().get(url.clone()).query(query).bearer_auth(&token);
     if let Some(timeout) = timeout {
         request = request.timeout(timeout);
     }
     let response = request.send().await.map_err(|e| e.to_string())?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        net.invalidate_token().await;
+        net.invalidate_token(&token).await;
         return Err("token rejected".into());
     }
     Ok(response)

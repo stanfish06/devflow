@@ -45,11 +45,14 @@
             pkgs.docker-compose
             # Agent VMs for projects whose sandbox is `vm` (apps/agent-runner/src/devflow/vm-sandbox.ts).
             pkgs.lima
-            # Desktop client (apps/desktop); links with the Xcode Command Line Tools on macOS.
+          ]
+          # Desktop client (apps/desktop): macOS only (WKWebView, AppKit); links with the Xcode
+          # Command Line Tools.
+          ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             (pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml)
             pkgs.sccache
           ];
-          RUSTC_WRAPPER = "sccache";
+          RUSTC_WRAPPER = if pkgs.stdenv.isDarwin then "sccache" else "";
           shellHook = ''
             [ -f "''${DEVFLOW_HOME:-$HOME/.devflow}/config.json" ] || echo "devflow: run 'bun run devflow setup' first"
           '';

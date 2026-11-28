@@ -1,6 +1,6 @@
 //! Rows of the native thread, ported from apps/web/src/minimalist/components/Transcript.tsx and Steps.tsx.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::component::clipboard::Clipboard;
@@ -10,7 +10,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::Value;
 
-use crate::model::format::{first_line, format_clock, format_duration, plural, truncate};
+use crate::model::format::{
+    artifact_name, first_line, format_clock, format_duration, plural, split_attachments, truncate,
+};
 use crate::model::tools::{
     StepIcon, TodoStatus, is_edit_tool, latest_todos, summarize_step, text_field,
 };
@@ -18,7 +20,7 @@ use crate::model::transcript::{
     AgentTurn, ApprovalStatus, Step, StepGroup, ToolStep, Turn, group_steps, normalize_tool_name,
     read_denial,
 };
-use crate::ui::thread::ThreadView;
+use crate::ui::thread::{ThreadEvent, ThreadView};
 
 /// One row of the virtual list.
 #[derive(Clone, Debug, PartialEq)]
@@ -48,8 +50,8 @@ impl ThreadRow {
 #[derive(Clone)]
 pub struct RowContext {
     pub thread: WeakEntity<ThreadView>,
-    /// Ids of turns and steps whose open state the reader flipped.
-    pub toggled: Rc<HashSet<String>>,
+    /// Open (true) or closed (false) as the reader set it, per turn or step id.
+    pub toggled: Rc<HashMap<String, bool>>,
     pub streaming: Entity<TextViewState>,
     pub now_ms: i64,
     /// The window rem size, in the ids of markdown views: they cache their layout per id, so a
@@ -59,14 +61,20 @@ pub struct RowContext {
 
 impl RowContext {
     fn is_open(&self, id: &str, default_open: bool) -> bool {
-        default_open != self.toggled.contains(id)
+        self.toggled.get(id).copied().unwrap_or(default_open)
     }
 
-    fn toggle_handler(&self, id: &str) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    /// Flip a row the reader sees as `open_now`, and keep that choice when its default changes
+    /// (a live turn finishing, say).
+    fn toggle_handler(
+        &self,
+        id: &str,
+        open_now: bool,
+    ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
         let thread = self.thread.clone();
         let id = id.to_owned();
         move |_, _, cx| {
-            let _ = thread.update(cx, |thread, cx| thread.toggle(&id, cx));
+            let _ = thread.update(cx, |thread, cx| thread.set_open(&id, !open_now, cx));
         }
     }
 }
@@ -122,6 +130,30 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
             } => {
                 // `.turn-user` > `.msg` > `.bubble`: the message as typed, not rendered as markdown.
                 let group = SharedString::from(format!("turn-{id}"));
+                // `MessageBody`: uploads show as files above the bubble, the rest as typed.
+                let (body, files) = split_attachments(text);
+                let chips = files.iter().enumerate().map(|(index, file)| {
+                    let name = artifact_name(file);
+                    let (thread, open) = (context.thread.clone(), name.clone());
+                    h_flex()
+                        .id(SharedString::from(format!("file-{id}-{index}")))
+                        .gap(css(6.))
+                        .px(css(10.))
+                        .py(css(5.))
+                        .rounded(css(8.))
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_size(css(12.5))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme.secondary))
+                        .on_click(move |_, _, cx| {
+                            let open = open.clone();
+                            let _ = thread
+                                .update(cx, |_, cx| cx.emit(ThreadEvent::OpenAttachment(open)));
+                        })
+                        .child(Icon::new(IconName::FileText).xsmall())
+                        .child(name)
+                });
                 let stamp = match author {
                     Some(author) => format!("{author} · {}", format_clock(*at)),
                     None => format_clock(*at),
@@ -136,18 +168,30 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                         v_flex()
                             .max_w(relative(0.76))
                             .items_end()
-                            .child(
-                                div()
-                                    .id(SharedString::from(format!("user-{id}")))
-                                    .px(css(14.))
-                                    .py(css(9.))
-                                    .rounded(css(16.))
-                                    .bg(theme.secondary)
-                                    .text_size(css(13.))
-                                    .line_height(relative(1.5))
-                                    .whitespace_normal()
-                                    .child(text.clone()),
-                            )
+                            .gap(css(6.))
+                            .when(!files.is_empty(), |this| {
+                                this.child(
+                                    h_flex()
+                                        .flex_wrap()
+                                        .justify_end()
+                                        .gap(css(6.))
+                                        .children(chips),
+                                )
+                            })
+                            .when(!body.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .id(SharedString::from(format!("user-{id}")))
+                                        .px(css(14.))
+                                        .py(css(9.))
+                                        .rounded(css(16.))
+                                        .bg(theme.secondary)
+                                        .text_size(css(13.))
+                                        .line_height(relative(1.5))
+                                        .whitespace_normal()
+                                        .child(body.clone()),
+                                )
+                            })
                             .child(turn_actions(group, id.clone(), text.clone(), stamp, cx)),
                     )
                     .into_any_element()
@@ -221,7 +265,7 @@ fn agent_turn(turn: &AgentTurn, live: bool, context: &RowContext, cx: &App) -> i
                     .text_color(theme.muted_foreground)
                     .cursor_default()
                     .hover(|style| style.text_color(theme.foreground))
-                    .on_click(context.toggle_handler(&turn.id))
+                    .on_click(context.toggle_handler(&turn.id, open))
                     .child(if live {
                         format!("Working for {duration}")
                     } else {
@@ -327,7 +371,7 @@ fn step_list(steps: &[Step], context: &RowContext, cx: &App) -> Vec<AnyElement> 
                 v_flex()
                     .child(
                         step_line(id, cx)
-                            .on_click(context.toggle_handler(id))
+                            .on_click(context.toggle_handler(id, open))
                             .child(Icon::new(if open { IconName::ChevronDown } else { IconName::ChevronRight }).xsmall())
                             .child(format!("Explored {}", plural(steps.len(), "item")))
                             .child(div().text_color(cx.theme().muted_foreground).child(format!("· {facts}"))),
@@ -388,7 +432,7 @@ fn step_row(step: &Step, context: &RowContext, cx: &App) -> AnyElement {
                 .italic()
                 .text_color(theme.muted_foreground)
                 .cursor_default()
-                .on_click(context.toggle_handler(id))
+                .on_click(context.toggle_handler(id, open))
                 .child(if open {
                     text.clone()
                 } else {
@@ -411,7 +455,7 @@ fn step_row(step: &Step, context: &RowContext, cx: &App) -> AnyElement {
             v_flex()
                 .child(
                     step_line(id, cx)
-                        .on_click(context.toggle_handler(id))
+                        .on_click(context.toggle_handler(id, open))
                         .child(Icon::new(IconName::BookOpen).xsmall())
                         .child("Loaded skill")
                         .when_some(name.clone(), |this, name| this.child(mono(name, cx))),
@@ -468,7 +512,7 @@ fn tool_row(step: &ToolStep, context: &RowContext, cx: &App) -> AnyElement {
         .min_w_0()
         .child(
             step_line(&step.id, cx)
-                .on_click(context.toggle_handler(&step.id))
+                .on_click(context.toggle_handler(&step.id, open))
                 .child(
                     Icon::new(if running {
                         IconName::Loader

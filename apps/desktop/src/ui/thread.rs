@@ -1,7 +1,7 @@
 //! One session's thread, ported from apps/web/src/minimalist/components/ThreadView.tsx:
 //! the transcript, the card for whatever the agent waits on, queued messages and the composer.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -108,8 +108,47 @@ fn rule_text(suggestions: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// What the thread asks of the window around it.
+pub enum ThreadEvent {
+    /// Open an attachment of a sent message, by its display name.
+    OpenAttachment(String),
+}
+
 /// Tries per saved-rows fetch, with network backoff between them.
 const SAVED_FETCH_ATTEMPTS: u32 = 5;
+/// Rows per `sync/v2/conversationEvents` page; the endpoint caps a page at 10,000.
+const SAVED_PAGE_SIZE: usize = 5_000;
+
+/// Every saved row of a session, page by page in a stable order (time, then id), so a long
+/// session's newest rows are never cut off by the page limit.
+async fn fetch_saved_rows(net: &Net, session_id: &str) -> Result<Vec<Value>, rpc::RpcError> {
+    let sort = |field: &str| json!({ "field": [field], "direction": "asc", "nulls": "last" });
+    let mut rows = Vec::new();
+    loop {
+        let input = json!({
+            "where": {
+                "type": "comparison",
+                "field": ["session_id"],
+                "operator": "eq",
+                "value": session_id,
+            },
+            "sorts": [sort("created_at"), sort("id")],
+            "limit": SAVED_PAGE_SIZE,
+            "offset": rows.len(),
+        });
+        let page: Value = rpc::call(net, "sync/v2/conversationEvents", &input).await?;
+        let page = page
+            .get("rows")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let last = page.len() < SAVED_PAGE_SIZE;
+        rows.extend(page);
+        if last {
+            return Ok(rows);
+        }
+    }
+}
 
 pub struct ThreadView {
     /// Draw the titlebar and dock (composer, approvals, queue). Off inside the web app, where the
@@ -128,7 +167,7 @@ pub struct ThreadView {
     scroller: Entity<MessageScrollerState>,
     streaming: Entity<TextViewState>,
     streamed: String,
-    toggled: Rc<HashSet<String>>,
+    toggled: Rc<HashMap<String, bool>>,
     composer: Entity<TextareaState>,
     denying: Option<Denial>,
     question: Option<QuestionState>,
@@ -204,7 +243,7 @@ impl ThreadView {
             scroller,
             streaming,
             streamed: String::new(),
-            toggled: Rc::new(HashSet::new()),
+            toggled: Rc::new(HashMap::new()),
             composer,
             denying: None,
             question: None,
@@ -317,25 +356,15 @@ impl ThreadView {
         self.fetching_mark = mark.clone();
         let net = self.net.clone();
         self._saved = cx.spawn(async move |this, cx| {
-            let input = json!({
-                "where": {
-                    "type": "comparison",
-                    "field": ["session_id"],
-                    "operator": "eq",
-                    "value": session_id,
-                },
-            });
             let mut output = None;
             for attempt in 0..SAVED_FETCH_ATTEMPTS {
                 let request = net.spawn({
-                    let (net, input) = (net.clone(), input.clone());
-                    async move {
-                        rpc::call::<_, Value>(&net, "sync/v2/conversationEvents", &input).await
-                    }
+                    let (net, session_id) = (net.clone(), session_id.clone());
+                    async move { fetch_saved_rows(&net, &session_id).await }
                 });
                 match request.await {
-                    Ok(Ok(value)) => {
-                        output = Some(value);
+                    Ok(Ok(rows)) => {
+                        output = Some(rows);
                         break;
                     }
                     Ok(Err(error)) => log::warn!("saved events: {error}"),
@@ -352,10 +381,7 @@ impl ThreadView {
                     return;
                 };
                 let rows: Vec<EventRow> = output
-                    .get("rows")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
+                    .iter()
                     .filter_map(Value::as_object)
                     .filter_map(EventRow::from_saved_row)
                     .collect();
@@ -453,11 +479,9 @@ impl ThreadView {
         cx.notify();
     }
 
-    pub fn toggle(&mut self, id: &str, cx: &mut Context<Self>) {
-        let toggled = Rc::make_mut(&mut self.toggled);
-        if !toggled.remove(id) {
-            toggled.insert(id.to_owned());
-        }
+    /// Record the reader's open or closed choice for a turn or step.
+    pub fn set_open(&mut self, id: &str, open: bool, cx: &mut Context<Self>) {
+        Rc::make_mut(&mut self.toggled).insert(id.to_owned(), open);
         // Open state changes row heights; remeasure keeps the reading position.
         self.scroller
             .update(cx, |scroller, cx| scroller.remeasure(cx));
@@ -1084,6 +1108,8 @@ fn hash_steps(steps: &[Step], hasher: &mut DefaultHasher) {
         }
     }
 }
+
+impl EventEmitter<ThreadEvent> for ThreadView {}
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

@@ -86,16 +86,26 @@ fn bridge_script() -> String {
   }};
   // Popups the minimalist UI draws over the page (components/Menu.tsx, SearchPalette.tsx, Dialog.tsx,
   // Toast.tsx, and the narrow-window drawer scrims).
-  const overlays = 'dialog[open], .toast, [class$="-scrim"], [class*="-scrim "]';
+  // .slash-menu is the composer's slash-command and @-mention list (minimalist Suggestions.tsx),
+  // which opens upward over the transcript.
+  const overlays = 'dialog[open], .toast, .slash-menu, [class$="-scrim"], [class*="-scrim "]';
   const webCards = '.next-card, .next-row, .worked.setup';
   let last = '';
   let marked = null;
+  // The area shrinks when the composer grows a line, which changes only a textarea's `rows`.
+  let sized = null;
+  const resized = new ResizeObserver(() => schedule());
   const report = () => {{
     // ThreadView's <main> is the only one with a composer dock (minimalist/components/ThreadView.tsx).
     // The native view covers the transcript; the page keeps its titlebar and dock.
     const main = document.querySelector('.minimalist-ui') &&
       [...document.querySelectorAll('main.main:has(> .dock) > .scroll')].find((el) => !el.closest('[hidden]'));
     const id = main ? sessionId() : null;
+    if (sized !== (main || null)) {{
+      resized.disconnect();
+      if (main) resized.observe(main);
+      sized = main || null;
+    }}
     const rect = main && id ? main.getBoundingClientRect() : null;
     const target = rect && rect.width > 0 && rect.height > 0 ? main : null;
     // A page popup over the column (menu, palette, dialog, toast, drawer scrim) must show: the
@@ -133,7 +143,7 @@ fn bridge_script() -> String {
   const start = () => {{
     style();
     new MutationObserver(schedule).observe(document.body, {{
-      subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open'],
+      subtree: true, childList: true, attributes: true, attributeFilter: ['hidden', 'class', 'style', 'open', 'rows'],
     }});
     addEventListener('resize', schedule);
     addEventListener('popstate', schedule);
@@ -142,6 +152,12 @@ fn bridge_script() -> String {
   if (document.body) start(); else addEventListener('DOMContentLoaded', start);
   // Native code asks again after a page zoom change, which moves the area without a DOM change.
   window.__devflowReport = () => {{ last = ''; schedule(); }};
+  // The native transcript's attachment chips open the web transcript's own link (Transcript.tsx
+  // SentFile), which carries the signed download URL.
+  window.__devflowOpenAttachment = (name) => {{
+    const links = document.querySelectorAll('.{class} a.sent-image, .{class} a.attachment');
+    [...links].find((link) => link.title === name)?.click();
+  }};
 }})();"#,
         class = NATIVE_CLASS
     )
@@ -156,6 +172,16 @@ impl WebPane {
             .with_url(start.as_str())
             .with_initialization_script(bridge_script())
             .with_focused(true)
+            // Links the page opens in a new tab (target=_blank: attachments, PRs, docs) go to the
+            // default browser, as a browser would open a tab.
+            .with_new_window_req_handler(|url, _| {
+                if (url.starts_with("https://") || url.starts_with("http://"))
+                    && let Err(error) = std::process::Command::new("open").arg(&url).spawn()
+                {
+                    log::warn!("open {url}: {error}");
+                }
+                wry::NewWindowResponse::Deny
+            })
             .with_ipc_handler(move |request| {
                 let body = request.body();
                 if body.len() <= MAX_MESSAGE_BYTES {
@@ -223,6 +249,17 @@ impl WebPane {
         // NativeView both retain it, and nothing else moves or resizes it.
         let view = unsafe { NativeView::new(pointer, window, cx) }?;
         Ok((webview, view))
+    }
+
+    /// Open an attachment of the covered transcript by its display name, through the page's link.
+    pub fn open_attachment(&self, name: &str) {
+        let script = format!(
+            "window.__devflowOpenAttachment && window.__devflowOpenAttachment({})",
+            serde_json::to_string(name).expect("a string serializes")
+        );
+        if let Err(error) = self.webview.evaluate_script(&script) {
+            log::warn!("open attachment {name}: {error}");
+        }
     }
 
     /// Let a GPUI binding for `A` run before the page sees its keys, as a browser's own shortcuts

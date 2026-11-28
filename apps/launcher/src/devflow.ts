@@ -1045,10 +1045,15 @@ function e2e(): void {
 }
 
 /**
- * `desktop`: the native client in apps/desktop against the running stack. Needs the Rust toolchain
- * from `nix develop`; further arguments go to cargo, e.g. `--release`.
+ * `desktop`: the native client in apps/desktop (macOS only) against the running stack. Needs the
+ * Rust toolchain from `nix develop`; further arguments go to cargo, e.g. `--release`.
  */
 function desktop(): void {
+	// The client embeds WKWebView through AppKit; nix only provides its toolchain on macOS.
+	if (process.platform !== 'darwin') {
+		console.error('devflow desktop runs on macOS only')
+		process.exit(1)
+	}
 	const result = spawnSync('cargo', ['run', '-p', 'devflow-desktop', ...process.argv.slice(3)], {
 		cwd: REPO_ROOT,
 		env: {

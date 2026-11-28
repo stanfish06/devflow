@@ -5,7 +5,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::config::{StackConfig, devflow_home};
-use crate::ui::thread::ThreadView;
+use crate::ui::thread::{ThreadEvent, ThreadView};
 use crate::ui::web::{ThreadSlot, WebEvent, WebPane};
 
 actions!(devflow, [Quit, ZoomIn, ZoomOut, ZoomReset]);
@@ -66,6 +66,7 @@ pub struct AppView {
     web: Entity<WebPane>,
     /// The native thread and the web column it covers.
     thread: Option<(Entity<ThreadView>, ThreadSlot)>,
+    _thread_events: Option<Subscription>,
     /// Page and native zoom; the page reports the transcript area in its own (zoomed) CSS pixels.
     zoom: f32,
     _subscriptions: Vec<Subscription>,
@@ -112,6 +113,7 @@ impl AppView {
         let mut this = Self {
             web,
             thread: None,
+            _thread_events: None,
             zoom,
             _subscriptions: subscriptions,
         };
@@ -161,6 +163,15 @@ impl AppView {
                 _ => {
                     let session_id = slot.session_id.clone();
                     let thread = cx.new(|cx| ThreadView::new(session_id, window, cx));
+                    // An attachment opens through the page's own link, which has its download URL.
+                    self._thread_events = Some(cx.subscribe(
+                        &thread,
+                        |this, _, event: &ThreadEvent, cx| match event {
+                            ThreadEvent::OpenAttachment(name) => {
+                                this.web.read(cx).open_attachment(name)
+                            }
+                        },
+                    ));
                     self.thread = Some((thread, slot));
                 }
             },

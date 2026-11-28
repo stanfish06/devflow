@@ -35,7 +35,8 @@ pub struct SessionStream {
     events: HashMap<String, EventRow>,
     /// What each stream key added, so a key-only delete can remove it.
     keys: HashMap<String, StreamKey>,
-    /// When each event id first arrived: the stream's own order, which breaks timestamp ties.
+    /// When each event id first arrived on the stream: its own order, which breaks timestamp ties.
+    /// Saved-query rows get none, so they sort after stream rows of the same millisecond, by id.
     arrival: HashMap<String, u64>,
     live: HashMap<String, LiveBlock>,
     ready: bool,
@@ -146,8 +147,8 @@ impl SessionStream {
             if self.events.contains_key(&row.id) {
                 continue;
             }
+            // Not `arrive`: only the stream's own order decides ties, and its replay may still come.
             self.live.remove(&row.id);
-            self.arrive(&row.id);
             self.events.insert(row.id.clone(), row);
             changed = true;
         }
@@ -322,5 +323,26 @@ mod tests {
             "type": "text_delta", "key": "d-a1-0", "headers": { "operation": "delete" }
         })]);
         assert!(stream.live_text().is_empty());
+    }
+
+    #[test]
+    fn saved_rows_merged_first_do_not_fix_stream_order() {
+        let mut stream = SessionStream::default();
+        let saved = |id: &str, content: &str| {
+            let row = json!({ "id": id, "event_type": "message", "role": "assistant",
+                "content": content, "created_at": "5" });
+            EventRow::from_saved_row(row.as_object().unwrap()).unwrap()
+        };
+        // The query returns them in the wrong order before the stream replays.
+        stream.merge_saved(vec![saved("a-last", "final"), saved("z-first", "draft")]);
+        stream.apply(&[
+            event("u1", "user", "message", "go", 1),
+            event("z-first", "assistant", "message", "draft", 5),
+            event("a-last", "assistant", "message", "final", 5),
+        ]);
+        let turns = stream.turns();
+        assert!(
+            matches!(&turns[1], Turn::Agent(agent) if agent.answer.as_deref() == Some("final"))
+        );
     }
 }

@@ -86,6 +86,24 @@ pub fn edit_counts(step: &ToolStep) -> (usize, usize) {
     if name == "write" {
         return (lines(str_field(input, "content")).len(), 0);
     }
+    // Codex's apply_patch: a patch whose body lines start with `+` or `-`, under `***` and
+    // `+++`/`---` file headers.
+    if name == "applypatch" {
+        return lines(str_field(input, "patch_text").or_else(|| str_field(input, "input")))
+            .iter()
+            .filter(|line| !line.starts_with("+++") && !line.starts_with("---"))
+            .fold((0, 0), |(added, removed), line| {
+                match line.as_bytes().first() {
+                    Some(b'+') => (added + 1, removed),
+                    Some(b'-') => (added, removed + 1),
+                    _ => (added, removed),
+                }
+            });
+    }
+    // NotebookEdit replaces or inserts a whole cell; the input has only the new source.
+    if name == "notebookedit" {
+        return (lines(str_field(input, "new_source")).len(), 0);
+    }
     if name == "multiedit"
         && let Some(edits) = input.get("edits").and_then(Value::as_array)
     {

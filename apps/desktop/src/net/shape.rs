@@ -32,6 +32,8 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
         let mut cursor: Option<String> = None;
         let mut live = false;
         let mut failures = 0u32;
+        // Consecutive resyncs (409, must-refetch) with no data between them back off too.
+        let mut resets = 0u32;
         loop {
             if sender.is_closed() {
                 return;
@@ -62,7 +64,7 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
                     continue;
                 }
             };
-            let response = match request.bearer_auth(token).send().await {
+            let response = match request.bearer_auth(&token).send().await {
                 Ok(response) => response,
                 Err(error) => {
                     log::warn!("shape {route}: {error}");
@@ -77,10 +79,14 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
                 if sender.send(vec![ShapeUpdate::Reset]).await.is_err() {
                     return;
                 }
+                if resets > 0 {
+                    tokio::time::sleep(backoff(resets - 1)).await;
+                }
+                resets += 1;
                 continue;
             }
             if status == reqwest::StatusCode::UNAUTHORIZED {
-                net.invalidate_token().await;
+                net.invalidate_token(&token).await;
                 tokio::time::sleep(backoff(failures)).await;
                 failures += 1;
                 continue;
@@ -140,8 +146,13 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
                 if sender.send(vec![ShapeUpdate::Reset]).await.is_err() {
                     return;
                 }
+                if resets > 0 {
+                    tokio::time::sleep(backoff(resets - 1)).await;
+                }
+                resets += 1;
                 continue;
             }
+            resets = 0;
             let mut batch = updates;
             if up_to_date || header_up_to_date {
                 live = true;

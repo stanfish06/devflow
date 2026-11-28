@@ -50,7 +50,7 @@ where
         let response = net
             .http()
             .post(url.clone())
-            .bearer_auth(token)
+            .bearer_auth(&token)
             .json(input)
             // Connection through response body: a stalled API must not leave a send pending.
             .timeout(RPC_TIMEOUT)
@@ -59,7 +59,7 @@ where
             .map_err(RpcError::transport)?;
         let status = response.status();
         if status == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
-            net.invalidate_token().await;
+            net.invalidate_token(&token).await;
             continue;
         }
         let body = response.bytes().await.map_err(RpcError::transport)?;

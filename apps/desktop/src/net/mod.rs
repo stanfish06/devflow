@@ -122,9 +122,16 @@ impl Net {
         Ok(self.session().await?.access_token)
     }
 
-    /// Drop the cached token after a 401 so the next request signs in again.
-    pub async fn invalidate_token(&self) {
-        self.auth.lock().await.take();
+    /// Drop the cached token after a 401 so the next request signs in again. Only `rejected` is
+    /// dropped: a concurrent request may already have replaced it with a fresh one.
+    pub async fn invalidate_token(&self, rejected: &str) {
+        let mut auth = self.auth.lock().await;
+        if auth
+            .as_ref()
+            .is_some_and(|session| session.access_token == rejected)
+        {
+            auth.take();
+        }
     }
 }
 
