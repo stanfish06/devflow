@@ -266,7 +266,11 @@ async fn read_sse(
             Ok(None) => return Read::Failed("SSE ended early without events".into()),
             Err(_) => return Read::Failed("SSE connection idle too long".into()),
         };
-        for event in parser.push(&chunk) {
+        let events = match parser.push(&chunk) {
+            Ok(events) => events,
+            Err(error) => return Read::Failed(error),
+        };
+        for event in events {
             progressed = true;
             match event.event.as_str() {
                 "data" => {

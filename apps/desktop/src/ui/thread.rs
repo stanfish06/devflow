@@ -118,6 +118,8 @@ pub enum ThreadEvent {
     Review { card: usize, path: Option<String> },
     /// Fork from sent user turn `turn` (in transcript order).
     Fork { turn: usize },
+    /// The reading position moved: turn at the top (`None` at the end) and pixels into it.
+    ScrollAnchor { turn: Option<usize>, offset: f32 },
 }
 
 /// Tries per saved-rows fetch, with network backoff between them.
@@ -167,6 +169,8 @@ pub struct ThreadView {
     turns: Vec<Rc<Turn>>,
     /// What the page lets the native rows forward to it.
     web_actions: WebActions,
+    /// The last reading position reported.
+    anchor: Option<(Option<usize>, f32)>,
     /// Each turn's last build and its content version, by turn id.
     turn_versions: HashMap<String, (Rc<Turn>, u64)>,
     turns_revision: u64,
@@ -188,7 +192,7 @@ pub struct ThreadView {
     sending: bool,
     _stream: Task<()>,
     /// The session's (status, activity) when saved rows were last fetched.
-    saved_mark: Option<(String, i64)>,
+    saved_mark: Option<String>,
     /// A saved-rows fetch is under way.
     fetching: bool,
     /// Another fetch was asked for during it.
@@ -213,7 +217,10 @@ impl ThreadView {
                 .placeholder("Ask for follow-up changes")
         });
         let subscriptions = vec![
-            cx.observe(&scroller, |_, _, cx| cx.notify()),
+            cx.observe(&scroller, |this, _, cx| {
+                this.publish_anchor(cx);
+                cx.notify()
+            }),
             cx.observe_in(&store, window, |this, _, window, cx| {
                 this.on_store_changed(window, cx)
             }),
@@ -249,6 +256,7 @@ impl ThreadView {
             stream: SessionStream::default(),
             turns: Vec::new(),
             web_actions: WebActions::default(),
+            anchor: None,
             turn_versions: HashMap::new(),
             turns_revision: u64::MAX,
             rows: Rc::new(Vec::new()),
@@ -417,10 +425,11 @@ impl ThreadView {
         });
     }
 
-    /// The session row's (status, activity): it changes whenever the session gains saved rows.
-    fn session_mark(&self, cx: &App) -> Option<(String, i64)> {
-        self.session(cx)
-            .map(|session| (session.status.clone(), session.activity_at))
+    /// The session's status. Saved-only rows are follow-up messages, and sending one moves the
+    /// session to running and back, so a status change is when to look; agent events, which move
+    /// its activity time, already arrive on the stream.
+    fn session_mark(&self, cx: &App) -> Option<String> {
+        self.session(cx).map(|session| session.status.clone())
     }
 
     /// Recompute the rows and tell the virtual list which ones moved or changed.
@@ -552,6 +561,25 @@ impl ThreadView {
         self.row_marks = marks;
         self.rows = Rc::new(rows);
         cx.notify();
+    }
+
+    /// Report the reading position when it changes, for the page's transcript to match.
+    fn publish_anchor(&mut self, cx: &mut Context<Self>) {
+        let scroller = self.scroller.read(cx);
+        let top = scroller.logical_scroll_top();
+        // Rows past the turns (streaming, starting) and tail following both mean the end.
+        let anchor = if scroller.is_following_tail() || top.item_ix >= self.turns.len() {
+            (None, 0.)
+        } else {
+            (Some(top.item_ix), f32::from(top.offset_in_item))
+        };
+        if self.anchor != Some(anchor) {
+            self.anchor = Some(anchor);
+            cx.emit(ThreadEvent::ScrollAnchor {
+                turn: anchor.0,
+                offset: anchor.1,
+            });
+        }
     }
 
     /// The page's transcript actions changed; rows gain or lose their buttons.

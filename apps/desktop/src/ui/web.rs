@@ -113,6 +113,16 @@ fn bridge_script() -> String {
     reviewable: area.querySelector('.diffcard.edits .review-link') !== null,
     forkable: area.querySelector('.turn-user button[aria-label="Fork from this message"]') !== null,
   }});
+  // Where the native transcript is scrolled: `turn` (0-based, null for the end) and pixels into it.
+  let anchor = {{ turn: null, offset: 0 }};
+  window.__devflowAnchor = (turn, offset) => {{ anchor = {{ turn, offset }}; }};
+  const showAt = (area) => {{
+    const turns = [...(area.querySelector(':scope > .col')?.children ?? [])]
+      .filter((el) => !el.classList.contains('boot-mark'));
+    const turn = anchor.turn === null ? null : turns[anchor.turn];
+    if (!turn) {{ area.scrollTop = area.scrollHeight; return; }}
+    area.scrollTop += turn.getBoundingClientRect().top - area.getBoundingClientRect().top + anchor.offset;
+  }};
   let last = '';
   let marked = null;
   // The area shrinks when the composer grows a line, which changes only a textarea's `rows`.
@@ -145,6 +155,8 @@ fn bridge_script() -> String {
         box.top < rect.bottom && box.bottom > rect.top;
     }}));
     const hide = covered ? null : target;
+    // Showing the page's transcript in place of the native one: start where the reader was.
+    if (marked && !hide && marked === target) showAt(target);
     if (marked !== hide) {{
       marked?.classList.remove('{class}');
       hide?.classList.add('{class}');
@@ -316,6 +328,15 @@ impl WebPane {
         let path = serde_json::to_string(&path).expect("a path serializes");
         self.run(&format!(
             "window.__devflowReview && window.__devflowReview({card}, {path})"
+        ));
+    }
+
+    /// Where the native transcript is scrolled, in page pixels: the page's own transcript starts
+    /// there when it shows under a popup. `None` is the end.
+    pub fn set_anchor(&self, turn: Option<usize>, offset: f32) {
+        let turn = turn.map_or_else(|| "null".to_owned(), |turn| turn.to_string());
+        self.run(&format!(
+            "window.__devflowAnchor && window.__devflowAnchor({turn}, {offset})"
         ));
     }
 

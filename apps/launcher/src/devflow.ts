@@ -1044,6 +1044,19 @@ function e2e(): void {
 	process.exit(result.status ?? 1)
 }
 
+/** Arguments for cargo: everything but the launcher's own `--port N` / `--port=N`, which picks the
+ * stack. After cargo's `--`, everything goes to the app as given. */
+function cargoArgs(args: string[]): string[] {
+	const out: string[] = []
+	for (let index = 0; index < args.length; index += 1) {
+		const arg = args[index] ?? ''
+		if (arg === '--') return [...out, ...args.slice(index)]
+		if (arg === '--port') index += 1
+		else if (!arg.startsWith('--port=')) out.push(arg)
+	}
+	return out
+}
+
 /**
  * `desktop`: the native client in apps/desktop (macOS only) against the running stack. Needs the
  * Rust toolchain from `nix develop`; further arguments go to cargo, e.g. `--release`.
@@ -1055,7 +1068,7 @@ function desktop(): void {
 		process.exit(1)
 	}
 	requireTool('cargo')
-	const result = spawnSync('cargo', ['run', '-p', 'devflow-desktop', ...process.argv.slice(3)], {
+	const result = spawnSync('cargo', ['run', '-p', 'devflow-desktop', ...cargoArgs(process.argv.slice(3))], {
 		cwd: REPO_ROOT,
 		env: {
 			...process.env,

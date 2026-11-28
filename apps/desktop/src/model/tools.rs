@@ -89,15 +89,10 @@ pub fn edit_counts(step: &ToolStep) -> (usize, usize) {
     // Codex's apply_patch: a patch whose body lines start with `+` or `-`, under `***` and
     // `+++`/`---` file headers.
     if name == "applypatch" {
-        return lines(str_field(input, "patch_text").or_else(|| str_field(input, "input")))
+        return patch_files(input)
             .iter()
-            .filter(|line| !line.starts_with("+++") && !line.starts_with("---"))
-            .fold((0, 0), |(added, removed), line| {
-                match line.as_bytes().first() {
-                    Some(b'+') => (added + 1, removed),
-                    Some(b'-') => (added, removed + 1),
-                    _ => (added, removed),
-                }
+            .fold((0, 0), |(added, removed), file| {
+                (added + file.added, removed + file.removed)
             });
     }
     // NotebookEdit replaces or inserts a whole cell; the input has only the new source.
@@ -342,6 +337,38 @@ pub struct FileEdits {
 static ARTIFACT_PATH: std::sync::LazyLock<regex::Regex> =
     std::sync::LazyLock::new(|| regex::Regex::new(r"/\.devflow/tasks/[^/]+/.+$").unwrap());
 
+/// Files a Codex `apply_patch` touches, with their lines: `*** Add/Update/Delete File: <path>`
+/// headers, then body lines whose first `+` or `-` marks an added or removed line (`+++x` is the
+/// added line `++x`; this format has no unified-diff headers).
+pub fn patch_files(input: &Map<String, Value>) -> Vec<FileEdits> {
+    let mut files: Vec<FileEdits> = Vec::new();
+    for line in lines(str_field(input, "patch_text").or_else(|| str_field(input, "input"))) {
+        let header = ["*** Add File: ", "*** Update File: ", "*** Delete File: "]
+            .iter()
+            .find_map(|prefix| line.strip_prefix(prefix));
+        if let Some(path) = header {
+            files.push(FileEdits {
+                path: path.trim().to_owned(),
+                added: 0,
+                removed: 0,
+            });
+            continue;
+        }
+        let Some(file) = files.last_mut() else {
+            continue;
+        };
+        if line.starts_with("*** ") {
+            continue;
+        }
+        match line.as_bytes().first() {
+            Some(b'+') => file.added += 1,
+            Some(b'-') => file.removed += 1,
+            _ => {}
+        }
+    }
+    files
+}
+
 /// `turnWrites`, files part: each repository file a turn wrote, with lines added and removed,
 /// in first-write order. Failed or denied edits changed nothing and don't count.
 pub fn turn_file_writes(steps: &[Step]) -> Vec<FileEdits> {
@@ -351,21 +378,30 @@ pub fn turn_file_writes(steps: &[Step]) -> Vec<FileEdits> {
         if !is_edit_tool(&tool.name) || tool.is_error {
             continue;
         }
-        let path = text_field(&tool.input, &["file_path", "path"]);
-        if ARTIFACT_PATH.is_match(&path) {
-            continue;
-        }
-        let (added, removed) = edit_counts(tool);
-        match files.iter_mut().find(|file| file.path == path) {
-            Some(file) => {
-                file.added += added;
-                file.removed += removed;
-            }
-            None => files.push(FileEdits {
+        // A patch can touch several files, each named inside it; other edits name one.
+        let edits = if normalize_tool_name(&tool.name) == "applypatch" {
+            patch_files(&tool.input)
+        } else {
+            let (added, removed) = edit_counts(tool);
+            let path = text_field(&tool.input, &["file_path", "path", "notebook_path"]);
+            vec![FileEdits {
                 path,
                 added,
                 removed,
-            }),
+            }]
+        };
+        for edit in edits {
+            // A path the input doesn't give can't be listed or reviewed.
+            if edit.path.is_empty() || ARTIFACT_PATH.is_match(&edit.path) {
+                continue;
+            }
+            match files.iter_mut().find(|file| file.path == edit.path) {
+                Some(file) => {
+                    file.added += edit.added;
+                    file.removed += edit.removed;
+                }
+                None => files.push(edit),
+            }
         }
     }
     files
@@ -390,4 +426,31 @@ pub fn common_dir(paths: &[&str]) -> String {
         }
     }
     root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn patch_files_and_counts_come_from_the_patch() {
+        let input = json!({ "patch_text": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n-old\n+new\n+++counter;\n*** Add File: docs/b.md\n+----\n*** End Patch" });
+        let files = patch_files(input.as_object().unwrap());
+        assert_eq!(
+            files,
+            vec![
+                FileEdits {
+                    path: "src/a.rs".into(),
+                    added: 2,
+                    removed: 1
+                },
+                FileEdits {
+                    path: "docs/b.md".into(),
+                    added: 1,
+                    removed: 0
+                },
+            ]
+        );
+    }
 }

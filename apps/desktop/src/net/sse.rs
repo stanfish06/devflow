@@ -6,6 +6,10 @@ pub struct SseEvent {
     pub data: String,
 }
 
+/// Largest event the parser holds while waiting for its end; one event carries one batch of
+/// conversation events, tool output included.
+pub const MAX_EVENT_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Default)]
 pub struct SseParser {
     buffer: Vec<u8>,
@@ -15,8 +19,9 @@ pub struct SseParser {
 }
 
 impl SseParser {
-    /// Feed a chunk; returns the events it completed.
-    pub fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
+    /// Feed a chunk; returns the events it completed, or an error once an unfinished event grows
+    /// past `MAX_EVENT_BYTES` (a stalled or malformed stream), so the reader reconnects.
+    pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<SseEvent>, String> {
         // Line endings may be CRLF; JSON payloads never carry a raw CR.
         self.buffer
             .extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
@@ -38,7 +43,12 @@ impl SseParser {
         self.buffer.drain(..start);
         // The last byte may be the first `\n` of a pair the next chunk completes.
         self.scanned = self.buffer.len().saturating_sub(1);
-        events
+        if self.buffer.len() > MAX_EVENT_BYTES {
+            return Err(format!(
+                "SSE event over {MAX_EVENT_BYTES} bytes without an end"
+            ));
+        }
+        Ok(events)
     }
 }
 
@@ -74,7 +84,7 @@ mod tests {
         let input = "event: data\r\ndata: [\r\ndata: {\"k\":\"v\"}\r\ndata: ]\r\n\r\n: keep-alive\n\nevent: control\ndata: {\"streamNextOffset\":\"1_2\"}\n\n";
         let mut events = Vec::new();
         for chunk in input.as_bytes().chunks(7) {
-            events.extend(parser.push(chunk));
+            events.extend(parser.push(chunk).unwrap());
         }
         assert_eq!(
             events,
@@ -89,5 +99,13 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn an_unterminated_event_past_the_limit_fails() {
+        let mut parser = SseParser::default();
+        assert!(parser.push(b"event: data\ndata: [").unwrap().is_empty());
+        let chunk = vec![b'x'; MAX_EVENT_BYTES];
+        assert!(parser.push(&chunk).is_err());
     }
 }

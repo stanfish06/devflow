@@ -181,6 +181,10 @@ impl AppView {
                                 this.web.read(cx).review(*card, path.as_deref())
                             }
                             ThreadEvent::Fork { turn } => this.web.read(cx).fork(*turn),
+                            // Window pixels to page pixels.
+                            ThreadEvent::ScrollAnchor { turn, offset } => {
+                                this.web.read(cx).set_anchor(*turn, *offset / this.zoom)
+                            }
                         },
                     ));
                     thread.update(cx, |thread, cx| thread.set_web_actions(slot.actions, cx));
