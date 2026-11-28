@@ -15,8 +15,8 @@ use crate::model::format::{
     artifact_name, first_line, format_clock, format_duration, plural, split_attachments, truncate,
 };
 use crate::model::tools::{
-    FileEdits, StepIcon, TodoStatus, common_dir, is_edit_tool, latest_todos, summarize_step,
-    text_field, turn_file_writes,
+    FileEdits, StepIcon, TodoStatus, common_dir, is_edit_tool, latest_todos, patch_files,
+    summarize_step, text_field,
 };
 use crate::model::transcript::{
     AgentTurn, ApprovalStatus, Step, StepGroup, ToolStep, Turn, group_steps, normalize_tool_name,
@@ -34,6 +34,8 @@ pub enum ThreadRow {
         live: bool,
         /// A user turn's position among user turns, or an agent turn's among edits cards.
         ordinal: Option<usize>,
+        /// The files an agent turn changed, worked out once per turn version.
+        edits: Rc<Vec<FileEdits>>,
     },
     /// Text the agent is streaming, before it is saved as an event.
     Streaming,
@@ -126,6 +128,7 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
             turn,
             live,
             ordinal,
+            edits,
         } => match turn.as_ref() {
             Turn::User {
                 id,
@@ -229,7 +232,9 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                 divider("Earlier messages summarized to save context", cx).into_any_element()
             }
             Turn::Notice { text, .. } => divider(text.clone(), cx).into_any_element(),
-            Turn::Agent(turn) => agent_turn(turn, *live, *ordinal, context, cx).into_any_element(),
+            Turn::Agent(turn) => {
+                agent_turn(turn, *live, ordinal.zip(Some(edits)), context, cx).into_any_element()
+            }
         },
         ThreadRow::Streaming => div()
             .py_2()
@@ -267,7 +272,7 @@ fn divider(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
 fn agent_turn(
     turn: &AgentTurn,
     live: bool,
-    card: Option<usize>,
+    card: Option<(usize, &Rc<Vec<FileEdits>>)>,
     context: &RowContext,
     cx: &App,
 ) -> impl IntoElement {
@@ -375,13 +380,8 @@ fn agent_turn(
                 ),
             )
         })
-        .when_some(card, |this, card| {
-            this.child(edits_summary(
-                &turn_file_writes(&turn.steps),
-                card,
-                context,
-                cx,
-            ))
+        .when_some(card, |this, (card, edits)| {
+            this.child(edits_summary(edits, card, context, cx))
         })
         .when_some(turn.answer.clone().filter(|_| !live), |this, answer| {
             this.child(turn_actions(
@@ -874,25 +874,38 @@ fn step_detail(step: &ToolStep, context: &RowContext, cx: &App) -> AnyElement {
 pub fn diff_card(step: &ToolStep, cx: &App) -> impl IntoElement {
     let theme = cx.theme();
     let input = &step.input;
-    let edits: Vec<(String, String)> = match (
-        normalize_tool_name(&step.name).as_str(),
-        input.get("edits").and_then(Value::as_array),
-    ) {
-        ("multiedit", Some(edits)) => edits
-            .iter()
-            .filter_map(Value::as_object)
-            .map(|edit| {
-                (
-                    text_field(edit, &["old_string"]),
-                    text_field(edit, &["new_string"]),
-                )
-            })
-            .collect(),
-        _ => vec![(
-            text_field(input, &["old_string"]),
-            text_field(input, &["new_string", "content"]),
-        )],
-    };
+    let name = normalize_tool_name(&step.name);
+    let edits: Vec<(String, String)> =
+        match (name.as_str(), input.get("edits").and_then(Value::as_array)) {
+            // A patch carries its own +/- lines: removed lines on the left, added on the right.
+            ("applypatch", _) => {
+                let patch = text_field(input, &["patch_text", "input"]);
+                let pick = |marker: char| {
+                    patch
+                        .lines()
+                        .filter(|line| !line.starts_with("*** "))
+                        .filter_map(|line| line.strip_prefix(marker))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                vec![(pick('-'), pick('+'))]
+            }
+            ("notebookedit", _) => vec![(String::new(), text_field(input, &["new_source"]))],
+            ("multiedit", Some(edits)) => edits
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|edit| {
+                    (
+                        text_field(edit, &["old_string"]),
+                        text_field(edit, &["new_string"]),
+                    )
+                })
+                .collect(),
+            _ => vec![(
+                text_field(input, &["old_string"]),
+                text_field(input, &["new_string", "content"]),
+            )],
+        };
     let line = |text: &str, added: bool| {
         div()
             .w_full()
@@ -918,7 +931,14 @@ pub fn diff_card(step: &ToolStep, cx: &App) -> impl IntoElement {
                 .px_2()
                 .py_1()
                 .text_color(theme.muted_foreground)
-                .child(text_field(input, &["file_path", "path"])),
+                .child(match name.as_str() {
+                    "applypatch" => patch_files(input)
+                        .iter()
+                        .map(|file| file.path.clone())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    _ => text_field(input, &["file_path", "path", "notebook_path"]),
+                }),
         )
         .children(edits.iter().flat_map(|(old, next)| {
             let removed: Vec<_> = if old.is_empty() {

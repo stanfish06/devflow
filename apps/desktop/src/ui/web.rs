@@ -33,6 +33,8 @@ pub struct WebActions {
 }
 
 pub enum WebEvent {
+    /// The page handed the transcript back at this reading position, in page pixels.
+    Anchor { turn: Option<usize>, offset: f32 },
     /// The thread column moved, changed session, or went away (`None`).
     Thread(Option<ThreadSlot>),
 }
@@ -64,6 +66,8 @@ enum BridgeMessage {
         width: f32,
         height: f32,
     },
+    /// Where the page's transcript was scrolled when it handed back to the native one.
+    Anchor { turn: Option<usize>, offset: f32 },
 }
 
 /// Sent by the page-load handler itself, never by a page: clears the native transcript.
@@ -123,6 +127,17 @@ fn bridge_script() -> String {
     if (!turn) {{ area.scrollTop = area.scrollHeight; return; }}
     area.scrollTop += turn.getBoundingClientRect().top - area.getBoundingClientRect().top + anchor.offset;
   }};
+  // The area the page last showed its own transcript in.
+  let shown = null;
+  const handBack = (area) => {{
+    const top = area.getBoundingClientRect().top;
+    const turns = [...(area.querySelector(':scope > .col')?.children ?? [])]
+      .filter((el) => !el.classList.contains('boot-mark'));
+    const atEnd = area.scrollTop + area.clientHeight >= area.scrollHeight - 4;
+    const turn = atEnd ? -1 : turns.findIndex((el) => el.getBoundingClientRect().bottom > top);
+    const offset = turn < 0 ? 0 : top - turns[turn].getBoundingClientRect().top;
+    window.ipc.postMessage(JSON.stringify({{ type: 'anchor', turn: turn < 0 ? null : turn, offset }}));
+  }};
   let last = '';
   let marked = null;
   // The area shrinks when the composer grows a line, which changes only a textarea's `rows`.
@@ -157,6 +172,9 @@ fn bridge_script() -> String {
     const hide = covered ? null : target;
     // Showing the page's transcript in place of the native one: start where the reader was.
     if (marked && !hide && marked === target) showAt(target);
+    // And back: the native one continues where the reader left the page's.
+    if (!marked && hide && hide === shown) handBack(hide);
+    shown = target;
     if (marked !== hide) {{
       marked?.classList.remove('{class}');
       hide?.classList.add('{class}');
@@ -288,6 +306,7 @@ impl WebPane {
                                 ),
                             }),
                     ),
+                    Ok(BridgeMessage::Anchor { turn, offset }) => WebEvent::Anchor { turn, offset },
                     Err(_) => continue,
                 };
                 if this.update(cx, |_, cx| cx.emit(event)).is_err() {

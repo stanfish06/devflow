@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 use crate::model::format::{artifact_name, basename, split_attachments};
 use crate::model::rows::{Approval, Session};
 use crate::model::thread::SessionStream;
-use crate::model::tools::{is_edit_tool, text_field, turn_file_writes};
+use crate::model::tools::{FileEdits, is_edit_tool, text_field, turn_file_writes};
 use crate::model::transcript::{EventRow, ToolStep, Turn, normalize_tool_name};
 use crate::net::stream::{self, StreamUpdate};
 use crate::net::{Net, now_ms, rpc};
@@ -109,6 +109,28 @@ fn rule_text(suggestions: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// One build of a turn: shared with the rows, with its content version and edit totals.
+#[derive(Clone)]
+struct TurnVersion {
+    turn: Rc<Turn>,
+    version: u64,
+    edits: Rc<Vec<FileEdits>>,
+}
+
+impl TurnVersion {
+    fn new(turn: Turn, version: u64) -> Self {
+        let edits = match &turn {
+            Turn::Agent(agent) => turn_file_writes(&agent.steps),
+            _ => Vec::new(),
+        };
+        Self {
+            turn: Rc::new(turn),
+            version,
+            edits: Rc::new(edits),
+        }
+    }
+}
+
 /// What the thread asks of the window around it.
 pub enum ThreadEvent {
     /// Open the `occurrence`-th attachment (0-based, in transcript order) shown as `name`. Names
@@ -122,24 +144,42 @@ pub enum ThreadEvent {
     ScrollAnchor { turn: Option<usize>, offset: f32 },
 }
 
-/// Tries per saved-rows fetch, with network backoff between them.
-const SAVED_FETCH_ATTEMPTS: u32 = 5;
+/// Least time between saved-rows fetches.
+const SAVED_FETCH_SPACING: Duration = Duration::from_secs(2);
+/// An incremental fetch reaches this far before the newest saved row it has, for rows saved
+/// with an earlier time that the server committed late.
+const SAVED_OVERLAP_MS: i64 = 120_000;
 /// Rows per `sync/v2/conversationEvents` page; the endpoint caps a page at 10,000.
 const SAVED_PAGE_SIZE: usize = 5_000;
 
 /// Every saved row of a session, page by page in a stable order (time, then id), so a long
 /// session's newest rows are never cut off by the page limit.
-async fn fetch_saved_rows(net: &Net, session_id: &str) -> Result<Vec<Value>, rpc::RpcError> {
+/// `since`: only rows from shortly before that time (an incremental fetch); `None` for all.
+async fn fetch_saved_rows(
+    net: &Net,
+    session_id: &str,
+    since: Option<i64>,
+) -> Result<Vec<Value>, rpc::RpcError> {
     let sort = |field: &str| json!({ "field": [field], "direction": "asc", "nulls": "last" });
+    let session = json!({
+        "type": "comparison",
+        "field": ["session_id"],
+        "operator": "eq",
+        "value": session_id,
+    });
+    let filter = match since {
+        Some(since) => json!({ "type": "and", "conditions": [session, {
+            "type": "comparison",
+            "field": ["created_at"],
+            "operator": "gte",
+            "value": since - SAVED_OVERLAP_MS,
+        }] }),
+        None => session,
+    };
     let mut rows = Vec::new();
     loop {
         let input = json!({
-            "where": {
-                "type": "comparison",
-                "field": ["session_id"],
-                "operator": "eq",
-                "value": session_id,
-            },
+            "where": filter,
             "sorts": [sort("created_at"), sort("id")],
             "limit": SAVED_PAGE_SIZE,
             "offset": rows.len(),
@@ -172,7 +212,7 @@ pub struct ThreadView {
     /// The last reading position reported.
     anchor: Option<(Option<usize>, f32)>,
     /// Each turn's last build and its content version, by turn id.
-    turn_versions: HashMap<String, (Rc<Turn>, u64)>,
+    turn_versions: HashMap<String, TurnVersion>,
     turns_revision: u64,
     rows: Rc<Vec<ThreadRow>>,
     row_marks: Vec<(String, u64)>,
@@ -192,7 +232,9 @@ pub struct ThreadView {
     sending: bool,
     _stream: Task<()>,
     /// The session's (status, activity) when saved rows were last fetched.
-    saved_mark: Option<String>,
+    saved_mark: Option<(String, i64)>,
+    /// Newest saved row fetched so far, where the next incremental fetch starts (`None`: all).
+    saved_since: Option<i64>,
     /// A saved-rows fetch is under way.
     fetching: bool,
     /// Another fetch was asked for during it.
@@ -275,6 +317,7 @@ impl ThreadView {
             sending: false,
             _stream: Task::ready(()),
             saved_mark: None,
+            saved_since: None,
             fetching: false,
             refetch: false,
             _saved: Task::ready(()),
@@ -354,7 +397,9 @@ impl ThreadView {
                     for update in updates {
                         match update {
                             StreamUpdate::Reset => {
+                                // The reset dropped the merged rows too: fetch them all again.
                                 this.stream.reset();
+                                this.saved_since = None;
                                 this.fetch_saved(cx);
                             }
                             StreamUpdate::Items(items) => this.stream.apply(&items),
@@ -372,8 +417,7 @@ impl ThreadView {
 
     /// Fetch the session's saved rows and merge in the ones the stream lacks (follow-up messages).
     fn fetch_saved(&mut self, cx: &mut Context<Self>) {
-        // One fetch at a time: asks during one become a single fetch after it, so a busy session
-        // (its activity changes with every saved event) doesn't pile up full-history downloads.
+        // One fetch at a time: asks during one become a single fetch after it.
         if self.fetching {
             self.refetch = true;
             return;
@@ -382,42 +426,50 @@ impl ThreadView {
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
+        let since = self.saved_since;
         self.fetching = true;
         let net = self.net.clone();
         self._saved = cx.spawn(async move |this, cx| {
-            let mut output = None;
-            for attempt in 0..SAVED_FETCH_ATTEMPTS {
+            // Tried until it works: saved-only rows never arrive any other way. Dropping this task
+            // (the view closed) ends the retries and cancels the download in flight.
+            let mut attempt = 0;
+            let rows = loop {
                 let request = net.spawn({
                     let (net, session_id) = (net.clone(), session_id.clone());
-                    async move { fetch_saved_rows(&net, &session_id).await }
+                    async move { fetch_saved_rows(&net, &session_id, since).await }
                 });
-                // Dropping this task (the view closed) cancels the download, not just the wait.
                 let _cancel = crate::net::AbortOnDrop(request.abort_handle());
                 match request.await {
-                    Ok(Ok(rows)) => {
-                        output = Some(rows);
-                        break;
-                    }
+                    Ok(Ok(rows)) => break rows,
                     Ok(Err(error)) => log::warn!("saved events: {error}"),
                     Err(error) => log::warn!("saved events task: {error}"),
                 }
                 cx.background_executor()
                     .timer(crate::net::backoff(attempt))
                     .await;
-            }
+                attempt += 1;
+            };
+            let _ = this.update(cx, |this, cx| {
+                let rows: Vec<EventRow> = rows
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .filter_map(EventRow::from_saved_row)
+                    .collect();
+                // A reset during the fetch cleared `saved_since`; leave it clear so the fetch it
+                // queued reads everything.
+                if this.saved_since == since
+                    && let Some(newest) = rows.iter().map(|row| row.created_at).max()
+                {
+                    this.saved_since = Some(since.map_or(newest, |since| since.max(newest)));
+                }
+                this.saved_mark = mark;
+                this.stream.merge_saved(rows);
+                this.rebuild_rows(cx);
+            });
+            // Space fetches out while the session keeps changing.
+            cx.background_executor().timer(SAVED_FETCH_SPACING).await;
             let _ = this.update(cx, |this, cx| {
                 this.fetching = false;
-                if let Some(output) = output {
-                    let rows: Vec<EventRow> = output
-                        .iter()
-                        .filter_map(Value::as_object)
-                        .filter_map(EventRow::from_saved_row)
-                        .collect();
-                    this.saved_mark = mark;
-                    this.stream.merge_saved(rows);
-                    this.rebuild_rows(cx);
-                }
-                // Out of attempts, nothing is retried until the session row changes again.
                 if std::mem::take(&mut this.refetch) {
                     this.fetch_saved(cx);
                 }
@@ -425,11 +477,11 @@ impl ThreadView {
         });
     }
 
-    /// The session's status. Saved-only rows are follow-up messages, and sending one moves the
-    /// session to running and back, so a status change is when to look; agent events, which move
-    /// its activity time, already arrive on the stream.
-    fn session_mark(&self, cx: &App) -> Option<String> {
-        self.session(cx).map(|session| session.status.clone())
+    /// The session row's (status, activity), which changes whenever it gains saved rows. Fetches
+    /// after the first are incremental, so following every change stays cheap.
+    fn session_mark(&self, cx: &App) -> Option<(String, i64)> {
+        self.session(cx)
+            .map(|session| (session.status.clone(), session.activity_at))
     }
 
     /// Recompute the rows and tell the virtual list which ones moved or changed.
@@ -444,14 +496,14 @@ impl ThreadView {
                 .into_iter()
                 .map(|turn| {
                     let key = turn.id().to_owned();
-                    let (shared, version) = match self.turn_versions.get(&key) {
-                        Some((previous, version)) if **previous == turn => {
-                            (Rc::clone(previous), *version)
-                        }
-                        Some((_, version)) => (Rc::new(turn), version + 1),
-                        None => (Rc::new(turn), 0),
+                    // Edit totals are worked out once per version, not on every rebuild.
+                    let entry = match self.turn_versions.get(&key) {
+                        Some(previous) if *previous.turn == turn => previous.clone(),
+                        Some(previous) => TurnVersion::new(turn, previous.version + 1),
+                        None => TurnVersion::new(turn, 0),
                     };
-                    versions.insert(key, (Rc::clone(&shared), version));
+                    let shared = Rc::clone(&entry.turn);
+                    versions.insert(key, entry);
                     shared
                 })
                 .collect();
@@ -484,9 +536,9 @@ impl ThreadView {
                     // Transcript.tsx shows EditsSummary for a finished turn whose edits changed lines.
                     Turn::Agent(agent)
                         if !live
-                            && turn_file_writes(&agent.steps)
-                                .iter()
-                                .any(|file| file.added + file.removed > 0) =>
+                            && self.turn_versions.get(&agent.id).is_some_and(|entry| {
+                                entry.edits.iter().any(|file| file.added + file.removed > 0)
+                            }) =>
                     {
                         cards += 1;
                         Some(cards - 1)
@@ -497,6 +549,11 @@ impl ThreadView {
                     turn: Rc::clone(turn),
                     live,
                     ordinal,
+                    edits: self
+                        .turn_versions
+                        .get(turn.id())
+                        .map(|entry| Rc::clone(&entry.edits))
+                        .unwrap_or_default(),
                 }
             })
             .collect();
@@ -534,7 +591,10 @@ impl ThreadView {
             .map(|row| match row {
                 ThreadRow::Streaming => (row.key(), self.streamed.len() as u64),
                 ThreadRow::Turn { turn, live, .. } => {
-                    let version = self.turn_versions.get(turn.id()).map_or(0, |entry| entry.1);
+                    let version = self
+                        .turn_versions
+                        .get(turn.id())
+                        .map_or(0, |entry| entry.version);
                     let mut hasher = DefaultHasher::new();
                     (version, live).hash(&mut hasher);
                     (row.key(), hasher.finish())
@@ -561,6 +621,25 @@ impl ThreadView {
         self.row_marks = marks;
         self.rows = Rc::new(rows);
         cx.notify();
+    }
+
+    /// Continue at a reading position the page's transcript reported: turn at the top and
+    /// pixels into it, or the end.
+    pub fn scroll_to(&mut self, turn: Option<usize>, offset: f32, cx: &mut Context<Self>) {
+        // Recorded first, so the scroll this causes isn't echoed back to the page.
+        self.anchor = Some((turn, offset));
+        self.scroller.update(cx, |scroller, cx| match turn {
+            Some(item_ix) if item_ix < scroller.item_count() => {
+                scroller.scroll_to_offset(
+                    ListOffset {
+                        item_ix,
+                        offset_in_item: px(offset),
+                    },
+                    cx,
+                );
+            }
+            _ => scroller.scroll_to_end(cx),
+        });
     }
 
     /// Report the reading position when it changes, for the page's transcript to match.

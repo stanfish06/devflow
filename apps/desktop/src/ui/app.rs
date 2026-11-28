@@ -100,6 +100,13 @@ impl AppView {
                 window,
                 |this, _, event: &WebEvent, window, cx| match event {
                     WebEvent::Thread(slot) => this.place_thread(slot.clone(), window, cx),
+                    // Page pixels to window pixels.
+                    WebEvent::Anchor { turn, offset } => {
+                        if let Some((thread, _)) = &this.thread {
+                            let offset = *offset * this.zoom;
+                            thread.update(cx, |thread, cx| thread.scroll_to(*turn, offset, cx));
+                        }
+                    }
                 },
             ),
             // Native views follow the system's light or dark mode, as the web UI does.

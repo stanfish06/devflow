@@ -357,6 +357,11 @@ pub fn patch_files(input: &Map<String, Value>) -> Vec<FileEdits> {
         let Some(file) = files.last_mut() else {
             continue;
         };
+        // A rename: the file's lines land under its new path.
+        if let Some(path) = line.strip_prefix("*** Move to: ") {
+            file.path = path.trim().to_owned();
+            continue;
+        }
         if line.starts_with("*** ") {
             continue;
         }
@@ -375,7 +380,12 @@ pub fn turn_file_writes(steps: &[Step]) -> Vec<FileEdits> {
     let mut files: Vec<FileEdits> = Vec::new();
     for step in steps {
         let Step::Tool(tool) = step else { continue };
-        if !is_edit_tool(&tool.name) || tool.is_error {
+        // Only edits that ran: not failed or denied, not waiting on approval, finished.
+        if !is_edit_tool(&tool.name)
+            || tool.is_error
+            || tool.ended_at.is_none()
+            || tool.approval_status == Some(ApprovalStatus::Pending)
+        {
             continue;
         }
         // A patch can touch several files, each named inside it; other edits name one.
@@ -451,6 +461,19 @@ mod tests {
                     removed: 0
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn a_patch_rename_counts_under_the_new_path() {
+        let input = json!({ "patch_text": "*** Begin Patch\n*** Update File: old.rs\n*** Move to: new.rs\n@@\n-a\n+b\n*** End Patch" });
+        assert_eq!(
+            patch_files(input.as_object().unwrap()),
+            vec![FileEdits {
+                path: "new.rs".into(),
+                added: 1,
+                removed: 1
+            }]
         );
     }
 }

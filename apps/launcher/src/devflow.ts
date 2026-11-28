@@ -660,6 +660,9 @@ function printEnv(): void {
 }
 
 function option(name: string): string | undefined {
+	// `--name value` or `--name=value`.
+	const joined = process.argv.find((arg) => arg.startsWith(`--${name}=`))
+	if (joined) return joined.slice(name.length + 3)
 	const index = process.argv.indexOf(`--${name}`)
 	return index === -1 ? undefined : process.argv[index + 1]
 }

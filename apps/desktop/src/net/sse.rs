@@ -34,6 +34,10 @@ impl SseParser {
             .position(|pair| pair == b"\n\n")
         {
             let end = from + found;
+            // The limit holds however the network splits the stream.
+            if end - start > MAX_EVENT_BYTES {
+                return Err(format!("SSE event over {MAX_EVENT_BYTES} bytes"));
+            }
             if let Some(event) = parse_block(&String::from_utf8_lossy(&self.buffer[start..end])) {
                 events.push(event);
             }
@@ -106,6 +110,15 @@ mod tests {
         let mut parser = SseParser::default();
         assert!(parser.push(b"event: data\ndata: [").unwrap().is_empty());
         let chunk = vec![b'x'; MAX_EVENT_BYTES];
+        assert!(parser.push(&chunk).is_err());
+    }
+
+    #[test]
+    fn an_oversized_event_fails_even_when_it_ends_in_the_same_chunk() {
+        let mut parser = SseParser::default();
+        let mut chunk = b"event: data\ndata: ".to_vec();
+        chunk.extend(vec![b'x'; MAX_EVENT_BYTES]);
+        chunk.extend(b"\n\n");
         assert!(parser.push(&chunk).is_err());
     }
 }
