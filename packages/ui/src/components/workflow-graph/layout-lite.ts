@@ -356,37 +356,47 @@ function computeSnakeLayout(
   // An artifact flow between cards that are not next to each other on the path goes around the
   // cards between them: above the row when both ends share it, else past the grid's right edge.
   const gridRight = MARGIN + perRow * cellWidth + (perRow - 1) * SNAKE_GAP_X
+  let stagger = 0
+  for (const edge of edges) {
+    if (edge.type !== 'artifact' || !edge.data) continue
+    const from = sessionSlots.get(edge.source)
+    const to = sessionSlots.get(edge.target)
+    if (!from || !to || Math.abs(from.index - to.index) <= 1) continue
+    const offset = ROUTE_MARGIN + stagger * ROUTE_STAGGER
+    stagger += 1
+    edge.data =
+      from.row === to.row
+        ? { ...edge.data, routeY: MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset }
+        : { ...edge.data, routeX: gridRight + offset }
+  }
+  return { nodes, edges }
+}
+
+/**
+ * Invisible nodes over the labels of routed artifact edges (`routeX` / `routeY`), which can lie
+ * outside the cards. Derived from the current card positions, so after a drag every fit of the view
+ * still includes each label where ArtifactEdge draws it: mid-way along the detour line.
+ */
+export function detourExtentNodes(nodes: WorkflowGraphNode[], edges: Edge[]): WorkflowGraphNode[] {
   const centers = new Map(
     nodes.map((node) => [
       node.id,
       { x: node.position.x + SESSION_NODE_WIDTH / 2, y: node.position.y + SESSION_NODE_HEIGHT / 2 },
     ]),
   )
-  let stagger = 0
+  const extents: WorkflowGraphNode[] = []
   for (const edge of edges) {
-    if (edge.type !== 'artifact' || !edge.data) continue
-    const from = sessionSlots.get(edge.source)
-    const to = sessionSlots.get(edge.target)
     const source = centers.get(edge.source)
     const target = centers.get(edge.target)
-    if (!from || !to || !source || !target || Math.abs(from.index - to.index) <= 1) continue
-    const offset = ROUTE_MARGIN + stagger * ROUTE_STAGGER
-    stagger += 1
-    // ArtifactEdge puts the label at the detour's turn: mid-way along, on the detour line.
-    let label: { x: number; y: number }
-    if (from.row === to.row) {
-      const routeY = MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset
-      edge.data = { ...edge.data, routeY }
-      label = { x: (source.x + target.x) / 2, y: routeY }
-    } else {
-      const routeX = gridRight + offset
-      edge.data = { ...edge.data, routeX }
-      label = { x: routeX, y: (source.y + target.y) / 2 }
-    }
-    // The label can lie outside the cards: an invisible node over it makes every fit of the view
-    // (the first one, after a remount, the fit button, after a drag) include it.
-    const width = labelWidth(String(edge.data.fileName ?? ''))
-    nodes.push({
+    const routeX = edge.data?.routeX
+    const routeY = edge.data?.routeY
+    if (!source || !target || (typeof routeX !== 'number' && typeof routeY !== 'number')) continue
+    const label =
+      typeof routeY === 'number'
+        ? { x: (source.x + target.x) / 2, y: routeY }
+        : { x: Number(routeX), y: (source.y + target.y) / 2 }
+    const width = labelWidth(String(edge.data?.fileName ?? ''))
+    extents.push({
       id: `extent-${edge.id}`,
       type: 'extent',
       position: { x: label.x - width / 2, y: label.y - LABEL_HEIGHT / 2 },
@@ -398,7 +408,7 @@ function computeSnakeLayout(
       data: { kind: 'extent', width, height: LABEL_HEIGHT, synthetic: true },
     })
   }
-  return { nodes, edges }
+  return extents
 }
 
 function getPhaseStep(

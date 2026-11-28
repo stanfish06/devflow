@@ -8,7 +8,7 @@ import { Button } from '../button'
 import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
-import { computeLayout, defaultWorkflowPhases, snakeCellSize, snakeColumnCount } from './layout-lite'
+import { computeLayout, defaultWorkflowPhases, detourExtentNodes, snakeCellSize, snakeColumnCount } from './layout-lite'
 import { ExtentNode, PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
@@ -195,6 +195,10 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     setNodeState({ structureKey, baseNodes: nodesWithSelection, nodes })
   }
 
+  // Invisible boxes over routed edge labels, from the current card positions, so fits include them.
+  const extents = useMemo(() => detourExtentNodes(nodes, edgesWithCallbacks), [nodes, edgesWithCallbacks])
+  const shownNodes = useMemo(() => (extents.length > 0 ? [...nodes, ...extents] : nodes), [nodes, extents])
+
   const onNodesChange = useCallback<OnNodesChange<WorkflowGraphNode>>((changes) => {
     setNodeState((current) => ({ ...current, nodes: applyNodeChanges(changes, current.nodes) }))
   }, [])
@@ -271,7 +275,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
           viewport={viewport}
           onViewportChange={handleViewportChange}
           onMoveEnd={handleMoveEnd}
-          nodes={nodes}
+          nodes={shownNodes}
           edges={edgesWithCallbacks}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypes}

@@ -1,7 +1,7 @@
 import { Position } from '@xyflow/react'
 import { describe, expect, it } from 'vitest'
 
-import { computeLayout, snakeCellSize, snakeColumnCount } from './layout-lite'
+import { computeLayout, detourExtentNodes, snakeCellSize, snakeColumnCount } from './layout-lite'
 import type { WorkflowPhase, WorkflowSession } from './types-lite'
 
 const phases: WorkflowPhase[] = ['questions', 'research', 'design', 'outline', 'plan', 'implement', 'pr'].map(
@@ -93,11 +93,22 @@ describe('computeLayout snake', () => {
     // Another row: past the grid's right edge.
     expect(Number(data('s5')?.routeX)).toBeGreaterThan(right)
     // Each detour label gets an invisible node, so fitting the view includes it.
-    const extents = routed.nodes.filter((node) => node.type === 'extent')
+    const extents = detourExtentNodes(routed.nodes, routed.edges)
     expect(extents).toHaveLength(2)
     expect(extents.some((node) => node.position.y < Number(data('s2')?.routeY))).toBe(true)
     expect(extents.some((node) => node.position.x + Number(node.width) > Number(data('s5')?.routeX))).toBe(true)
     expect(extents.every((node) => node.draggable === false && node.selectable === false)).toBe(true)
+  })
+
+  it('moves a label box with the card it hangs off', () => {
+    const all = phases.map((phase, index) => session(`s${index}`, phase.title))
+    const flow = { fromSessionId: 's0', toSessionId: 's2', fileName: 'a.md', category: 'source' as const }
+    const routed = computeLayout(all, [flow], 'snake', undefined, phases, false, false, 3)
+    const before = detourExtentNodes(routed.nodes, routed.edges)[0]?.position.x ?? 0
+    const dragged = routed.nodes.map((node) =>
+      node.id === 's2' ? { ...node, position: { ...node.position, x: node.position.x + 100 } } : node,
+    )
+    expect(detourExtentNodes(dragged, routed.edges)[0]?.position.x).toBe(before + 50)
   })
 
   it('adds nothing to fit for an empty workflow', () => {
