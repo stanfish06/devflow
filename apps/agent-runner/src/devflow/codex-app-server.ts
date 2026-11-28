@@ -36,7 +36,7 @@ import type { ForkMeta, SessionContext, SessionExecutor, SessionForExecution } f
 import { isVmSandbox, sessionSandbox, waitForTaskSandbox, whileLaunching } from '@/devflow/agent-sandbox'
 import { CodexSessionClosedError, CodexSessionProcesses } from '@/devflow/codex-session-processes'
 import { DEVFLOW_SECRET_ENV, githubCredentialMounts, gitCommonDir } from '@/devflow/docker-sandbox'
-import { vmManager, type VmLease } from '@/devflow/vm-sandbox'
+import { vmManager, type VmLease, type VmResources } from '@/devflow/vm-sandbox'
 import { requestToolApproval } from '@/effects/services/claude-sessions/workflows/approvals'
 import { withGithubEnvironment, type GithubEnv } from '@/effects/services/github-credentials/credential-files'
 import { GithubCredentials } from '@/effects/services/github-credentials/github-credentials.service'
@@ -526,6 +526,8 @@ async function openCodexProcess(
 	ctx: SessionContext,
 	cwd: string,
 	sandbox: ReturnType<typeof sessionSandbox>,
+	/** The task's own VM size, used when its VM is first created. */
+	resources: Partial<VmResources> | undefined,
 	workflow: Awaited<ReturnType<typeof prepareCodexWorkflow>>,
 	continuing: boolean,
 	signal: AbortSignal,
@@ -548,6 +550,7 @@ async function openCodexProcess(
 			lease = await whileLaunching(
 				vmManager.acquire({
 					scope: sandbox === 'vm-task' ? 'task' : 'shared',
+					resources,
 					taskId: session.task_id,
 					paths: [
 						...taskWorkspaceMounts(cwd),
@@ -609,9 +612,10 @@ export async function executeCodexAppServer(
 	const prompt = session.prompt ?? ''
 
 	// Codex sandboxes itself on the host; only a VM task moves it (the Docker sandbox is Claude's).
-	const sandbox = sessionSandbox(
-		session.task_id ? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id) : null,
-	)
+	const sandboxTask = session.task_id
+		? await waitForTaskSandbox((id) => services.collections.tasks.get(id), session.task_id)
+		: null
+	const sandbox = sessionSandbox(sandboxTask)
 	const inVm = isVmSandbox(sandbox)
 	const continuing = resumeSessionId !== undefined
 	const prepareWorkflow = (cold: boolean) => prepareCodexWorkflow(ctx, cwd, prompt, continuing, cold)
@@ -624,7 +628,7 @@ export async function executeCodexAppServer(
 			async (signal) => {
 				workflow = await prepareWorkflow(true)
 				signal.throwIfAborted()
-				return openCodexProcess(ctx, cwd, sandbox, workflow, continuing, signal)
+				return openCodexProcess(ctx, cwd, sandbox, sandboxTask?.vmResources, workflow, continuing, signal)
 			},
 			processScope,
 		)

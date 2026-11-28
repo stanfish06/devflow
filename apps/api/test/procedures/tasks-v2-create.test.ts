@@ -346,9 +346,37 @@ describe('tasks v2 create', () => {
 				{ context: actor.context },
 			)
 			const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
-			expect(task?.sandbox).toBe(expected)
+			expect(task).toMatchObject({ sandbox: expected, vm_cpus: null, vm_memory_gib: null })
 		},
 	)
+
+	test.each([
+		{ project: 'vm' as const, scope: 'shared' as const },
+		{ project: 'docker' as const, scope: 'task' as const },
+		{ project: 'default' as const, scope: 'task' as const },
+	])('rejects resource overrides for a $project sandbox with scope $scope', async ({ project, scope }) => {
+		const actor = await setupActor()
+		await db.update(projects).set({ sandbox: project }).where(eq(projects.id, actor.projectId))
+		const taskId = uuidv7()
+		await expect(
+			call(
+				createTaskV2,
+				{
+					taskId,
+					workspaceId: uuidv7(),
+					projectId: actor.projectId,
+					name: 'Invalid VM size',
+					slug: 'invalid-vm-size',
+					repositories: [repository],
+					vmScope: scope,
+					vmMemoryGiB: 16,
+					firstSession: { ...firstSession, hostId: actor.hostId },
+				},
+				{ context: actor.context },
+			),
+		).rejects.toMatchObject({ code: 'UNSUPPORTED_RECIPE' })
+		expect(await db.select({ id: tasks.id }).from(tasks).where(eq(tasks.id, taskId))).toHaveLength(0)
+	})
 
 	test('queues the first session on an owned host that is offline', async () => {
 		const actor = await setupActor()
@@ -379,6 +407,7 @@ describe('tasks v2 create', () => {
 
 	test('promotes an owned draft into a complete project-backed task', async () => {
 		const actor = await setupActor()
+		await db.update(projects).set({ sandbox: 'vm' }).where(eq(projects.id, actor.projectId))
 		const taskId = uuidv7()
 		await db.insert(tasks).values({
 			id: taskId,
@@ -397,6 +426,8 @@ describe('tasks v2 create', () => {
 				workspaceId: taskId,
 				projectId: actor.projectId,
 				name: 'Launched draft',
+				vmCpus: 8,
+				vmMemoryGiB: 16,
 				slug: 'launched-draft',
 				repositories: [repository],
 				firstSession: { ...firstSession, hostId: actor.hostId },
@@ -411,6 +442,9 @@ describe('tasks v2 create', () => {
 			project_id: actor.projectId,
 			workspace_id: taskId,
 			name: 'Launched draft',
+			sandbox: 'vm-task',
+			vm_cpus: 8,
+			vm_memory_gib: 16,
 			slug: 'launched-draft',
 			default_working_directory: '~/.devflow/workspaces/launched-draft',
 			is_draft: false,
@@ -514,6 +548,7 @@ describe('tasks v2 create', () => {
 
 	test('starts a saved board draft in place: keeps its column and date, spends its snapshot', async () => {
 		const actor = await setupActor()
+		await db.update(projects).set({ sandbox: 'vm' }).where(eq(projects.id, actor.projectId))
 		const taskId = uuidv7()
 		const saved = await call(
 			saveTaskDraft,
@@ -537,7 +572,7 @@ describe('tasks v2 create', () => {
 				autoAdvanceImplementationToPr: false,
 				status: 'todo',
 				draftLaunch: {
-					version: 1,
+					version: 2,
 					prompt: 'Add retries',
 					attachments: [],
 					target: { kind: 'project', projectId: actor.projectId },
@@ -551,11 +586,13 @@ describe('tasks v2 create', () => {
 					},
 					taskSize: 'unknown',
 					smallAutoAdvance: true,
+					vmMemoryGiB: 24,
 				},
 			},
 			{ context: actor.context },
 		)
 		if (saved.result !== 'saved') throw new Error('Expected the draft to save')
+		expect(saved.task.draft_launch).toMatchObject({ version: 2, vmMemoryGiB: 24 })
 		const draftedAt = saved.task.drafted_at
 		expect(draftedAt).not.toBeNull()
 		// Nothing for the daemon to launch until Start.
@@ -569,6 +606,7 @@ describe('tasks v2 create', () => {
 				projectId: actor.projectId,
 				name: 'Board draft',
 				slug: 'board-draft',
+				vmMemoryGiB: 24,
 				repositories: [repository],
 				firstSession: { ...firstSession, hostId: actor.hostId },
 			},
@@ -576,7 +614,14 @@ describe('tasks v2 create', () => {
 		)
 
 		const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId))
-		expect(task).toMatchObject({ is_draft: false, status: 'todo', draft_launch: null, drafted_at: draftedAt })
+		expect(task).toMatchObject({
+			is_draft: false,
+			status: 'todo',
+			draft_launch: null,
+			drafted_at: draftedAt,
+			vm_cpus: null,
+			vm_memory_gib: 24,
+		})
 		expect(await db.select().from(sessions).where(eq(sessions.task_id, taskId))).toHaveLength(1)
 	})
 

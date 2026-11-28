@@ -3,7 +3,7 @@ import type { Task } from '@devflow/db/tables/tasks'
 import type { ProjectRepository } from '@devflow/schemas/effect/project-workspace'
 import type { TaskStatus } from '@devflow/schemas/effect/taskconfiguration'
 import type { ResolvedTaskWorkflow, WorktreeTiming } from '@devflow/schemas/effect/taskconfiguration'
-import type { VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
+import type { ProjectSandbox, VmScope } from '@devflow/schemas/zod/host/agent-sandbox'
 import { findModelOption } from '@devflow/ui/constants/models'
 import { ORPCError } from '@orpc/client'
 
@@ -144,7 +144,7 @@ export async function ensureRepositorySources(api: ApiClient, projectId: string,
 
 /** A `Target` with its project loaded. */
 export type LoadedTarget =
-	| { kind: 'project'; project: { id: string; repositories: readonly ProjectRepository[] } }
+	| { kind: 'project'; project: { id: string; repositories: readonly ProjectRepository[]; sandbox?: ProjectSandbox } }
 	| { kind: 'directory'; path: string }
 
 /** What `startTask` launches; `launchInput` builds it from a composer snapshot. */
@@ -172,6 +172,8 @@ export type StartTaskInput = {
 	githubAccount?: { id: GithubAccountPick; explicit: boolean }
 	/** For a project whose sandbox is `vm`: the host's shared VM or the task's own. Ignored otherwise. */
 	vmScope?: VmScope
+	vmCpus?: number
+	vmMemoryGiB?: number
 }
 
 /**
@@ -237,6 +239,8 @@ export async function startTask(api: ApiClient, input: StartTaskInput): Promise<
 				eventId: ids.eventId,
 				projectId: target.project.id,
 				vmScope: input.vmScope,
+				vmCpus: input.vmCpus,
+				vmMemoryGiB: input.vmMemoryGiB,
 				repositories,
 				defaultRepositoryIdentity: repositories.find((repository) => repository.default)?.repositoryIdentity,
 				firstSession,

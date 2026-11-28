@@ -88,6 +88,7 @@ export async function startTask(
 		model?: string | RegExp
 		permission?: Permission
 		vm?: 'Own VM' | 'Shared VM'
+		vmResources?: { cpus: number; memoryGiB: number }
 	},
 ): Promise<string> {
 	await page.getByRole('button', { name: /^Task size:/ }).click()
@@ -96,6 +97,13 @@ export async function startTask(
 	if (input.vm) {
 		await page.getByRole('button', { name: /^VM:/ }).click()
 		await page.getByRole('button', { name: new RegExp(`^${input.vm}`) }).click()
+	}
+
+	if (input.vmResources) {
+		await page.getByRole('button', { name: /^VM: Own VM/ }).click()
+		await page.getByRole('spinbutton', { name: 'vCPUs' }).fill(String(input.vmResources.cpus))
+		await page.getByRole('spinbutton', { name: 'Memory (GiB)' }).fill(String(input.vmResources.memoryGiB))
+		await page.getByRole('button', { name: 'Apply', exact: true }).click()
 	}
 
 	await chooseModel(page, input.model ?? MODEL)

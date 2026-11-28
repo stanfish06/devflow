@@ -73,6 +73,7 @@ import {
 	launchInput,
 	toDraftLaunch,
 	useLaunchForm,
+	type VmSizing,
 } from '@/minimalist/lib/launch-form'
 import { fitSettings, modelCatalog } from '@/minimalist/lib/models'
 import { defaultVmScope, TASK_SIZES, type TaskSize, taskSizeOption } from '@/minimalist/lib/task-size'
@@ -323,6 +324,7 @@ function LaunchPage({
 				taskSize: form.taskSize,
 				smallAutoAdvance: form.smallAutoAdvance,
 				vmScope: form.vmScope,
+				...form.vmSizing,
 				attachments: attachments.metadata,
 			})
 		: null
@@ -534,7 +536,15 @@ function LaunchPage({
 				<VmScopePicker
 					scope={form.vmScope ?? defaultVmScope(form.taskSize)}
 					picked={form.vmScope !== null}
-					onPick={form.setVmScope}
+					sizing={form.vmSizing}
+					onPick={(scope) => {
+						form.setVmScope(scope)
+						if (scope !== 'task') form.setVmSizing({})
+					}}
+					onApply={(sizing) => {
+						form.setVmSizing(sizing)
+						if (sizing.vmCpus || sizing.vmMemoryGiB) form.setVmScope('task')
+					}}
 				/>
 			) : null}
 		</div>
@@ -616,6 +626,7 @@ function LaunchPage({
 				onPick={(next) => {
 					// A VM pick belongs to the project it was made for.
 					form.setVmScope(null)
+					form.setVmSizing({})
 					form.setTarget(draftTarget(next))
 				}}
 			/>
@@ -852,15 +863,26 @@ const VM_SCOPES: readonly VmScopeOption[] = [
 function VmScopePicker({
 	scope,
 	picked,
+	sizing,
 	onPick,
+	onApply,
 }: {
 	scope: VmScope
 	picked: boolean
+	sizing: VmSizing
 	onPick: (scope: VmScope | null) => void
+	onApply: (sizing: VmSizing) => void
 }) {
 	const anchor = useRef<HTMLButtonElement>(null)
 	const [open, setOpen] = useState(false)
 	const current = VM_SCOPES.find((option) => option.value === scope) ?? OWN_VM
+	const summary = [
+		current.label,
+		sizing.vmCpus && `${sizing.vmCpus} vCPU${sizing.vmCpus === 1 ? '' : 's'}`,
+		sizing.vmMemoryGiB && `${sizing.vmMemoryGiB} GiB`,
+	]
+		.filter(Boolean)
+		.join(' · ')
 	const choose = (next: VmScope | null) => {
 		onPick(next)
 		setOpen(false)
@@ -870,12 +892,12 @@ function VmScopePicker({
 			<button
 				type="button"
 				ref={anchor}
-				aria-label={`VM: ${current.label}`}
+				aria-label={`VM: ${summary}`}
 				title={current.description}
 				onClick={() => setOpen(true)}
 			>
 				<Box className="i sm" strokeWidth={1.6} />
-				{current.label}
+				{summary}
 				<ChevronDown className="i sm" />
 			</button>
 			<Menu anchor={anchor} open={open} onClose={() => setOpen(false)} placement="above-end" width={300}>
@@ -895,6 +917,51 @@ function VmScopePicker({
 					checked={!picked}
 					onSelect={() => choose(null)}
 				/>
+				{scope === 'task' && (
+					<>
+						<MenuSeparator />
+						<form
+							className="vm-sizing"
+							onSubmit={(event) => {
+								event.preventDefault()
+								const fields = new FormData(event.currentTarget)
+								onApply({
+									vmCpus: Number(fields.get('vmCpus')) || undefined,
+									vmMemoryGiB: Number(fields.get('vmMemoryGiB')) || undefined,
+								})
+								setOpen(false)
+							}}
+						>
+							<label>
+								vCPUs
+								<input
+									name="vmCpus"
+									type="number"
+									min="1"
+									step="1"
+									max="2147483647"
+									placeholder="Host default"
+									defaultValue={sizing.vmCpus}
+								/>
+							</label>
+							<label>
+								Memory (GiB)
+								<input
+									name="vmMemoryGiB"
+									type="number"
+									min="1"
+									step="1"
+									max="2147483647"
+									placeholder="Host default"
+									defaultValue={sizing.vmMemoryGiB}
+								/>
+							</label>
+							<button type="submit" className="btn sm">
+								Apply
+							</button>
+						</form>
+					</>
+				)}
 			</Menu>
 		</>
 	)

@@ -38,6 +38,9 @@ Large and "Don't know yet") or in the host's shared VM (default for Small); the 
 overrides the default. Claude Code and Codex both run inside the VM, with Docker, nix, mise, bun,
 Node and gh installed.
 
+- To size a new task VM, select **Own VM**, open its menu, enter **vCPUs** and **Memory (GiB)**, and
+  select **Apply** before starting the task. Each blank field inherits its default from the host
+  running the VM. Later sessions in the task reuse that VM.
 - The first VM provisions a base image once (several minutes, about 5 GB); every VM after that is a
   full copy of it, so each VM costs disk space as it fills.
 - Host paths are mounted at the same paths in the VM; `~/.codex` is mounted for Codex sessions.

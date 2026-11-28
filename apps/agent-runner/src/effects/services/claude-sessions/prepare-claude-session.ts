@@ -352,16 +352,15 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 		const commitEnv = yield* readCommitAttributionEnvironment({ sessionId, workingDirectory: cwd })
 		const daemonApiContext = yield* Effect.context<DaemonApi>()
 		const sandboxTaskId = session.task_id
-		const sandbox = sessionSandbox(
-			sandboxTaskId
-				? yield* adaptTaskSandbox(() =>
-						waitForTaskSandbox(
-							(id) => currentCollections.tasks.toArray.find((task) => task.id === id),
-							sandboxTaskId,
-						),
-					)
-				: null,
-		)
+		const sandboxTask = sandboxTaskId
+			? yield* adaptTaskSandbox(() =>
+					waitForTaskSandbox(
+						(id) => currentCollections.tasks.toArray.find((task) => task.id === id),
+						sandboxTaskId,
+					),
+				)
+			: null
+		const sandbox = sessionSandbox(sandboxTask)
 		// Held until the run's scope closes; null keeps the host's own gh login and env untouched.
 		const githubEnv = yield* readGithubCredentialEnvironment({
 			sessionId,
@@ -380,6 +379,7 @@ export function prepareClaudeRun(input: ExecuteClaudeSessionInput, configuration
 					lease: yield* acquireVmLease(
 						{
 							scope: sandbox === 'vm-task' ? 'task' : 'shared',
+							resources: sandboxTask?.vmResources,
 							taskId: session.task_id,
 							paths: sandboxMountPaths({
 								cwd,

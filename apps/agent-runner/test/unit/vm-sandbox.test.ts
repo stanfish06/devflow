@@ -39,13 +39,14 @@ const TASK_ID = '019b049c-950d-7baa-b9a8-b9364599319b'
 
 describe('waitForTaskSandbox', () => {
 	it('waits for the task row, and fails rather than guess when it never arrives', async () => {
-		let row: { sandbox: 'vm-task' } | undefined
+		let row: { sandbox: 'vm-task'; vm_cpus: number; vm_memory_gib: number } | undefined
 		setTimeout(() => {
-			row = { sandbox: 'vm-task' }
+			row = { sandbox: 'vm-task', vm_cpus: 8, vm_memory_gib: 16 }
 		}, 300)
 		await expect(waitForTaskSandbox(() => row, TASK_ID, 2_000)).resolves.toEqual({
 			id: TASK_ID,
 			sandbox: 'vm-task',
+			vmResources: { cpus: 8, memoryGiB: 16 },
 		})
 		await expect(waitForTaskSandbox(() => undefined, TASK_ID, 300)).rejects.toThrow(/has not synced/)
 	})
@@ -326,6 +327,26 @@ describe('VmManager', () => {
 			{ name: taskVmName(TASK_ID), kind: 'task', taskId: TASK_ID, status: 'running', ports: [] },
 		])
 	})
+
+	it.each([
+		{ scope: 'task', resources: { cpus: 8, memoryGiB: 16 }, cpus: 8, memoryGiB: 16 },
+		{ scope: 'task', resources: { cpus: 6 }, cpus: 6, memoryGiB: 4 },
+		{ scope: 'task', resources: { memoryGiB: 12 }, cpus: 2, memoryGiB: 12 },
+		{ scope: 'shared', resources: { cpus: 8, memoryGiB: 16 }, cpus: 2, memoryGiB: 4 },
+	] as const)(
+		'clones a $scope VM with $cpus CPUs and $memoryGiB GiB',
+		async ({ scope, resources, cpus, memoryGiB }) => {
+			const { manager, lima } = setup()
+			const lease = await manager.acquire({ scope, taskId: TASK_ID, resources, paths: [] })
+			expect(lima.calls.find(([command]) => command === 'create')).toEqual(
+				expect.arrayContaining(['--cpus=2', '--memory=4']),
+			)
+			expect(lima.calls.find(([command]) => command === 'clone')).toEqual(
+				expect.arrayContaining([`--cpus=${cpus}`, `--memory=${memoryGiB}`]),
+			)
+			lease.release()
+		},
+	)
 
 	it('adds a mount by restarting an idle VM, and refuses while another session uses it', async () => {
 		const { manager, lima, worktree, root } = setup()

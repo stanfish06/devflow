@@ -119,6 +119,7 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				default: repository.repositoryIdentity === defaultRepo.repositoryIdentity,
 			}))
 			const defaultWorkingDirectory = taskWorkspaceSessionDirectory(taskWorkspaceRoot(input.slug), repositories)
+			const sandbox = taskSandboxFor(parsedProject.data.sandbox, input.vmScope)
 			const taskValues = {
 				organization_id: input.actor.organizationId,
 				project_id: input.projectId,
@@ -142,7 +143,9 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 				ticket_repository_id: input.ticketRepositoryId ?? null,
 				ticket_repository_full_name: input.ticketRepositoryFullName ?? null,
 				workflow_type: input.workflowType,
-				sandbox: taskSandboxFor(parsedProject.data.sandbox, input.vmScope),
+				sandbox,
+				vm_cpus: input.vmCpus ?? null,
+				vm_memory_gib: input.vmMemoryGiB ?? null,
 				// V2 workspaces always materialize before the first session launches.
 				worktree_timing: 'now' as const,
 				workspace_state: null,
@@ -172,6 +175,10 @@ export const createTaskV2 = Effect.fn('project_workspace.create_task_v2')(functi
 			if (existingTask && !promotableDraft) {
 				const txId = yield* getTransactionId(transaction)
 				return { result: 'already-exists' as const, transactionId: txId, taskId, workspaceId, sessionId }
+			}
+
+			if ((input.vmCpus !== undefined || input.vmMemoryGiB !== undefined) && sandbox !== 'vm-task') {
+				return yield* new UnsupportedRecipeProfile({ message: "VM resources require the task's own VM" })
 			}
 
 			const [workspace] = yield* transaction.query(

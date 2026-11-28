@@ -1065,6 +1065,13 @@
       "when": 1795599916861,
       "tag": "0151_agent_sandbox",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1795666917881,
+      "tag": "0152_task_vm_resources",
+      "breakpoints": true
     }
   ]
 }

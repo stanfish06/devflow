@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
+import { DraftLaunchSchema } from '../src/api/tasks/draft-launch'
 import { CreateTaskV2InputSchema } from '../src/api/tasks/v2/create'
 
 const validInput = {
@@ -38,4 +39,32 @@ describe('CreateTaskV2InputSchema slug', () => {
 	test('permits manually edited characters within one path segment', () => {
 		expect(CreateTaskV2InputSchema.safeParse(validInput).success).toBe(true)
 	})
+})
+
+describe('task VM sizing', () => {
+	test.each(['vmCpus', 'vmMemoryGiB'])('accepts only positive whole %s within PostgreSQL integer range', (field) => {
+		for (const value of [0, -1, 2.5, 2 ** 31]) {
+			expect(CreateTaskV2InputSchema.safeParse({ ...validInput, [field]: value }).success).toBe(false)
+		}
+		expect(CreateTaskV2InputSchema.parse({ ...validInput, [field]: 8 })).toHaveProperty(field, 8)
+	})
+})
+
+test('sized drafts require version 2 and an own VM target', () => {
+	const defaultDraft = {
+		version: 1,
+		prompt: 'Run simulation',
+		attachments: [],
+		target: { kind: 'project', projectId: validInput.projectId },
+		hostId: 'host',
+		settings: { agent: 'claude', model: 'opus', effort: null, fastMode: false, permissionsMode: 'default' },
+		taskSize: 'large',
+		smallAutoAdvance: true,
+	}
+	expect(DraftLaunchSchema.safeParse(defaultDraft).success).toBe(true)
+	expect(DraftLaunchSchema.safeParse({ ...defaultDraft, vmCpus: 8 }).success).toBe(false)
+	const sized = { ...defaultDraft, version: 2, vmCpus: 8 }
+	expect(DraftLaunchSchema.parse(sized)).toMatchObject({ version: 2, vmCpus: 8 })
+	expect(DraftLaunchSchema.safeParse({ ...sized, vmScope: 'shared' }).success).toBe(false)
+	expect(DraftLaunchSchema.safeParse({ ...sized, target: { kind: 'directory', path: '/tmp' } }).success).toBe(false)
 })
