@@ -280,12 +280,14 @@ export function limaEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.Pr
 	return Object.fromEntries(Object.entries(env).filter(([key]) => keep.has(key)))
 }
 
-function defaultRunner(limactl: string): LimaRunner {
+/** `showProgress` passes limactl's stderr (download and provisioning progress) to the terminal; the
+ * failure detail of `check` is then empty, since the person already saw it. */
+export function defaultRunner(limactl: string, options: { showProgress?: boolean } = {}): LimaRunner {
 	return (args, timeoutMs = 120_000, stdin) =>
 		new Promise((resolve) => {
 			const child = spawn(limactl, ['--tty=false', ...args], {
 				env: limaEnvironment(),
-				stdio: [stdin ?? 'ignore', 'pipe', 'pipe'],
+				stdio: [stdin ?? 'ignore', 'pipe', options.showProgress ? 'inherit' : 'pipe'],
 			})
 			let stdout = ''
 			let stderr = ''
@@ -689,8 +691,11 @@ export class VmManager {
 		this.startForwarding(entry)
 	}
 
-	/** The provisioned base VM for the current template, created (several minutes) on first use. */
-	private ensureBase(): Promise<string> {
+	/**
+	 * The provisioned base VM for the current template, created on first use: a ~1 GB image download
+	 * plus provisioning, 15-30 minutes. `bun run devflow setup-vm` calls this ahead of `up`.
+	 */
+	ensureBase(): Promise<string> {
 		const template = renderVmTemplate()
 		// The disk size is fixed when the base is created, so it is part of the base's identity.
 		const name = baseVmName(`${template}\n# disk ${this.config.diskGiB} GiB`)

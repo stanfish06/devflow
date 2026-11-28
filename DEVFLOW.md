@@ -27,6 +27,7 @@ Other commands:
 | `bun run devflow desktop` | the native desktop client (`apps/desktop`, macOS and Linux) against the running stack; needs `nix develop` for Rust, extra arguments go to cargo (e.g. `--release`) |
 | `bun run devflow up --port 48443` | run on 48443 (all ports shifted with it); later commands keep the port |
 | `bun run devflow remote <ssh-host>` | make another machine (e.g. a `cloud` VM: `bun run devflow remote vm`) a host of this server, listed in the host picker while it runs |
+| `bun run devflow setup-vm` | build the base VM that agent VMs clone (Ubuntu image download plus provisioning, 15-30 minutes, once per VM template), so the first VM task after `up` does not wait on it. Refuses while a daemon or another base build is running |
 | `bun run devflow vm [ls \| shell <name> \| stop <name> \| rm <name>]` | list the agent VMs, open a shell in one, stop or delete one |
 | `bun run devflow clean [--yes] [--force] [--days N] [--no-gh]` | show, then with `--yes` free, disk: worktrees (and VMs) of archived, done or merged tasks, `node_modules` of worktrees idle `N` days (default 7), logs older than 14 days. Worktrees with uncommitted or unpushed work or a running session are kept (`--force` drops the first two) |
 
@@ -41,8 +42,9 @@ Node and gh installed.
 - To size a new task VM, select **Own VM**, open its menu, enter **vCPUs** and **Memory (GiB)**, and
   select **Apply** before starting the task. Each blank field inherits its default from the host
   running the VM. Later sessions in the task reuse that VM.
-- The first VM provisions a base image once (several minutes, about 5 GB); every VM after that is a
-  full copy of it, so each VM costs disk space as it fills.
+- The first VM provisions a base image once (a ~1 GB download plus provisioning, 15-30 minutes,
+  about 5 GB); run `bun run devflow setup-vm` before `up` to do it ahead of time. Every VM after
+  that is a full copy of it, so each VM costs disk space as it fills.
 - Host paths are mounted at the same paths in the VM; `~/.codex` is mounted for Codex sessions.
 - After pulling this change, run `bun run devflow setup` once to apply its database migration.
 - Every port at or above 1024 that something listens on in a VM is forwarded to `127.0.0.1` on the
