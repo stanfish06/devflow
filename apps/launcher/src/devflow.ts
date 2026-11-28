@@ -1061,13 +1061,14 @@ function cargoArgs(args: string[]): string[] {
 }
 
 /**
- * `desktop`: the native client in apps/desktop (macOS only) against the running stack. Needs the
- * Rust toolchain from `nix develop`; further arguments go to cargo, e.g. `--release`.
+ * `desktop`: the native client in apps/desktop (macOS and Linux) against the running stack. Needs
+ * the Rust toolchain from `nix develop`; further arguments go to cargo, e.g. `--release`.
  */
 function desktop(): void {
-	// The client embeds WKWebView through AppKit; nix only provides its toolchain on macOS.
-	if (process.platform !== 'darwin') {
-		console.error('devflow desktop runs on macOS only')
+	// The client embeds WKWebView through AppKit on macOS and WebKitGTK on Linux; nix provides the
+	// toolchain and libraries for those two.
+	if (process.platform !== 'darwin' && process.platform !== 'linux') {
+		console.error('devflow desktop runs on macOS and Linux only')
 		process.exit(1)
 	}
 	requireTool('cargo')
@@ -1079,6 +1080,8 @@ function desktop(): void {
 			DEVFLOW_APP_ORIGIN: ROUTES.ui,
 			DEVFLOW_API_ORIGIN: ROUTES.api,
 			DEVFLOW_SYNC_ORIGIN: ROUTES.sync,
+			// WebKitGTK ignores the CA `devflow trust` installs; the client trusts this file itself.
+			DEVFLOW_CA_FILE: CADDY_ROOT_CA,
 		},
 		stdio: 'inherit',
 	})
