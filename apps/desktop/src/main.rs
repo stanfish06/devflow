@@ -15,6 +15,8 @@ use crate::store::{GlobalStore, Store};
 use crate::ui::app::AppView;
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    ui::web::linux::prepare_display();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("devflow_desktop=info"),
     )
@@ -32,6 +34,11 @@ fn main() {
         config.sync,
         config.app
     );
+    #[cfg(target_os = "linux")]
+    if let Err(error) = gtk::init() {
+        eprintln!("devflow desktop: start GTK for the webview: {error}");
+        std::process::exit(1);
+    }
     let net = Net::new(config.clone()).expect("start the network runtime");
     // `devflow-desktop /sessions/<id>` opens that page first, like a deep link.
     let initial = std::env::args().nth(1).filter(|arg| arg.starts_with('/'));

@@ -1566,9 +1566,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "base64 0.22.1",
  "env_logger",
  "futures",
+ "gdkx11",
  "gpui-kit",
+ "gtk",
  "jiff 0.2.46",
  "lb-wry",
  "log",
@@ -1581,6 +1584,8 @@ dependencies = [
  "tokio",
  "url",
  "uuid",
+ "webkit2gtk",
+ "x11-dl",
 ]
 
 [[package]]
