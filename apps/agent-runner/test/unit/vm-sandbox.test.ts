@@ -161,7 +161,7 @@ describe('pure helpers', () => {
 		expect({ PLAIN, QUOTES, LINES }).toEqual(values)
 	})
 
-	it('forwards listening ports from 1024 up on wildcard and loopback addresses', () => {
+	it('forwards listening ports from 1024 up on wildcard and loopback addresses, marking loopback-only ones', () => {
 		const ss = [
 			'LISTEN 0      4096   127.0.0.53%lo:53         0.0.0.0:*',
 			'LISTEN 0      128          0.0.0.0:22         0.0.0.0:*',
@@ -171,8 +171,14 @@ describe('pure helpers', () => {
 			'LISTEN 0      511            [::1]:8080          [::]:*',
 			'LISTEN 0      511                *:9000             *:*',
 			'LISTEN 0      511     192.168.5.15:7000       0.0.0.0:*',
+			'LISTEN 0      511        127.0.0.1:9000       0.0.0.0:*',
 		].join('\n')
-		expect(parseListeningPorts(ss)).toEqual([3000, 5432, 8080, 9000])
+		expect(parseListeningPorts(ss)).toEqual([
+			{ port: 3000, loopback: true },
+			{ port: 5432, loopback: false },
+			{ port: 8080, loopback: true },
+			{ port: 9000, loopback: false },
+		])
 	})
 
 	it('mounts read-only only what it is asked to', () => {

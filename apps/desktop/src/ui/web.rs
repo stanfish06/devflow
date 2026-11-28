@@ -47,6 +47,8 @@ pub enum WebEvent {
     Anchor { turn: Option<usize>, offset: f32 },
     /// The thread column moved, changed session, or went away (`None`).
     Thread(Option<ThreadSlot>),
+    /// The theme the user picked in the page: `None` follows the system.
+    Theme(Option<component::ThemeMode>),
 }
 
 pub struct WebPane {
@@ -75,7 +77,14 @@ enum BridgeMessage {
         height: f32,
     },
     /// Where the page's transcript was scrolled when it handed back to the native one.
-    Anchor { turn: Option<usize>, offset: f32 },
+    Anchor {
+        turn: Option<usize>,
+        offset: f32,
+    },
+    Theme {
+        dark: bool,
+        system: bool,
+    },
 }
 
 /// Sent by the page-load handler itself, never by a page: clears the native transcript.
@@ -211,6 +220,22 @@ fn bridge_script() -> String {
     schedule();
   }};
   if (document.body) start(); else addEventListener('DOMContentLoaded', start);
+  // The window draws in the page's theme: ThemeProvider sets `data-theme` (light or dark) and
+  // `data-theme-preference` (light, dark or system) on <html>. Nothing is sent before both are set,
+  // so the window keeps the system appearance until then.
+  let theme = '';
+  const reportTheme = () => {{
+    const {{ theme: value, themePreference: preference }} = document.documentElement.dataset;
+    if (value !== 'light' && value !== 'dark') return;
+    if (preference !== 'light' && preference !== 'dark' && preference !== 'system') return;
+    if (value + preference === theme) return;
+    theme = value + preference;
+    window.ipc.postMessage(JSON.stringify({{ type: 'theme', dark: value === 'dark', system: preference === 'system' }}));
+  }};
+  new MutationObserver(reportTheme).observe(document.documentElement, {{
+    attributes: true, attributeFilter: ['data-theme', 'data-theme-preference'],
+  }});
+  reportTheme();
   // Native code asks again after a page zoom change, which moves the area without a DOM change.
   window.__devflowReport = () => {{ last = ''; schedule(); }};
   // The native transcript's attachment chips open the web transcript's own link (Transcript.tsx
@@ -313,6 +338,13 @@ impl WebPane {
                             }),
                     ),
                     Ok(BridgeMessage::Anchor { turn, offset }) => WebEvent::Anchor { turn, offset },
+                    Ok(BridgeMessage::Theme { dark, system }) => {
+                        WebEvent::Theme((!system).then_some(if dark {
+                            component::ThemeMode::Dark
+                        } else {
+                            component::ThemeMode::Light
+                        }))
+                    }
                     Err(_) => continue,
                 };
                 if this.update(cx, |_, cx| cx.emit(event)).is_err() {
@@ -412,5 +444,27 @@ fn open_in_browser(url: &str) {
     let mut command = linux::browser_command();
     if let Err(error) = command.arg(url).spawn() {
         log::warn!("open {url}: {error}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::BridgeMessage;
+
+    #[test]
+    fn parses_the_theme_message_the_bridge_sends() {
+        let message =
+            serde_json::from_str::<BridgeMessage>(r#"{"type":"theme","dark":true,"system":false}"#);
+        assert!(matches!(
+            message,
+            Ok(BridgeMessage::Theme {
+                dark: true,
+                system: false
+            })
+        ));
+        let message = serde_json::from_str::<BridgeMessage>(
+            r#"{"type":"theme","dark":"yes","system":false}"#,
+        );
+        assert!(message.is_err());
     }
 }

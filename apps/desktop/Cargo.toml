@@ -32,7 +32,7 @@ gpui-kit = { version = "0.11.0", features = ["gpui-fast", "test-support"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", features = ["NSResponder", "NSView", "NSWindow"] }
+objc2-app-kit = { version = "0.3", features = ["NSAppearance", "NSApplication", "NSResponder", "NSView", "NSWindow"] }
 
 # Linux embeds WebKitGTK (through wry) in an X11 child window; versions match lb-wry's.
 [target.'cfg(target_os = "linux")'.dependencies]

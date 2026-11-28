@@ -230,10 +230,17 @@ export function vmGitIdentityConfig(cwd: string): string | undefined {
 }
 
 const FORWARDABLE_ADDRESSES = new Set(['0.0.0.0', '::', '*', '127.0.0.1', '::1'])
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1'])
+
+/** A guest TCP port to forward; `loopback` when it listens only on the guest's loopback. */
+export interface ListeningPort {
+	readonly port: number
+	readonly loopback: boolean
+}
 
 /** Listening TCP ports from `ss -ltnH` that can be forwarded: 1024 and up, on a wildcard or loopback address. */
-export function parseListeningPorts(ss: string): number[] {
-	const ports = new Set<number>()
+export function parseListeningPorts(ss: string): ListeningPort[] {
+	const ports = new Map<number, boolean>()
 	for (const line of ss.split('\n')) {
 		const local = line.trim().split(/\s+/)[3]
 		if (!local) continue
@@ -243,9 +250,10 @@ export function parseListeningPorts(ss: string): number[] {
 			.replace(/^\[|\]$/g, '')
 			.replace(/%.*$/, '')
 		const port = Number(local.slice(separator + 1))
-		if (Number.isInteger(port) && port >= 1024 && FORWARDABLE_ADDRESSES.has(address)) ports.add(port)
+		if (Number.isInteger(port) && port >= 1024 && FORWARDABLE_ADDRESSES.has(address))
+			ports.set(port, (ports.get(port) ?? true) && LOOPBACK_ADDRESSES.has(address))
 	}
-	return [...ports].sort((a, b) => a - b)
+	return [...ports].sort(([a], [b]) => a - b).map(([port, loopback]) => ({ port, loopback }))
 }
 
 /** Paths in `required` that no mount in `mounted` covers. */
@@ -828,7 +836,7 @@ export class VmManager {
 				}
 				return
 			}
-			const listening = new Set(parseListeningPorts(listed.stdout))
+			const listening = new Map(parseListeningPorts(listed.stdout).map(({ port, loopback }) => [port, loopback]))
 			for (const [guestPort, forward] of entry.forwards) {
 				if (!listening.has(guestPort) || forward.process.exitCode !== null) {
 					forward.process.kill('SIGTERM')
@@ -840,11 +848,14 @@ export class VmManager {
 					[...other.forwards.values()].map((forward) => forward.hostPort),
 				),
 			)
-			for (const guestPort of listening) {
+			for (const [guestPort, loopback] of listening) {
 				if (entry.forwards.has(guestPort)) continue
 				// One ssh process per port: keep the live set to what the task page can show.
 				if (entry.forwards.size >= SANDBOX_VM_PORTS_MAX) break
-				const hostPort = await freeHostPort(guestPort, taken)
+				// A service the guest keeps on its loopback (a build cache, a language server) gets any
+				// free host port: on its own number it would take the port from the host's copy of the
+				// same tool whenever that one is not running (sccache's 4226).
+				const hostPort = await freeHostPort(loopback ? 0 : guestPort, taken)
 				if (!current()) return
 				taken.add(hostPort)
 				const forwarder = this.spawnProcess(
