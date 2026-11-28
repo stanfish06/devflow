@@ -47,6 +47,8 @@ Node and gh installed.
 - After pulling this change, run `bun run devflow setup` once to apply its database migration.
 - Every port at or above 1024 that something listens on in a VM is forwarded to `127.0.0.1` on the
   host running the daemon, on the same port when it is free; the task's details list the mapping.
+  A port the guest listens on only on its loopback (`127.0.0.1`, `::1`) gets any free host port,
+  so a guest's build cache or language server never takes the port of the host's own copy.
 - A VM stops `DEVFLOW_VM_IDLE_STOP_MINUTES` after its last session; a task's own VM is deleted when
   the task is archived. A task deleted without being archived keeps its VM until
   `bun run devflow vm rm <name>`.

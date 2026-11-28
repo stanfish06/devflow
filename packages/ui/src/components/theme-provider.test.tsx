@@ -8,6 +8,7 @@ describe('ThemeProvider', () => {
     vi.useRealTimers()
     localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-theme-preference')
     document.documentElement.classList.remove('dark')
   })
 
@@ -22,6 +23,7 @@ describe('ThemeProvider', () => {
     )
     vi.runAllTimers()
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(document.documentElement.dataset.themePreference).toBe('dark')
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(onThemeChange).toHaveBeenCalledWith('dark')
   })

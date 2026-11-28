@@ -1,7 +1,8 @@
 import * as React from 'react'
 import { useLocalStorage } from '../hooks/use-local-storage'
 
-/** The applied theme: `data-theme` on <html>, plus the `dark` class in dark. */
+/** The applied theme: `data-theme` on <html>, plus the `dark` class in dark. The user's pick is
+ * `data-theme-preference`, read by the desktop client to match its window to the page. */
 export type Theme = 'light' | 'dark'
 /** What the user picked; `system` follows the OS color scheme. */
 export type ThemePreference = 'system' | Theme
@@ -48,6 +49,7 @@ export function ThemeProvider({ children, storageKey = 'ui-theme', onThemeChange
     if (!isLoaded) return
     const root = document.documentElement
     root.setAttribute('data-theme', theme)
+    root.setAttribute('data-theme-preference', preference)
     root.classList.toggle('dark', theme === 'dark')
 
     if (!onThemeChange) return
@@ -57,7 +59,7 @@ export function ThemeProvider({ children, storageKey = 'ui-theme', onThemeChange
     // A report still pending when the theme or callback changes is stale; dropping it keeps
     // it from overwriting whatever owns the window theme now.
     return () => clearTimeout(timeout)
-  }, [theme, onThemeChange, isLoaded])
+  }, [theme, preference, onThemeChange, isLoaded])
 
   const value = React.useMemo(
     () => ({ theme, preference, setPreference: (next: ThemePreference) => setStored(next) }),
