@@ -2,7 +2,8 @@ import { Handle, type NodeProps, Position } from '@xyflow/react'
 import { MessageCircleQuestion, TriangleAlert } from 'lucide-react'
 import type { FC } from 'react'
 import { SyncGridAnimation } from '../sync-grid-animation'
-import type { WorkflowPhaseNode, WorkflowSessionNode } from './types-lite'
+import type {
+  WorkflowExtentNode, WorkflowPhaseNode, WorkflowSessionNode } from './types-lite'
 import { getPhaseColor, getStatusColor, getStatusLabel, stripDatePrefix } from './utils'
 
 /** Session node — narrow but tall version for LR layout */
@@ -235,3 +236,8 @@ export const PhasePlaceholderNode: FC<NodeProps<WorkflowPhaseNode>> = ({ data, s
 
 export type SessionNodeProps = NodeProps
 export type PhasePlaceholderNodeProps = NodeProps
+
+/** Takes up the space of something drawn outside the cards, so fitting the view includes it. */
+export const ExtentNode: FC<NodeProps<WorkflowExtentNode>> = ({ data }) => (
+  <div aria-hidden style={{ width: data.width, height: data.height, pointerEvents: 'none' }} />
+)

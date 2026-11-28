@@ -42,8 +42,6 @@ const ROUTE_STAGGER = 12
 export interface LayoutResult {
   nodes: WorkflowGraphNode[]
   edges: Edge[]
-  /** Area to fit when showing the whole graph, routed edges and their labels included; unset means the nodes. */
-  bounds?: { x: number; y: number; width: number; height: number }
 }
 
 /** Artifact label size at the 10px mono font ArtifactEdge draws it in, for fitting. */
@@ -358,36 +356,49 @@ function computeSnakeLayout(
   // An artifact flow between cards that are not next to each other on the path goes around the
   // cards between them: above the row when both ends share it, else past the grid's right edge.
   const gridRight = MARGIN + perRow * cellWidth + (perRow - 1) * SNAKE_GAP_X
-  // The fit covers the cards and every detour with its label, which can lie outside the cards.
-  let minX = Math.min(...nodes.map((node) => node.position.x))
-  let minY = Math.min(...nodes.map((node) => node.position.y))
-  let maxX = Math.max(
-    ...nodes.map((node) => node.position.x + (node.type === 'session' ? SESSION_NODE_WIDTH : placeholderWidth)),
-  )
-  const maxY = Math.max(
-    ...nodes.map((node) => node.position.y + (node.type === 'session' ? SESSION_NODE_HEIGHT : placeholderHeight)),
+  const centers = new Map(
+    nodes.map((node) => [
+      node.id,
+      { x: node.position.x + SESSION_NODE_WIDTH / 2, y: node.position.y + SESSION_NODE_HEIGHT / 2 },
+    ]),
   )
   let stagger = 0
   for (const edge of edges) {
     if (edge.type !== 'artifact' || !edge.data) continue
     const from = sessionSlots.get(edge.source)
     const to = sessionSlots.get(edge.target)
-    if (!from || !to || Math.abs(from.index - to.index) <= 1) continue
+    const source = centers.get(edge.source)
+    const target = centers.get(edge.target)
+    if (!from || !to || !source || !target || Math.abs(from.index - to.index) <= 1) continue
     const offset = ROUTE_MARGIN + stagger * ROUTE_STAGGER
-    const label = labelWidth(String(edge.data.fileName ?? ''))
+    stagger += 1
+    // ArtifactEdge puts the label at the detour's turn: mid-way along, on the detour line.
+    let label: { x: number; y: number }
     if (from.row === to.row) {
       const routeY = MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset
       edge.data = { ...edge.data, routeY }
-      minY = Math.min(minY, routeY - LABEL_HEIGHT / 2)
-      minX = Math.min(minX, MARGIN - label / 2)
+      label = { x: (source.x + target.x) / 2, y: routeY }
     } else {
       const routeX = gridRight + offset
       edge.data = { ...edge.data, routeX }
-      maxX = Math.max(maxX, routeX + label / 2)
+      label = { x: routeX, y: (source.y + target.y) / 2 }
     }
-    stagger += 1
+    // The label can lie outside the cards: an invisible node over it makes every fit of the view
+    // (the first one, after a remount, the fit button, after a drag) include it.
+    const width = labelWidth(String(edge.data.fileName ?? ''))
+    nodes.push({
+      id: `extent-${edge.id}`,
+      type: 'extent',
+      position: { x: label.x - width / 2, y: label.y - LABEL_HEIGHT / 2 },
+      width,
+      height: LABEL_HEIGHT,
+      draggable: false,
+      selectable: false,
+      focusable: false,
+      data: { kind: 'extent', width, height: LABEL_HEIGHT, synthetic: true },
+    })
   }
-  return { nodes, edges, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } }
+  return { nodes, edges }
 }
 
 function getPhaseStep(

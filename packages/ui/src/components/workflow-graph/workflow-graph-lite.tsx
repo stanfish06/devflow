@@ -9,16 +9,24 @@ import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
 import { computeLayout, defaultWorkflowPhases, snakeCellSize, snakeColumnCount } from './layout-lite'
-import { PhasePlaceholderNode, SessionNode } from './phase-node-lite'
+import { ExtentNode, PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
   LayoutDirection,
+  WorkflowGraphNodeData,
   WorkflowGraphProps,
   WorkflowGraphNode,
 } from './types-lite'
 import { snapViewportToDevicePixels } from './viewport'
 
-const nodeTypes = { session: SessionNode, phasePlaceholder: PhasePlaceholderNode }
+const nodeTypes = { session: SessionNode, phasePlaceholder: PhasePlaceholderNode, extent: ExtentNode }
+
+/** The phase a node belongs to; none for layout extents. */
+function phaseNameOf(data: WorkflowGraphNodeData): string | null {
+  if (data.kind === 'session') return data.session.labelName
+  if (data.kind === 'phase') return data.labelName
+  return null
+}
 const edgeTypes = { artifact: ArtifactEdge, autoAdvance: AutoAdvanceEdge }
 
 function getFitViewPadding(direction: LayoutDirection, isStatic?: boolean): number {
@@ -73,9 +81,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     if (fitAllStages || !focusCurrentStage || !currentPhase) return undefined
     const index = phases.indexOf(currentPhase)
     const nearby = phases.slice(Math.max(0, index - 1), index + 2)
-    return layout.nodes.filter(({ data }) =>
-      nearby.some((phase) => phase.name === (data.kind === 'session' ? data.session.labelName : data.labelName)),
-    )
+    return layout.nodes.filter(({ data }) => nearby.some((phase) => phase.name === phaseNameOf(data)))
   }, [fitAllStages, focusCurrentStage, currentPhase, phases, layout.nodes])
 
   // Structural fingerprint of everything that affects node *positions* (the node
@@ -162,7 +168,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     }))
   }, [layout.nodes, selectedNodeId, attentionNodeId, onSessionClick])
 
-  const { fitView: rfFitView, fitBounds: rfFitBounds, zoomIn: rfZoomIn, zoomOut: rfZoomOut } = useReactFlow()
+  const { fitView: rfFitView, zoomIn: rfZoomIn, zoomOut: rfZoomOut } = useReactFlow()
   const fitViewPadding = getFitViewPadding(direction, isStatic)
   // Interactive graphs should fill the canvas on fit; static previews keep their
   // deliberate (maxZoom 1) sizing. fitView never zooms past what's needed to fit
@@ -193,29 +199,17 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     setNodeState((current) => ({ ...current, nodes: applyNodeChanges(changes, current.nodes) }))
   }, [])
 
-  // The whole graph: the layout's bounds when it routes edges outside the cards, else the nodes.
-  const layoutBounds = layout.bounds
-  const fitAll = useCallback(
-    (duration: number) => {
-      if (layoutBounds) rfFitBounds(layoutBounds, { padding: fitViewPadding, duration })
-      else rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration })
-    },
-    [rfFitBounds, rfFitView, layoutBounds, fitViewPadding, fitMaxZoom],
-  )
-
   const fitToViewport = useCallback(() => {
     requestAnimationFrame(() => {
-      if (initialFitNodes) {
-        rfFitView({ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
-      } else fitAll(0)
+      rfFitView({ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
     })
-  }, [rfFitView, fitAll, fitViewPadding, fitMaxZoom, initialFitNodes])
+  }, [rfFitView, fitViewPadding, fitMaxZoom, initialFitNodes])
 
   // Manual "fit to view" toolbar action — animated to match the zoom buttons.
   const handleFitView = useCallback(() => {
     setFitAllStages(true)
-    fitAll(200)
-  }, [fitAll])
+    rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 200 })
+  }, [rfFitView, fitViewPadding, fitMaxZoom])
 
   // Keep the graph fitted as the window / container resizes. fitToViewport's
   // identity changes with padding/zoom, so the subscriptions read the latest

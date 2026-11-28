@@ -42,10 +42,12 @@ describe('snakeColumnCount', () => {
 describe('computeLayout snake', () => {
   const sessions = [session('q', 'questions'), session('r', 'research'), session('d', 'design')]
   const { nodes, edges } = computeLayout(sessions, [], 'snake', undefined, phases, false, false, 3)
-  const byPhase = (title: string) =>
-    nodes.find((node) =>
-      node.data.kind === 'session' ? node.data.session.labelTitle === title : node.data.labelTitle === title,
-    )
+  const titleOf = (node: (typeof nodes)[number]) => {
+    if (node.data.kind === 'session') return node.data.session.labelTitle
+    if (node.data.kind === 'phase') return node.data.labelTitle
+    return null
+  }
+  const byPhase = (title: string) => nodes.find((node) => titleOf(node) === title)
   const cell = (title: string) => {
     const node = byPhase(title)
     return node ? { x: node.position.x, y: node.position.y } : undefined
@@ -81,7 +83,8 @@ describe('computeLayout snake', () => {
     const routed = computeLayout(all, [flow('s0', 's1'), flow('s0', 's2'), flow('s0', 's5')], 'snake', undefined, phases, false, false, 3)
     const data = (to: string) => routed.edges.find((edge) => edge.target === to && edge.type === 'artifact')?.data
     const top = (id: string) => routed.nodes.find((node) => node.id === id)?.position.y ?? 0
-    const right = Math.max(...routed.nodes.map((node) => node.position.x)) + 170
+    const cards = routed.nodes.filter((node) => node.type === 'session')
+    const right = Math.max(...cards.map((node) => node.position.x)) + 170
     // Next on the path: a direct curve.
     expect(data('s1')?.routeY).toBeUndefined()
     expect(data('s1')?.routeX).toBeUndefined()
@@ -89,10 +92,16 @@ describe('computeLayout snake', () => {
     expect(Number(data('s2')?.routeY)).toBeLessThan(top('s0'))
     // Another row: past the grid's right edge.
     expect(Number(data('s5')?.routeX)).toBeGreaterThan(right)
-    // The fit covers the detours and their labels.
-    const bounds = routed.bounds
-    expect(bounds && bounds.y < Number(data('s2')?.routeY)).toBe(true)
-    expect(bounds && bounds.x + bounds.width > Number(data('s5')?.routeX)).toBe(true)
+    // Each detour label gets an invisible node, so fitting the view includes it.
+    const extents = routed.nodes.filter((node) => node.type === 'extent')
+    expect(extents).toHaveLength(2)
+    expect(extents.some((node) => node.position.y < Number(data('s2')?.routeY))).toBe(true)
+    expect(extents.some((node) => node.position.x + Number(node.width) > Number(data('s5')?.routeX))).toBe(true)
+    expect(extents.every((node) => node.draggable === false && node.selectable === false)).toBe(true)
+  })
+
+  it('adds nothing to fit for an empty workflow', () => {
+    expect(computeLayout([], [], 'snake', undefined, [], false, false, 3)).toEqual({ nodes: [], edges: [] })
   })
 
   it('gives only the outer card of a stack at a row turn the vertical side', () => {
