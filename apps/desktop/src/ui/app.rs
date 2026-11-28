@@ -64,6 +64,9 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("ctrl--", ZoomOut, None),
         KeyBinding::new("ctrl-0", ZoomReset, None),
     ]);
+    // Linux apps quit with Ctrl+Q; ⌘ is the Super key there.
+    #[cfg(target_os = "linux")]
+    cx.bind_keys([KeyBinding::new("ctrl-q", Quit, None)]);
     cx.on_action(|_: &Quit, cx| cx.quit());
     // Edit items map to AppKit's cut:/copy:/paste:/selectAll:, which the first responder handles:
     // the webview's own editing, or GPUI's input actions through the app delegate. Without this
@@ -119,9 +122,14 @@ impl AppView {
         let origin = config.app.origin();
         let web = cx.new(|cx| WebPane::new(start, origin, window, cx));
         // The page binds ⌘ plus a digit (⌘0 included) to recent tasks; zoom keys win, as in a browser.
-        web.read(cx).reserve_action::<ZoomIn>();
-        web.read(cx).reserve_action::<ZoomOut>();
-        web.read(cx).reserve_action::<ZoomReset>();
+        let pane = web.read(cx);
+        pane.reserve_action::<ZoomIn>(cx);
+        pane.reserve_action::<ZoomOut>(cx);
+        pane.reserve_action::<ZoomReset>(cx);
+        // macOS quits from the app menu's key equivalent whatever has the keyboard; on Linux the
+        // page would otherwise keep Ctrl+Q.
+        #[cfg(target_os = "linux")]
+        pane.reserve_action::<Quit>(cx);
         let subscriptions = vec![
             cx.subscribe_in(
                 &web,
@@ -194,7 +202,7 @@ impl AppView {
 
     /// Scale the page and the native views together.
     fn apply_zoom(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.web.read(cx).set_zoom(self.zoom);
+        self.web.read(cx).set_zoom(self.zoom, window);
         let theme = Theme::global_mut(cx);
         theme.font_size = px(BASE_FONT_SIZE * self.zoom);
         theme.mono_font_size = px(BASE_MONO_FONT_SIZE * self.zoom);
@@ -253,6 +261,10 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &ZoomIn, window, cx| this.zoom_by(1, window, cx)))
             .on_action(cx.listener(|this, _: &ZoomOut, window, cx| this.zoom_by(-1, window, cx)))
             .on_action(cx.listener(|this, _: &ZoomReset, window, cx| this.zoom_by(0, window, cx)))
+            // A click on the window's own content takes the keyboard back from the page.
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                this.web.read(cx).release_keyboard()
+            }))
             .child(self.web.clone())
             .when_some(
                 self.thread.as_ref().filter(|(_, slot)| !slot.covered),
@@ -263,18 +275,20 @@ impl Render for AppView {
                         point(origin.x * self.zoom, origin.y * self.zoom),
                         gpui_kit::size(size.width * self.zoom, size.height * self.zoom),
                     );
-                    // Painted after the page's native view, so it covers the page and takes the
-                    // clicks within its bounds (gpui-fast NativeView).
+                    // Covers the page and takes the clicks within its bounds (gpui-fast NativeView
+                    // on macOS, the composition's overlay surface on Linux).
                     this.child(
-                        div()
-                            .id("native-thread")
-                            .absolute()
-                            .left(bounds.origin.x)
-                            .top(bounds.origin.y)
-                            .w(bounds.size.width)
-                            .h(bounds.size.height)
-                            .occlude()
-                            .child(thread.clone()),
+                        self.web.read(cx).cover(
+                            div()
+                                .id("native-thread")
+                                .absolute()
+                                .left(bounds.origin.x)
+                                .top(bounds.origin.y)
+                                .w(bounds.size.width)
+                                .h(bounds.size.height)
+                                .occlude()
+                                .child(thread.clone()),
+                        ),
                     )
                 },
             )

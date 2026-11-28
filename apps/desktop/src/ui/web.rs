@@ -4,12 +4,22 @@
 //! A script injected into each page reports where the minimalist UI's thread column is and which
 //! session it shows, and hides the web thread's content so the native view drawn over it is the
 //! only one visible and focusable.
+//!
+//! How the webview sits in the window is per platform: a WKWebView in a gpui-fast native view on
+//! macOS (`macos`), WebKitGTK in an X11 child window of the window's composition on Linux (`linux`).
 
-use std::ffi::c_void;
-use std::ptr::NonNull;
+#[cfg(target_os = "linux")]
+pub mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(target_os = "linux")]
+use linux::Embedding;
+#[cfg(target_os = "macos")]
+use macos::Embedding;
+
 use std::rc::Rc;
 
-use anyhow::Context as _;
 use gpui_kit::*;
 use serde::Deserialize;
 
@@ -43,10 +53,8 @@ pub enum WebEvent {
 
 pub struct WebPane {
     webview: Rc<wry::WebView>,
-    /// The WKWebView embedded with gpui-fast's native view support: GPUI content painted after it
-    /// covers it and takes the clicks there, and the page has the keyboard only while this view's
-    /// focus handle is focused, so keys it leaves still reach GPUI's bindings.
-    view: NativeView,
+    /// The webview's place in the window (see the module docs).
+    embedding: Embedding,
     _bridge: Task<()>,
 }
 
@@ -267,16 +275,13 @@ impl WebPane {
         let ipc_sender = sender.clone();
         let load_sender = sender.clone();
         let builder = wry::WebViewBuilder::new()
-            .with_url(start.as_str())
             .with_initialization_script(bridge_script())
             .with_focused(true)
             // Links the page opens in a new tab (target=_blank: attachments, PRs, docs) go to the
             // default browser, as a browser would open a tab.
             .with_new_window_req_handler(|url, _| {
-                if (url.starts_with("https://") || url.starts_with("http://"))
-                    && let Err(error) = std::process::Command::new("open").arg(&url).spawn()
-                {
-                    log::warn!("open {url}: {error}");
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    open_in_browser(&url);
                 }
                 wry::NewWindowResponse::Deny
             })
@@ -300,7 +305,8 @@ impl WebPane {
 
         #[cfg(debug_assertions)]
         let builder = builder.with_devtools(true);
-        let (webview, view) = Self::embed(builder, window, cx).expect("create the webview");
+        let (webview, embedding) =
+            Embedding::new(builder, start, window, cx).expect("create the webview");
 
         let bridge = cx.spawn(async move |this, cx| {
             while let Ok(message) = receiver.recv().await {
@@ -347,31 +353,10 @@ impl WebPane {
             }
         });
         Self {
-            webview: Rc::new(webview),
-            view,
+            webview,
+            embedding,
             _bridge: bridge,
         }
-    }
-
-    /// Build the webview as a child of the window, then move its WKWebView into a GPUI native view.
-    fn embed(
-        builder: wry::WebViewBuilder,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> anyhow::Result<(wry::WebView, NativeView)> {
-        use wry::WebViewExtMacOS as _;
-        let webview = builder
-            .build_as_child(&*window)
-            .context("build the webview")?;
-        let ns_view = webview.webview();
-        // NativeView::new takes a view outside any hierarchy and keeps it for the handle's life.
-        ns_view.removeFromSuperview();
-        let pointer = NonNull::new(objc2::rc::Retained::as_ptr(&ns_view) as *mut c_void)
-            .context("webview has no NSView")?;
-        // SAFETY: a live NSView just removed from its superview, on the UI thread; wry and the
-        // NativeView both retain it, and nothing else moves or resizes it.
-        let view = unsafe { NativeView::new(pointer, window, cx) }?;
-        Ok((webview, view))
     }
 
     /// Open Review from edits card `card`, at `path` when given.
@@ -418,28 +403,47 @@ impl WebPane {
 
     /// Let a GPUI binding for `A` run before the page sees its keys, as a browser's own shortcuts
     /// (zoom) take precedence over the page's.
-    pub fn reserve_action<A: Action>(&self) {
-        self.view.reserve_action::<A>();
+    pub fn reserve_action<A: Action + Default>(&self, cx: &App) {
+        self.embedding.reserve_action::<A>(cx);
     }
 
-    /// Set the page zoom (WKWebView `pageZoom`, as a browser's ⌘+/⌘−) and report the transcript
-    /// area again, since it moves in window coordinates.
-    pub fn set_zoom(&self, zoom: f32) {
-        if let Err(error) = self.webview.zoom(f64::from(zoom)) {
+    /// Set the page zoom (as a browser's ⌘+/⌘−: WKWebView `pageZoom`, WebKitGTK `zoom-level`) and
+    /// report the transcript area again, since it moves in window coordinates.
+    pub fn set_zoom(&self, zoom: f32, window: &Window) {
+        if let Err(error) = self.webview.zoom(self.embedding.page_zoom(zoom, window)) {
             log::warn!("webview zoom: {error}");
         }
-        if let Err(error) = self
-            .webview
-            .evaluate_script("window.__devflowReport && window.__devflowReport()")
-        {
-            log::warn!("webview report: {error}");
-        }
+        self.run("window.__devflowReport && window.__devflowReport()");
+    }
+
+    /// Show `element` over the page: GPUI content in the window's root view is painted under the
+    /// webview on Linux, where only the composition's overlay surface covers it.
+    pub fn cover(&self, element: impl IntoElement) -> AnyElement {
+        self.embedding.cover(element)
+    }
+
+    /// The window's own content was clicked: give it back the keyboard if the page had it. On
+    /// macOS the native view's focus handle already does this.
+    pub fn release_keyboard(&self) {
+        #[cfg(target_os = "linux")]
+        self.embedding.release_keyboard();
     }
 }
 
 impl Render for WebPane {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(self.view.clone())
+        div().size_full().child(self.embedding.element())
+    }
+}
+
+/// Open `url` in the default browser.
+fn open_in_browser(url: &str) {
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "linux")]
+    let mut command = linux::browser_command();
+    if let Err(error) = command.arg(url).spawn() {
+        log::warn!("open {url}: {error}");
     }
 }
 

@@ -60,12 +60,20 @@ impl Net {
                 RUNTIME.get_or_init(|| runtime)
             }
         };
-        // The platform TLS stack trusts the Caddy local CA that `caddy trust` added to the keychain.
-        let http = reqwest::Client::builder()
+        // The platform TLS stack trusts the Caddy local CA once `caddy trust` added it to the
+        // keychain; on Linux nothing adds it to the system store, so it is trusted here as well.
+        let mut http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .user_agent(concat!("devflow-desktop/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .context("build the HTTP client")?;
+            // Linux hands the stack's own certificates to the webview (ui/web/linux.rs).
+            .tls_info(cfg!(target_os = "linux"));
+        if let Some(path) = &config.ca_file {
+            let pem = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+            let ca = reqwest::Certificate::from_pem(&pem)
+                .with_context(|| format!("{} is not a PEM certificate", path.display()))?;
+            http = http.add_root_certificate(ca);
+        }
+        let http = http.build().context("build the HTTP client")?;
         Ok(Arc::new(Self {
             runtime,
             http,
@@ -89,6 +97,24 @@ impl Net {
         F::Output: Send + 'static,
     {
         self.runtime.spawn(future)
+    }
+
+    /// The DER certificate `origin` presents, which the HTTP client has verified.
+    #[cfg(target_os = "linux")]
+    pub async fn peer_certificate(&self, origin: &url::Url) -> Result<Vec<u8>> {
+        let response = self
+            .http
+            .head(origin.clone())
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+            .with_context(|| format!("reach {origin}"))?;
+        response
+            .extensions()
+            .get::<reqwest::tls::TlsInfo>()
+            .and_then(|info| info.peer_certificate())
+            .map(<[u8]>::to_vec)
+            .with_context(|| format!("{origin} presented no certificate"))
     }
 
     /// The current session, signing in again when the token is missing or close to expiry.

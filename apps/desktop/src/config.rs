@@ -1,5 +1,6 @@
-//! Where the running devflow stack is. `bun run devflow desktop` passes the origins it serves;
-//! without them the defaults match `devflow up` (stack id `devflow`, Caddy on port 47443).
+//! Where the running devflow stack is. `bun run devflow desktop` passes the origins it serves and
+//! the CA that signs their certificates; without them the defaults match `devflow up` (stack id
+//! `devflow`, Caddy on port 47443, Caddy's own data directory).
 
 use std::path::PathBuf;
 
@@ -16,6 +17,9 @@ pub struct StackConfig {
     pub sync: Url,
     /// The web UI the webview pane loads.
     pub app: Url,
+    /// Caddy's local root CA, which signs the stack's certificates, when it exists. Trusted on top
+    /// of the platform's store: on Linux `devflow trust` only adds it to browser NSS databases.
+    pub ca_file: Option<PathBuf>,
 }
 
 impl StackConfig {
@@ -30,6 +34,10 @@ impl StackConfig {
             api: origin("DEVFLOW_API_ORIGIN", "api")?,
             sync: origin("DEVFLOW_SYNC_ORIGIN", "sync")?,
             app: origin("DEVFLOW_APP_ORIGIN", "app")?,
+            ca_file: std::env::var_os("DEVFLOW_CA_FILE")
+                .map(PathBuf::from)
+                .or_else(caddy_root_ca)
+                .filter(|path| path.is_file()),
         })
     }
 
@@ -57,4 +65,21 @@ fn saved_https_port() -> Option<u16> {
         .get("httpsPort")?
         .as_u64()
         .and_then(|port| u16::try_from(port).ok())
+}
+
+/// Where Caddy keeps its local CA root (apps/launcher/src/devflow.ts `caddyDataDir`):
+/// $XDG_DATA_HOME/caddy, else the platform's data directory.
+fn caddy_root_ca() -> Option<PathBuf> {
+    let data = match std::env::var_os("XDG_DATA_HOME") {
+        Some(data) => PathBuf::from(data).join("caddy"),
+        None => {
+            let home = PathBuf::from(std::env::var_os("HOME")?);
+            if cfg!(target_os = "macos") {
+                home.join("Library/Application Support/Caddy")
+            } else {
+                home.join(".local/share/caddy")
+            }
+        }
+    };
+    Some(data.join("pki/authorities/local/root.crt"))
 }
