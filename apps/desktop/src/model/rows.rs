@@ -109,7 +109,9 @@ impl Table {
     }
 }
 
-pub const BUSY_STATUSES: [&str; 6] = [
+/// minimalist/lib/status.ts `isBusy`: the running statuses, plus waiting out a usage limit.
+pub const BUSY_STATUSES: [&str; 7] = [
+    "waiting_for_usage_limit",
     "running",
     "launching",
     "resuming",

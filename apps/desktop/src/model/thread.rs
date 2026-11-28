@@ -23,9 +23,18 @@ impl LiveBlock {
     }
 }
 
+/// What one stream entry added to the materialized state.
+enum StreamKey {
+    Event(String),
+    Block(String),
+    Delta(String, i64),
+}
+
 #[derive(Default)]
 pub struct SessionStream {
     events: HashMap<String, EventRow>,
+    /// What each stream key added, so a key-only delete can remove it.
+    keys: HashMap<String, StreamKey>,
     /// When each event id first arrived: the stream's own order, which breaks timestamp ties.
     arrival: HashMap<String, u64>,
     live: HashMap<String, LiveBlock>,
@@ -67,6 +76,15 @@ impl SessionStream {
                 .pointer("/headers/operation")
                 .and_then(Value::as_str)
                 .unwrap_or("insert");
+            let key = item.get("key").and_then(Value::as_str);
+            // Deletes carry only the key: the producer drops interrupted or unmatched live text
+            // this way (deleteUnmaterializedBlocks).
+            if operation == "delete" {
+                if let Some(entry) = key.and_then(|key| self.keys.remove(key)) {
+                    self.forget(entry);
+                }
+                continue;
+            }
             let Some(value) = item.get("value").and_then(Value::as_object) else {
                 continue;
             };
@@ -76,14 +94,14 @@ impl SessionStream {
                     let Some(row) = EventRow::from_stream_value(value) else {
                         continue;
                     };
-                    if operation == "delete" {
-                        self.events.remove(&row.id);
-                    } else {
-                        // A saved event replaces the text streamed for it.
-                        self.live.remove(&row.id);
-                        self.arrive(&row.id);
-                        self.events.insert(row.id.clone(), row);
+                    // A saved event replaces the text streamed for it.
+                    self.live.remove(&row.id);
+                    self.arrive(&row.id);
+                    if let Some(key) = key {
+                        self.keys
+                            .insert(key.to_owned(), StreamKey::Event(row.id.clone()));
                     }
+                    self.events.insert(row.id.clone(), row);
                     self.events_revision += 1;
                 }
                 "text_block_start" | "thinking_block_start" | "text_delta" | "thinking_delta" => {
@@ -103,10 +121,16 @@ impl SessionStream {
                         thinking: kind.starts_with("thinking"),
                         deltas: BTreeMap::new(),
                     });
-                    if kind.ends_with("_delta") {
+                    let entry = if kind.ends_with("_delta") {
                         let seq = value.get("delta_seq").and_then(Value::as_i64).unwrap_or(0);
                         let content = value.get("content").and_then(Value::as_str).unwrap_or("");
                         block.deltas.insert(seq, content.to_owned());
+                        StreamKey::Delta(id.to_owned(), seq)
+                    } else {
+                        StreamKey::Block(id.to_owned())
+                    };
+                    if let Some(key) = key {
+                        self.keys.insert(key.to_owned(), entry);
                     }
                 }
                 _ => {}
@@ -132,6 +156,25 @@ impl SessionStream {
         }
     }
 
+    /// Undo what a deleted stream key added.
+    fn forget(&mut self, entry: StreamKey) {
+        match entry {
+            StreamKey::Event(id) => {
+                if self.events.remove(&id).is_some() {
+                    self.events_revision += 1;
+                }
+            }
+            StreamKey::Block(id) => {
+                self.live.remove(&id);
+            }
+            StreamKey::Delta(id, seq) => {
+                if let Some(block) = self.live.get_mut(&id) {
+                    block.deltas.remove(&seq);
+                }
+            }
+        }
+    }
+
     fn arrive(&mut self, id: &str) {
         let next = self.arrival.len() as u64;
         self.arrival.entry(id.to_owned()).or_insert(next);
@@ -140,11 +183,12 @@ impl SessionStream {
     /// Turns from the saved events, given in arrival order: build_turns sorts by time and keeps
     /// that order for events saved in the same millisecond.
     pub fn turns(&self) -> Vec<Turn> {
-        let mut rows: Vec<EventRow> = self.events.values().cloned().collect();
+        // Borrowed rows: only the turns built from them own copies of the text.
+        let mut rows: Vec<&EventRow> = self.events.values().collect();
         rows.sort_by_key(|row| {
             (
                 self.arrival.get(&row.id).copied().unwrap_or(u64::MAX),
-                row.id.clone(),
+                &row.id,
             )
         });
         build_turns(&rows)
@@ -266,5 +310,17 @@ mod tests {
                 matches!(&turns[1], Turn::Agent(agent) if agent.answer.as_deref() == Some("final"))
             );
         }
+    }
+
+    #[test]
+    fn key_only_deletes_drop_discarded_live_text() {
+        let mut stream = SessionStream::default();
+        stream.apply(&[delta("a1", 0, "half an ans")]);
+        assert_eq!(stream.live_text().len(), 1);
+        // delta() keys its entries `d-<id>-<seq>`; the producer deletes by key, without a value.
+        stream.apply(&[json!({
+            "type": "text_delta", "key": "d-a1-0", "headers": { "operation": "delete" }
+        })]);
+        assert!(stream.live_text().is_empty());
     }
 }

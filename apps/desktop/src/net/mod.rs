@@ -19,8 +19,12 @@ use crate::config::StackConfig;
 /// Refresh the access token this long before it expires (local-authkit.tsx does the same).
 const REFRESH_MARGIN_MS: i64 = 5 * 60 * 1000;
 
+/// The network runtime lives for the whole process. Tasks on it hold `Arc<Net>`, so if `Net`
+/// owned the runtime, the last task to finish could drop it from inside itself, which panics.
+static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+
 pub struct Net {
-    runtime: tokio::runtime::Runtime,
+    runtime: &'static tokio::runtime::Runtime,
     http: reqwest::Client,
     config: StackConfig,
     auth: Mutex<Option<AuthSession>>,
@@ -44,12 +48,18 @@ pub fn now_ms() -> i64 {
 
 impl Net {
     pub fn new(config: StackConfig) -> Result<Arc<Self>> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("devflow-net")
-            .enable_all()
-            .build()
-            .context("start the network runtime")?;
+        let runtime = match RUNTIME.get() {
+            Some(runtime) => runtime,
+            None => {
+                let runtime = tokio::runtime::Builder::new_multi_thread()
+                    .worker_threads(2)
+                    .thread_name("devflow-net")
+                    .enable_all()
+                    .build()
+                    .context("start the network runtime")?;
+                RUNTIME.get_or_init(|| runtime)
+            }
+        };
         // The platform TLS stack trusts the Caddy local CA that `caddy trust` added to the keychain.
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))

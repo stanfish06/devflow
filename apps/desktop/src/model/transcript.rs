@@ -299,8 +299,8 @@ pub fn normalize_tool_name(name: &str) -> String {
 
 /// Fold a session's events into turns. A user message opens a turn; everything the agent does
 /// until the next user message is one agent turn whose final assistant message is its answer.
-pub fn build_turns(rows: &[EventRow]) -> Vec<Turn> {
-    let mut sorted: Vec<&EventRow> = rows.iter().collect();
+pub fn build_turns(rows: &[&EventRow]) -> Vec<Turn> {
+    let mut sorted: Vec<&EventRow> = rows.to_vec();
     // Stable: events saved in the same millisecond keep the order they were given in.
     sorted.sort_by_key(|row| row.created_at);
 

@@ -102,7 +102,10 @@ fn bridge_script() -> String {
     // native view steps aside and the web thread shows under the popup instead.
     // Cards the web draws at the end of its transcript (NextStepCard, WorkspaceSetup) have no native
     // counterpart, so the web transcript shows while one is there.
+    // A modal dialog (Menu.tsx uses showModal()) has a full-window backdrop, so it covers the area
+    // wherever its own box is.
     const covered = target !== null && (target.querySelector(webCards) !== null ||
+      document.querySelector('dialog:modal') !== null ||
       [...document.querySelectorAll(overlays)].some((el) => {{
       const box = el.getBoundingClientRect();
       return box.width > 0 && box.height > 0 && box.left < rect.right && box.right > rect.left &&

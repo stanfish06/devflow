@@ -108,6 +108,9 @@ fn rule_text(suggestions: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Tries per saved-rows fetch, with network backoff between them.
+const SAVED_FETCH_ATTEMPTS: u32 = 5;
+
 pub struct ThreadView {
     /// Draw the titlebar and dock (composer, approvals, queue). Off inside the web app, where the
     /// page draws those and this view covers only the transcript.
@@ -116,7 +119,7 @@ pub struct ThreadView {
     store: Entity<Store>,
     net: Arc<Net>,
     stream: SessionStream,
-    turns: Vec<Turn>,
+    turns: Vec<Rc<Turn>>,
     turns_revision: u64,
     rows: Rc<Vec<ThreadRow>>,
     row_marks: Vec<(String, u64)>,
@@ -137,6 +140,8 @@ pub struct ThreadView {
     _stream: Task<()>,
     /// The session's (status, activity) when saved rows were last fetched.
     saved_mark: Option<(String, i64)>,
+    /// The mark a fetch is under way for, so store changes don't start it again.
+    fetching_mark: Option<(String, i64)>,
     _saved: Task<()>,
     _request: Task<()>,
     _ticker: Task<()>,
@@ -209,6 +214,7 @@ impl ThreadView {
             sending: false,
             _stream: Task::ready(()),
             saved_mark: None,
+            fetching_mark: None,
             _saved: Task::ready(()),
             _request: Task::ready(()),
             _ticker: ticker,
@@ -227,11 +233,8 @@ impl ThreadView {
 
     fn on_store_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A follow-up moves the session to running and back, so a changed row means new saved rows.
-        let mark = self
-            .session(cx)
-            .map(|session| (session.status.clone(), session.activity_at));
-        if mark.is_some() && mark != self.saved_mark {
-            self.saved_mark = mark;
+        let mark = self.session_mark(cx);
+        if mark.is_some() && mark != self.saved_mark && mark != self.fetching_mark {
             self.fetch_saved(cx);
         }
         // Take keyboard focus for a new card unless the reader is partway through a message.
@@ -307,49 +310,72 @@ impl ThreadView {
 
     /// Fetch the session's saved rows and merge in the ones the stream lacks (follow-up messages).
     fn fetch_saved(&mut self, cx: &mut Context<Self>) {
+        let mark = self.session_mark(cx);
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
+        self.fetching_mark = mark.clone();
         let net = self.net.clone();
-        let request = net.spawn({
-            let net = net.clone();
-            async move {
-                let input = json!({
-                    "where": {
-                        "type": "comparison",
-                        "field": ["session_id"],
-                        "operator": "eq",
-                        "value": session_id,
-                    },
-                });
-                rpc::call::<_, Value>(&net, "sync/v2/conversationEvents", &input).await
-            }
-        });
         self._saved = cx.spawn(async move |this, cx| {
-            let output = match request.await {
-                Ok(Ok(output)) => output,
-                Ok(Err(error)) => return log::warn!("saved events: {error}"),
-                Err(error) => return log::warn!("saved events task: {error}"),
-            };
-            let rows: Vec<EventRow> = output
-                .get("rows")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-                .filter_map(EventRow::from_saved_row)
-                .collect();
+            let input = json!({
+                "where": {
+                    "type": "comparison",
+                    "field": ["session_id"],
+                    "operator": "eq",
+                    "value": session_id,
+                },
+            });
+            let mut output = None;
+            for attempt in 0..SAVED_FETCH_ATTEMPTS {
+                let request = net.spawn({
+                    let (net, input) = (net.clone(), input.clone());
+                    async move {
+                        rpc::call::<_, Value>(&net, "sync/v2/conversationEvents", &input).await
+                    }
+                });
+                match request.await {
+                    Ok(Ok(value)) => {
+                        output = Some(value);
+                        break;
+                    }
+                    Ok(Err(error)) => log::warn!("saved events: {error}"),
+                    Err(error) => log::warn!("saved events task: {error}"),
+                }
+                cx.background_executor()
+                    .timer(crate::net::backoff(attempt))
+                    .await;
+            }
             let _ = this.update(cx, |this, cx| {
+                this.fetching_mark = None;
+                // Out of attempts: the next change to the session row tries again.
+                let Some(output) = output else {
+                    return;
+                };
+                let rows: Vec<EventRow> = output
+                    .get("rows")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_object)
+                    .filter_map(EventRow::from_saved_row)
+                    .collect();
+                this.saved_mark = mark;
                 this.stream.merge_saved(rows);
                 this.rebuild_rows(cx);
             });
         });
     }
 
+    /// The session row's (status, activity): it changes whenever the session gains saved rows.
+    fn session_mark(&self, cx: &App) -> Option<(String, i64)> {
+        self.session(cx)
+            .map(|session| (session.status.clone(), session.activity_at))
+    }
+
     /// Recompute the rows and tell the virtual list which ones moved or changed.
     fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
         if self.turns_revision != self.stream.events_revision() {
-            self.turns = self.stream.turns();
+            self.turns = self.stream.turns().into_iter().map(Rc::new).collect();
             self.turns_revision = self.stream.events_revision();
         }
         let session = self.session(cx);
@@ -360,13 +386,13 @@ impl ThreadView {
         let current = self
             .turns
             .iter()
-            .rposition(|turn| !matches!(turn, Turn::Notice { .. }));
+            .rposition(|turn| !matches!(turn.as_ref(), Turn::Notice { .. }));
         let mut rows: Vec<ThreadRow> = self
             .turns
             .iter()
             .enumerate()
             .map(|(index, turn)| ThreadRow::Turn {
-                turn: turn.clone(),
+                turn: Rc::clone(turn),
                 live: running && Some(index) == current,
             })
             .collect();
@@ -381,7 +407,7 @@ impl ThreadView {
             rows.push(ThreadRow::Streaming);
         } else if running
             && !matches!(
-                current.map(|index| &self.turns[index]),
+                current.map(|index| self.turns[index].as_ref()),
                 Some(Turn::Agent(_))
             )
         {
@@ -398,9 +424,13 @@ impl ThreadView {
             self.streamed = streamed;
         }
 
+        // The streaming row grows as text arrives; its length makes the list remeasure it.
         let marks: Vec<(String, u64)> = rows
             .iter()
-            .map(|row| (row.key(), fingerprint(row)))
+            .map(|row| match row {
+                ThreadRow::Streaming => (row.key(), self.streamed.len() as u64),
+                _ => (row.key(), fingerprint(row)),
+            })
             .collect();
         let old = std::mem::take(&mut self.row_marks);
         let common = old
@@ -1027,7 +1057,7 @@ fn fingerprint(row: &ThreadRow) -> u64 {
     match row {
         ThreadRow::Turn { turn, live } => {
             live.hash(&mut hasher);
-            match turn {
+            match turn.as_ref() {
                 Turn::User { text, .. } | Turn::Notice { text, .. } => text.len().hash(&mut hasher),
                 Turn::Compaction { .. } => {}
                 Turn::Agent(agent) => {

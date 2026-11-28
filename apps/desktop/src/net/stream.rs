@@ -121,20 +121,24 @@ pub fn subscribe_session(
     receiver
 }
 
+/// Longest a catch-up read may take, request through body.
+const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest an SSE connection may stay silent. The server ends it about once a minute, so a
+/// connection quiet for twice that is stalled.
+const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+
 async fn authorized_get(
     net: &Net,
     url: &url::Url,
     query: &[(&str, &str)],
+    timeout: Option<Duration>,
 ) -> Result<reqwest::Response, String> {
     let token = net.token().await.map_err(|e| format!("{e:#}"))?;
-    let response = net
-        .http()
-        .get(url.clone())
-        .query(query)
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut request = net.http().get(url.clone()).query(query).bearer_auth(token);
+    if let Some(timeout) = timeout {
+        request = request.timeout(timeout);
+    }
+    let response = request.send().await.map_err(|e| e.to_string())?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
         net.invalidate_token().await;
         return Err("token rejected".into());
@@ -150,7 +154,14 @@ async fn read_catch_up(
     caught_up: &mut bool,
     sender: &async_channel::Sender<StreamUpdate>,
 ) -> Read {
-    let response = match authorized_get(net, url, &[("offset", offset.as_str())]).await {
+    let response = match authorized_get(
+        net,
+        url,
+        &[("offset", offset.as_str())],
+        Some(CATCH_UP_TIMEOUT),
+    )
+    .await
+    {
         Ok(response) => response,
         Err(error) => return Read::Failed(error),
     };
@@ -204,11 +215,22 @@ async fn read_sse(
     offset: &mut String,
     sender: &async_channel::Sender<StreamUpdate>,
 ) -> Read {
-    let response =
-        match authorized_get(net, url, &[("offset", offset.as_str()), ("live", "sse")]).await {
-            Ok(response) => response,
-            Err(error) => return Read::Failed(error),
-        };
+    // Headers must arrive within the idle window too.
+    let response = match tokio::time::timeout(
+        SSE_IDLE_TIMEOUT,
+        authorized_get(
+            net,
+            url,
+            &[("offset", offset.as_str()), ("live", "sse")],
+            None,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(response)) => response,
+        Ok(Err(error)) => return Read::Failed(error),
+        Err(_) => return Read::Failed("SSE connection stalled before headers".into()),
+    };
     match response.status().as_u16() {
         200 => {}
         404 | 410 => return Read::Restart,
@@ -216,10 +238,12 @@ async fn read_sse(
     }
     let mut parser = SseParser::default();
     let mut body = response.bytes_stream();
-    while let Some(chunk) = body.next().await {
-        let chunk = match chunk {
-            Ok(chunk) => chunk,
-            Err(error) => return Read::Failed(error.to_string()),
+    loop {
+        let chunk = match tokio::time::timeout(SSE_IDLE_TIMEOUT, body.next()).await {
+            Ok(Some(Ok(chunk))) => chunk,
+            Ok(Some(Err(error))) => return Read::Failed(error.to_string()),
+            Ok(None) => break,
+            Err(_) => return Read::Failed("SSE connection idle too long".into()),
         };
         for event in parser.push(&chunk) {
             match event.event.as_str() {

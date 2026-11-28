@@ -24,7 +24,8 @@ use crate::ui::thread::ThreadView;
 #[derive(Clone, Debug, PartialEq)]
 pub enum ThreadRow {
     Turn {
-        turn: Turn,
+        /// Shared with the thread's turn list: rebuilding rows doesn't copy the transcript.
+        turn: Rc<Turn>,
         live: bool,
     },
     /// Text the agent is streaming, before it is saved as an event.
@@ -112,60 +113,51 @@ fn turn_actions(
 pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let body: AnyElement = match row {
-        ThreadRow::Turn {
-            turn:
-                Turn::User {
-                    id,
-                    text,
-                    author,
-                    at,
-                },
-            ..
-        } => {
-            // `.turn-user` > `.msg` > `.bubble`: the message as typed, not rendered as markdown.
-            let group = SharedString::from(format!("turn-{id}"));
-            let stamp = match author {
-                Some(author) => format!("{author} · {}", format_clock(*at)),
-                None => format_clock(*at),
-            };
-            h_flex()
-                .group(group.clone())
-                .w_full()
-                .justify_end()
-                .pt(css(22.))
-                .pb(css(18.))
-                .child(
-                    v_flex()
-                        .max_w(relative(0.76))
-                        .items_end()
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("user-{id}")))
-                                .px(css(14.))
-                                .py(css(9.))
-                                .rounded(css(16.))
-                                .bg(theme.secondary)
-                                .text_size(css(13.))
-                                .line_height(relative(1.5))
-                                .whitespace_normal()
-                                .child(text.clone()),
-                        )
-                        .child(turn_actions(group, id.clone(), text.clone(), stamp, cx)),
-                )
-                .into_any_element()
-        }
-        ThreadRow::Turn {
-            turn: Turn::Compaction { .. },
-            ..
-        } => divider("Earlier messages summarized to save context", cx).into_any_element(),
-        ThreadRow::Turn {
-            turn: Turn::Notice { text, .. },
-            ..
-        } => divider(text.clone(), cx).into_any_element(),
-        ThreadRow::Turn {
-            turn: Turn::Agent(turn),
-            live,
-        } => agent_turn(turn, *live, context, cx).into_any_element(),
+        ThreadRow::Turn { turn, live } => match turn.as_ref() {
+            Turn::User {
+                id,
+                text,
+                author,
+                at,
+            } => {
+                // `.turn-user` > `.msg` > `.bubble`: the message as typed, not rendered as markdown.
+                let group = SharedString::from(format!("turn-{id}"));
+                let stamp = match author {
+                    Some(author) => format!("{author} · {}", format_clock(*at)),
+                    None => format_clock(*at),
+                };
+                h_flex()
+                    .group(group.clone())
+                    .w_full()
+                    .justify_end()
+                    .pt(css(22.))
+                    .pb(css(18.))
+                    .child(
+                        v_flex()
+                            .max_w(relative(0.76))
+                            .items_end()
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!("user-{id}")))
+                                    .px(css(14.))
+                                    .py(css(9.))
+                                    .rounded(css(16.))
+                                    .bg(theme.secondary)
+                                    .text_size(css(13.))
+                                    .line_height(relative(1.5))
+                                    .whitespace_normal()
+                                    .child(text.clone()),
+                            )
+                            .child(turn_actions(group, id.clone(), text.clone(), stamp, cx)),
+                    )
+                    .into_any_element()
+            }
+            Turn::Compaction { .. } => {
+                divider("Earlier messages summarized to save context", cx).into_any_element()
+            }
+            Turn::Notice { text, .. } => divider(text.clone(), cx).into_any_element(),
+            Turn::Agent(turn) => agent_turn(turn, *live, context, cx).into_any_element(),
+        },
         ThreadRow::Streaming => div()
             .py_2()
             .child(
