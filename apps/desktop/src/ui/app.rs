@@ -79,7 +79,12 @@ impl AppView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let web = cx.new(|cx| WebPane::new(config.app.clone(), window, cx));
+        // A deep link is the webview's first URL; the page's own router takes it from there.
+        let start = initial
+            .as_deref()
+            .and_then(|path| config.app.join(path).ok())
+            .unwrap_or_else(|| config.app.clone());
+        let web = cx.new(|cx| WebPane::new(start, window, cx));
         // The page binds ⌘ plus a digit (⌘0 included) to recent tasks; zoom keys win, as in a browser.
         web.read(cx).reserve_action::<ZoomIn>();
         web.read(cx).reserve_action::<ZoomOut>();
@@ -99,9 +104,6 @@ impl AppView {
             }),
         ];
         Theme::sync_system_appearance(Some(window), cx);
-        if let Some(path) = initial {
-            web.update(cx, |web, _| web.navigate(&path));
-        }
         let zoom = zoom_file()
             .and_then(|path| std::fs::read_to_string(path).ok())
             .and_then(|text| text.trim().parse::<f32>().ok())

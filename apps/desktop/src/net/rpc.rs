@@ -35,6 +35,9 @@ impl RpcError {
     }
 }
 
+/// Longest an RPC may take, connection through response body.
+const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn call<I, O>(net: &Net, path: &str, input: &I) -> Result<O, RpcError>
 where
     I: Serialize + ?Sized,
@@ -49,6 +52,8 @@ where
             .post(url.clone())
             .bearer_auth(token)
             .json(input)
+            // Connection through response body: a stalled API must not leave a send pending.
+            .timeout(RPC_TIMEOUT)
             .send()
             .await
             .map_err(RpcError::transport)?;

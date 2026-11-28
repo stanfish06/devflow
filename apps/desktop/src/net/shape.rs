@@ -91,7 +91,6 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
                 failures += 1;
                 continue;
             }
-            failures = 0;
             let header = |name: &str| {
                 response
                     .headers()
@@ -99,28 +98,42 @@ pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<
                     .and_then(|v| v.to_str().ok())
                     .map(str::to_owned)
             };
-            if let Some(next) = header("electric-offset") {
-                offset = next;
-            }
-            if let Some(next) = header("electric-handle") {
-                handle = Some(next);
-            }
-            if let Some(next) = header("electric-cursor") {
-                cursor = Some(next);
-            }
+            // The new position is committed only once its rows are decoded, so a body that fails
+            // to arrive or parse is fetched again from the old offset.
+            let (next_offset, next_handle, next_cursor) = (
+                header("electric-offset"),
+                header("electric-handle"),
+                header("electric-cursor"),
+            );
             let header_up_to_date = response.headers().contains_key("electric-up-to-date");
-            let body = match response.bytes().await {
-                Ok(body) => body,
+            let messages: Vec<Value> = match response.bytes().await {
+                Ok(body) if body.is_empty() => Vec::new(),
+                Ok(body) => match serde_json::from_slice(&body) {
+                    Ok(messages) => messages,
+                    Err(error) => {
+                        log::warn!("shape {route}: undecodable body: {error}");
+                        tokio::time::sleep(backoff(failures)).await;
+                        failures += 1;
+                        continue;
+                    }
+                },
                 Err(error) => {
                     log::warn!("shape {route}: {error}");
+                    tokio::time::sleep(backoff(failures)).await;
+                    failures += 1;
                     continue;
                 }
             };
-            let messages: Vec<Value> = if body.is_empty() {
-                Vec::new()
-            } else {
-                serde_json::from_slice(&body).unwrap_or_default()
-            };
+            failures = 0;
+            if let Some(next) = next_offset {
+                offset = next;
+            }
+            if let Some(next) = next_handle {
+                handle = Some(next);
+            }
+            if let Some(next) = next_cursor {
+                cursor = Some(next);
+            }
             let (updates, must_refetch, up_to_date) = translate(messages);
             if must_refetch {
                 (offset, handle, cursor, live) = (String::from("-1"), None, None, false);

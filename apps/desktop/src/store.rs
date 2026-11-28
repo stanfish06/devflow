@@ -105,11 +105,11 @@ impl Store {
         let mut approvals: Vec<Approval> = self
             .approvals
             .rows()
-            .filter_map(Approval::from_row)
-            .filter(|approval| {
-                approval.session_id == session_id
-                    && approval.status == Some(crate::model::transcript::ApprovalStatus::Pending)
+            // Match on the raw text first; parsing tool input and suggestions is the costly part.
+            .filter(|row| {
+                row.str("session_id") == Some(session_id) && row.str("status") == Some("pending")
             })
+            .filter_map(Approval::from_row)
             .collect();
         approvals.sort_by_key(|approval| approval.created_at);
         approvals
@@ -119,8 +119,10 @@ impl Store {
         let mut messages: Vec<QueuedMessage> = self
             .queued
             .rows()
+            .filter(|row| {
+                row.str("session_id") == Some(session_id) && row.str("status") == Some("pending")
+            })
             .filter_map(QueuedMessage::from_row)
-            .filter(|message| message.session_id == session_id && message.pending)
             .collect();
         messages.sort_by_key(|message| message.created_at);
         messages

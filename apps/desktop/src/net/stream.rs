@@ -63,7 +63,14 @@ pub fn subscribe_session(
 ) -> async_channel::Receiver<StreamUpdate> {
     let (sender, receiver) = async_channel::unbounded();
     let runner = net.clone();
-    runner.spawn(async move {
+    // Dropping the receiver (closing the thread) ends the worker, even mid-read or mid-retry.
+    let watch = sender.clone();
+    let closed = async move {
+        while !watch.is_closed() {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+    };
+    let worker = async move {
         let url = StackConfig::join(
             &net.config().sync,
             &format!("/streams/sessions/{session_id}"),
@@ -103,6 +110,12 @@ pub fn subscribe_session(
                     }
                 }
             }
+        }
+    };
+    runner.spawn(async move {
+        tokio::select! {
+            () = worker => {}
+            () = closed => {}
         }
     });
     receiver
@@ -160,10 +173,14 @@ async fn read_catch_up(
         Ok(body) => body,
         Err(error) => return Read::Failed(error.to_string()),
     };
+    // An undecodable body keeps the offset, so the same range is read again.
     let items: Vec<Value> = if body.is_empty() {
         Vec::new()
     } else {
-        serde_json::from_slice(&body).unwrap_or_default()
+        match serde_json::from_slice(&body) {
+            Ok(items) => items,
+            Err(error) => return Read::Failed(format!("undecodable catch-up body: {error}")),
+        }
     };
     if !items.is_empty() && sender.send(StreamUpdate::Items(items)).await.is_err() {
         return Read::Stop;
@@ -207,13 +224,25 @@ async fn read_sse(
         for event in parser.push(&chunk) {
             match event.event.as_str() {
                 "data" => {
-                    let items: Vec<Value> = serde_json::from_str(&event.data).unwrap_or_default();
+                    // The offset only moves with control events, so failing here re-reads from
+                    // the last one; events already applied are keyed by id.
+                    let items: Vec<Value> = match serde_json::from_str(&event.data) {
+                        Ok(items) => items,
+                        Err(error) => {
+                            return Read::Failed(format!("undecodable SSE data: {error}"));
+                        }
+                    };
                     if !items.is_empty() && sender.send(StreamUpdate::Items(items)).await.is_err() {
                         return Read::Stop;
                     }
                 }
                 "control" => {
-                    let control: Value = serde_json::from_str(&event.data).unwrap_or_default();
+                    let control: Value = match serde_json::from_str(&event.data) {
+                        Ok(control) => control,
+                        Err(error) => {
+                            return Read::Failed(format!("undecodable SSE control: {error}"));
+                        }
+                    };
                     if let Some(next) = control.get("streamNextOffset").and_then(Value::as_str) {
                         *offset = next.to_owned();
                     }

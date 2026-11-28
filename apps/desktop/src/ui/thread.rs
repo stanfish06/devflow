@@ -243,7 +243,11 @@ impl ThreadView {
         if pending_id != self.offered_approval {
             self.offered_approval = pending_id.clone();
             self.question = None;
-            if pending_id.is_some() && self.composer.read(cx).value().trim().is_empty() {
+            // Inside the web app the page draws the approval card and manages its focus.
+            if self.chrome
+                && pending_id.is_some()
+                && self.composer.read(cx).value().trim().is_empty()
+            {
                 window.focus(&self.ask_focus, cx);
             }
         }

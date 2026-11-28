@@ -33,7 +33,7 @@ PLIST
 
 # LaunchServices doesn't inherit the shell env; pass origins and log level explicitly.
 env_args=(--env "RUST_LOG=$RUST_LOG_LEVEL")
-for var in DEVFLOW_API_ORIGIN DEVFLOW_SYNC_ORIGIN DEVFLOW_APP_ORIGIN; do
+for var in DEVFLOW_HOME DEVFLOW_API_ORIGIN DEVFLOW_SYNC_ORIGIN DEVFLOW_APP_ORIGIN; do
   [[ -n "${!var:-}" ]] && env_args+=(--env "$var=${!var}")
 done
 open -n "${env_args[@]}" --stdout "$LOG" --stderr "$LOG" "$APP" --args "$@"

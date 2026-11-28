@@ -70,7 +70,7 @@ fn bridge_script() -> String {
     if (document.getElementById('{class}-style')) return;
     const element = document.createElement('style');
     element.id = '{class}-style';
-    element.textContent = 'main.{class} > * {{ visibility: hidden !important; }}';
+    element.textContent = '.{class} > * {{ visibility: hidden !important; }}';
     document.head.appendChild(element);
   }};
   // Which session the minimalist thread column shows: the session route's id, or on a task route
@@ -139,22 +139,18 @@ fn bridge_script() -> String {
   if (document.body) start(); else addEventListener('DOMContentLoaded', start);
   // Native code asks again after a page zoom change, which moves the area without a DOM change.
   window.__devflowReport = () => {{ last = ''; schedule(); }};
-  // Native code opens web routes through here (deep links, "open in web").
-  window.__devflowNavigate = (path) => {{
-    history.pushState(null, '', path);
-    dispatchEvent(new PopStateEvent('popstate', {{ state: null }}));
-  }};
 }})();"#,
         class = NATIVE_CLASS
     )
 }
 
 impl WebPane {
-    pub fn new(app_origin: url::Url, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `start` is the first page to load: the app's origin, or a deep link into it.
+    pub fn new(start: url::Url, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (sender, receiver) = async_channel::unbounded::<String>();
         let ipc_sender = sender.clone();
         let builder = wry::WebViewBuilder::new()
-            .with_url(app_origin.as_str())
+            .with_url(start.as_str())
             .with_initialization_script(bridge_script())
             .with_focused(true)
             .with_ipc_handler(move |request| {
@@ -243,17 +239,6 @@ impl WebPane {
             .evaluate_script("window.__devflowReport && window.__devflowReport()")
         {
             log::warn!("webview report: {error}");
-        }
-    }
-
-    /// Navigate the page in place, as a link inside the app would.
-    pub fn navigate(&mut self, path: &str) {
-        let script = format!(
-            "window.__devflowNavigate && window.__devflowNavigate({})",
-            serde_json::to_string(path).expect("a string serializes")
-        );
-        if let Err(error) = self.webview.evaluate_script(&script) {
-            log::warn!("webview navigate {path}: {error}");
         }
     }
 }

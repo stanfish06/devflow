@@ -91,9 +91,12 @@ impl Net {
             return Ok(session.clone());
         }
         let url = StackConfig::join(&self.config.api, "/devflow/auth/session");
+        // Bounds the whole exchange, body included: a stalled sign-in would hold the auth lock
+        // and block every request waiting for a token.
         let response = self
             .http
             .post(url.clone())
+            .timeout(AUTH_TIMEOUT)
             .send()
             .await
             .with_context(|| format!("reach the API at {url}"))?;
@@ -114,6 +117,9 @@ impl Net {
         self.auth.lock().await.take();
     }
 }
+
+/// Longest a sign-in may take, connection through response body.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Exponential backoff for reconnecting streams: 0.5 s doubling to 15 s.
 pub fn backoff(attempt: u32) -> Duration {

@@ -26,6 +26,8 @@ impl LiveBlock {
 #[derive(Default)]
 pub struct SessionStream {
     events: HashMap<String, EventRow>,
+    /// When each event id first arrived: the stream's own order, which breaks timestamp ties.
+    arrival: HashMap<String, u64>,
     live: HashMap<String, LiveBlock>,
     ready: bool,
     /// Bumped when saved events change, so views rebuild turns only then.
@@ -79,6 +81,7 @@ impl SessionStream {
                     } else {
                         // A saved event replaces the text streamed for it.
                         self.live.remove(&row.id);
+                        self.arrive(&row.id);
                         self.events.insert(row.id.clone(), row);
                     }
                     self.events_revision += 1;
@@ -120,6 +123,7 @@ impl SessionStream {
                 continue;
             }
             self.live.remove(&row.id);
+            self.arrive(&row.id);
             self.events.insert(row.id.clone(), row);
             changed = true;
         }
@@ -128,8 +132,21 @@ impl SessionStream {
         }
     }
 
+    fn arrive(&mut self, id: &str) {
+        let next = self.arrival.len() as u64;
+        self.arrival.entry(id.to_owned()).or_insert(next);
+    }
+
+    /// Turns from the saved events, given in arrival order: build_turns sorts by time and keeps
+    /// that order for events saved in the same millisecond.
     pub fn turns(&self) -> Vec<Turn> {
-        let rows: Vec<EventRow> = self.events.values().cloned().collect();
+        let mut rows: Vec<EventRow> = self.events.values().cloned().collect();
+        rows.sort_by_key(|row| {
+            (
+                self.arrival.get(&row.id).copied().unwrap_or(u64::MAX),
+                row.id.clone(),
+            )
+        });
         build_turns(&rows)
     }
 
@@ -232,5 +249,22 @@ mod tests {
         assert!(
             matches!(&turns[3], Turn::Agent(agent) if agent.answer.as_deref() == Some("listed"))
         );
+    }
+
+    #[test]
+    fn events_saved_in_the_same_millisecond_keep_stream_order() {
+        // Ids sort the other way, so only arrival order can pick the right answer.
+        for _ in 0..20 {
+            let mut stream = SessionStream::default();
+            stream.apply(&[
+                event("u1", "user", "message", "go", 1),
+                event("z-first", "assistant", "message", "draft", 5),
+                event("a-last", "assistant", "message", "final", 5),
+            ]);
+            let turns = stream.turns();
+            assert!(
+                matches!(&turns[1], Turn::Agent(agent) if agent.answer.as_deref() == Some("final"))
+            );
+        }
     }
 }
