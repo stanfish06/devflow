@@ -1,6 +1,6 @@
 //! The window: the web UI, with the native thread drawn over the web thread column.
 
-use gpui_kit::component::Theme;
+use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -17,6 +17,32 @@ const ZOOM_LEVELS: [f32; 15] = [
 /// gpui-kit's theme sizes at 100%: Root sets the window rem size from `font_size` each frame.
 const BASE_FONT_SIZE: f32 = 16.;
 const BASE_MONO_FONT_SIZE: f32 = 13.;
+
+/// Pin the app's appearance (window frame, and the webview's `prefers-color-scheme`) to `mode`,
+/// or let it follow the system with `None`, so a page set to system still sees the OS change.
+#[cfg(target_os = "macos")]
+fn set_app_appearance(mode: Option<ThemeMode>) {
+    use objc2_app_kit::{
+        NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
+    };
+    let Some(main_thread) = objc2::MainThreadMarker::new() else {
+        return;
+    };
+    // SAFETY: AppKit's appearance name constants, read on the main thread.
+    let appearance = mode.and_then(|mode| {
+        NSAppearance::appearanceNamed(unsafe {
+            if mode.is_dark() {
+                NSAppearanceNameDarkAqua
+            } else {
+                NSAppearanceNameAqua
+            }
+        })
+    });
+    NSApplication::sharedApplication(main_thread).setAppearance(appearance.as_deref());
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_app_appearance(_mode: Option<ThemeMode>) {}
 
 /// Where the zoom level is kept between launches.
 fn zoom_file() -> Option<std::path::PathBuf> {
@@ -69,6 +95,8 @@ pub struct AppView {
     _thread_events: Option<Subscription>,
     /// Page and native zoom; the page reports the transcript area in its own (zoomed) CSS pixels.
     zoom: f32,
+    /// The theme picked in the page; `None` (also before the page reports) follows the system.
+    page_theme: Option<ThemeMode>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -107,12 +135,24 @@ impl AppView {
                             thread.update(cx, |thread, cx| thread.scroll_to(*turn, offset, cx));
                         }
                     }
+                    WebEvent::Theme(mode) => {
+                        this.page_theme = *mode;
+                        set_app_appearance(*mode);
+                        match mode {
+                            Some(mode) => Theme::change(*mode, Some(window), cx),
+                            None => Theme::sync_system_appearance(Some(window), cx),
+                        }
+                        // A mode change reloads the theme's font sizes.
+                        this.apply_zoom(window, cx);
+                    }
                 },
             ),
-            // Native views follow the system's light or dark mode, as the web UI does.
+            // Native views follow the system's light or dark mode unless the page picked one.
             cx.observe_window_appearance(window, |this, window, cx| {
-                Theme::sync_system_appearance(Some(window), cx);
-                this.apply_zoom(window, cx);
+                if this.page_theme.is_none() {
+                    Theme::sync_system_appearance(Some(window), cx);
+                    this.apply_zoom(window, cx);
+                }
             }),
         ];
         Theme::sync_system_appearance(Some(window), cx);
@@ -126,6 +166,7 @@ impl AppView {
             thread: None,
             _thread_events: None,
             zoom,
+            page_theme: None,
             _subscriptions: subscriptions,
         };
         this.apply_zoom(window, cx);
