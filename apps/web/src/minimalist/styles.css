@@ -4477,6 +4477,15 @@
 		height: min(var(--task-sessions-h), 100cqh - 150px);
 		max-height: max-content;
 	}
+	/*
+	 * With the workflow graph the whole panel scrolls, so the lists take the height their rows need.
+	 * As a size container under the graph they shared only what was left, down to min-height, which
+	 * left the sessions list one row tall.
+	 */
+	.task-nav:has(.task-nav-graph) .task-nav-groups {
+		flex: none;
+		container-type: inline-size;
+	}
 	.task-nav-group {
 		position: relative;
 		display: flex;
