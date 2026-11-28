@@ -11,6 +11,7 @@
  *   bun run devflow up --port 48443   same, on 48443 and the ports shifted with it (kept for later commands)
  *   bun run devflow remote <ssh-host>  run an agent runner on another machine as a host of this server
  *   bun run devflow host     agent runner only (what `remote` starts on the other machine)
+ *   bun run devflow setup-vm build the base Lima VM for VM-sandbox tasks ahead of `up` (one-off)
  *   bun run devflow e2e      Playwright end-to-end tests against the running stack
  *   bun run devflow trust    trust Caddy's local CA in the browsers' NSS databases (also run by `up`)
  *   bun run devflow <other>  devflow's CLI against this stack, e.g. `bun run devflow api --help`
@@ -19,7 +20,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { generateKeyPairSync, randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -1029,6 +1030,30 @@ function vm(): void {
 	if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
+/**
+ * `setup-vm`: build the base VM every agent VM is cloned from (apps/agent-runner/src/devflow/setup-vm.ts):
+ * a ~1 GB Ubuntu image download plus provisioning, once per VM template. Otherwise the first VM task
+ * after `up` does it, and stopping `up` meanwhile throws the partial download away.
+ */
+function setupVm(): void {
+	requireTool('limactl')
+	// Two processes building the same base delete each other's unfinished instance.
+	// The daemon refreshes its lock every 5 s; one untouched for 30 s is stale.
+	const locks = join(homedir(), '.devflow', 'daemon-locks')
+	const daemonRunning =
+		existsSync(locks) &&
+		readdirSync(locks).some((entry) => Date.now() - statSync(join(locks, entry)).mtimeMs < 30_000)
+	if (daemonRunning) throw new Error('a devflow daemon is running; stop `bun run devflow up` first.')
+	// A limactl left behind by a stopped daemon may still be building the base.
+	const building = spawnSync('pgrep', ['-f', 'limactl.* (create|start) .*devflow-base-'], { encoding: 'utf8' })
+	const pids = building.stdout.trim().split('\n').filter(Boolean)
+	if (pids.length > 0)
+		throw new Error(
+			`limactl is already building a base VM (pid ${pids.join(', ')}); wait for it to exit or kill it.`,
+		)
+	run('bun', ['--bun', 'src/devflow/setup-vm.ts'], { DEVFLOW_HOME }, { cwd: join(REPO_ROOT, 'apps/agent-runner') })
+}
+
 /** `e2e`: Playwright tests in apps/e2e against the running stack (installed Chrome). */
 function e2e(): void {
 	const result = spawnSync('bun', ['x', 'playwright', 'test', ...process.argv.slice(3)], {
@@ -1089,6 +1114,7 @@ const commands: Record<string, () => void | Promise<void>> = {
 	desktop,
 	e2e,
 	setup,
+	'setup-vm': setupVm,
 	trust,
 	up,
 	down,

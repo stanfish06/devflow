@@ -328,6 +328,19 @@ describe('VmManager', () => {
 		])
 	})
 
+	it('builds the base without a session (setup-vm), then skips it and clones from it', async () => {
+		const { manager, lima } = setup()
+		expect(await manager.ensureBase()).toMatch(/^devflow-base-[0-9a-f]{10}$/)
+		expect(commands(lima.calls)).toEqual(['create', 'start', 'stop'])
+
+		lima.calls.length = 0
+		await manager.ensureBase()
+		expect(commands(lima.calls)).toEqual([])
+		const lease = await manager.acquire({ scope: 'task', taskId: TASK_ID, paths: [] })
+		expect(commands(lima.calls)).toEqual(['clone', 'start'])
+		lease.release()
+	})
+
 	it.each([
 		{ scope: 'task', resources: { cpus: 8, memoryGiB: 16 }, cpus: 8, memoryGiB: 16 },
 		{ scope: 'task', resources: { cpus: 6 }, cpus: 6, memoryGiB: 4 },
