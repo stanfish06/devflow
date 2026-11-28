@@ -23,7 +23,8 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { createInterface } from 'node:readline'
-import { getSystemErrorMap, stripVTControlCharacters } from 'node:util'
+import * as nodeUtil from 'node:util'
+import { stripVTControlCharacters } from 'node:util'
 
 import { requestedRpiSkill } from '@devflow/schemas/effect/session/rpi-skill-request'
 import { isSessionStatusAwaitingLaunch } from '@devflow/schemas/effect/session/session-status'
@@ -81,7 +82,11 @@ type RpcMessage = {
 
 // A shell wrapper can print its entire command, environment, or the session prompt. Only copy
 // recognized diagnostic phrases into session records; arbitrary child output stays private.
-const systemErrorPhrases = [...getSystemErrorMap().values()]
+// Bun 1.3.13, the nix dev shell's, has no util.getSystemErrorMap, and a named import of a missing
+// export fails the whole module. Read it from the namespace and fall back to the phrases below.
+const systemErrorMap: ReadonlyMap<number, [string, string]> =
+	typeof nodeUtil.getSystemErrorMap === 'function' ? nodeUtil.getSystemErrorMap() : new Map()
+const systemErrorPhrases = [...systemErrorMap.values()]
 	.flat()
 	.map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 const launchErrorPhrases = [
