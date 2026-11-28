@@ -163,7 +163,10 @@ impl AppView {
         match slot {
             None => self.thread = None,
             Some(slot) => match &mut self.thread {
-                Some((_, current)) if current.session_id == slot.session_id => *current = slot,
+                Some((thread, current)) if current.session_id == slot.session_id => {
+                    thread.update(cx, |thread, cx| thread.set_web_actions(slot.actions, cx));
+                    *current = slot;
+                }
                 _ => {
                     let session_id = slot.session_id.clone();
                     let thread = cx.new(|cx| ThreadView::new(session_id, window, cx));
@@ -174,8 +177,13 @@ impl AppView {
                             ThreadEvent::OpenAttachment { name, occurrence } => {
                                 this.web.read(cx).open_attachment(name, *occurrence)
                             }
+                            ThreadEvent::Review { card, path } => {
+                                this.web.read(cx).review(*card, path.as_deref())
+                            }
+                            ThreadEvent::Fork { turn } => this.web.read(cx).fork(*turn),
                         },
                     ));
+                    thread.update(cx, |thread, cx| thread.set_web_actions(slot.actions, cx));
                     self.thread = Some((thread, slot));
                 }
             },

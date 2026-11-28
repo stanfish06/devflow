@@ -19,7 +19,17 @@ pub struct ThreadSlot {
     pub session_id: String,
     /// A page popup overlaps the column, so the page shows its own thread there for now.
     pub covered: bool,
+    pub actions: WebActions,
     pub bounds: Bounds<Pixels>,
+}
+
+/// Transcript actions the page offers, which the native rows forward to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WebActions {
+    /// The edits card has Review (and file rows that open it).
+    pub reviewable: bool,
+    /// User turns after the first have "Fork from this message".
+    pub forkable: bool,
 }
 
 pub enum WebEvent {
@@ -45,6 +55,10 @@ enum BridgeMessage {
     Thread {
         session_id: Option<String>,
         covered: bool,
+        #[serde(default)]
+        reviewable: bool,
+        #[serde(default)]
+        forkable: bool,
         x: f32,
         y: f32,
         width: f32,
@@ -92,7 +106,13 @@ fn bridge_script() -> String {
   // .slash-menu is the composer's slash-command and @-mention list (minimalist Suggestions.tsx),
   // which opens upward over the transcript.
   const overlays = 'dialog[open], .toast, .slash-menu, [class$="-scrim"], [class*="-scrim "]';
-  const webCards = '.next-card, .next-row, .worked.setup';
+  const webCards = '.next-card, .next-row, .worked.setup, .doccard';
+  // Actions the native transcript can offer only if the page does: Review on the edits card
+  // (the task has a reviewable workspace) and Fork on user turns (Transcript.tsx `onFork`).
+  const actions = (area) => ({{
+    reviewable: area.querySelector('.diffcard.edits .review-link') !== null,
+    forkable: area.querySelector('.turn-user button[aria-label="Fork from this message"]') !== null,
+  }});
   let last = '';
   let marked = null;
   // The area shrinks when the composer grows a line, which changes only a textarea's `rows`.
@@ -131,7 +151,7 @@ fn bridge_script() -> String {
       marked = hide;
     }}
     const message = JSON.stringify(target
-      ? {{ type: 'thread', sessionId: id, covered, x: rect.x, y: rect.y, width: rect.width, height: rect.height }}
+      ? {{ type: 'thread', sessionId: id, covered, ...actions(target), x: rect.x, y: rect.y, width: rect.width, height: rect.height }}
       : {{ type: 'thread', sessionId: null, covered: false, x: 0, y: 0, width: 0, height: 0 }});
     if (message === last) return;
     last = message;
@@ -157,6 +177,18 @@ fn bridge_script() -> String {
   window.__devflowReport = () => {{ last = ''; schedule(); }};
   // The native transcript's attachment chips open the web transcript's own link (Transcript.tsx
   // SentFile), which carries the signed download URL.
+  // Edits card `card` (0-based among the transcript's edits cards): a file's row, else Review.
+  window.__devflowReview = (card, path) => {{
+    const element = document.querySelectorAll('.{class} .diffcard.edits')[card];
+    const row = path === null ? null :
+      [...(element?.querySelectorAll('button.ef') ?? [])].find((button) => button.title === path);
+    (row ?? element?.querySelector('.review-link'))?.click();
+  }};
+  // Fork from user turn `turn` (0-based among sent user turns).
+  window.__devflowFork = (turn) => {{
+    document.querySelectorAll('.{class} .turn-user:not(.outgoing)')[turn]
+      ?.querySelector('button[aria-label="Fork from this message"]')?.click();
+  }};
   window.__devflowOpenAttachment = (name, occurrence) => {{
     const links = document.querySelectorAll('.{class} a.sent-image, .{class} a.attachment');
     [...links].filter((link) => link.title === name)[occurrence]?.click();
@@ -222,6 +254,8 @@ impl WebPane {
                     Ok(BridgeMessage::Thread {
                         session_id,
                         covered,
+                        reviewable,
+                        forkable,
                         x,
                         y,
                         width,
@@ -232,6 +266,10 @@ impl WebPane {
                             .map(|session_id| ThreadSlot {
                                 session_id,
                                 covered,
+                                actions: WebActions {
+                                    reviewable,
+                                    forkable,
+                                },
                                 bounds: Bounds::new(
                                     point(px(x), px(y)),
                                     size(px(width), px(height)),
@@ -271,6 +309,27 @@ impl WebPane {
         // NativeView both retain it, and nothing else moves or resizes it.
         let view = unsafe { NativeView::new(pointer, window, cx) }?;
         Ok((webview, view))
+    }
+
+    /// Open Review from edits card `card`, at `path` when given.
+    pub fn review(&self, card: usize, path: Option<&str>) {
+        let path = serde_json::to_string(&path).expect("a path serializes");
+        self.run(&format!(
+            "window.__devflowReview && window.__devflowReview({card}, {path})"
+        ));
+    }
+
+    /// Fork from sent user turn `turn`.
+    pub fn fork(&self, turn: usize) {
+        self.run(&format!(
+            "window.__devflowFork && window.__devflowFork({turn})"
+        ));
+    }
+
+    fn run(&self, script: &str) {
+        if let Err(error) = self.webview.evaluate_script(script) {
+            log::warn!("webview script: {error}");
+        }
     }
 
     /// Open the `occurrence`-th attachment named `name` in the covered transcript, through the

@@ -1054,6 +1054,7 @@ function desktop(): void {
 		console.error('devflow desktop runs on macOS only')
 		process.exit(1)
 	}
+	requireTool('cargo')
 	const result = spawnSync('cargo', ['run', '-p', 'devflow-desktop', ...process.argv.slice(3)], {
 		cwd: REPO_ROOT,
 		env: {

@@ -328,3 +328,66 @@ pub fn latest_todos(steps: &[Step]) -> Vec<TodoItem> {
         })
         .collect()
 }
+
+/// minimalist/lib/tools.ts `FileEdits`: one repository file a turn changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileEdits {
+    pub path: String,
+    pub added: usize,
+    pub removed: usize,
+}
+
+/// A task document: the daemon syncs files under `.devflow/tasks/<slug>/` as artifacts
+/// (minimalist/lib/artifacts.ts `artifactPath`). They get document cards, not edit rows.
+static ARTIFACT_PATH: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"/\.devflow/tasks/[^/]+/.+$").unwrap());
+
+/// `turnWrites`, files part: each repository file a turn wrote, with lines added and removed,
+/// in first-write order. Failed or denied edits changed nothing and don't count.
+pub fn turn_file_writes(steps: &[Step]) -> Vec<FileEdits> {
+    let mut files: Vec<FileEdits> = Vec::new();
+    for step in steps {
+        let Step::Tool(tool) = step else { continue };
+        if !is_edit_tool(&tool.name) || tool.is_error {
+            continue;
+        }
+        let path = text_field(&tool.input, &["file_path", "path"]);
+        if ARTIFACT_PATH.is_match(&path) {
+            continue;
+        }
+        let (added, removed) = edit_counts(tool);
+        match files.iter_mut().find(|file| file.path == path) {
+            Some(file) => {
+                file.added += added;
+                file.removed += removed;
+            }
+            None => files.push(FileEdits {
+                path,
+                added,
+                removed,
+            }),
+        }
+    }
+    files
+}
+
+/// minimalist/lib/format.ts `commonDir`: the longest directory prefix (ending in `/`) of all paths.
+pub fn common_dir(paths: &[&str]) -> String {
+    let dirs: Vec<&str> = paths
+        .iter()
+        .map(|path| &path[..path.rfind('/').map_or(0, |at| at + 1)])
+        .collect();
+    let Some((first, rest)) = dirs.split_first() else {
+        return String::new();
+    };
+    let mut root = first.to_string();
+    for dir in rest {
+        while !dir.starts_with(&root) {
+            let cut = root[..root.len().saturating_sub(1)]
+                .rfind('/')
+                .map_or(0, |at| at + 1);
+            root.truncate(cut);
+        }
+    }
+    root
+}

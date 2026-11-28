@@ -61,7 +61,8 @@ pub fn subscribe_session(
     net: Arc<Net>,
     session_id: String,
 ) -> async_channel::Receiver<StreamUpdate> {
-    let (sender, receiver) = async_channel::unbounded();
+    // Bounded: a busy UI makes the reader wait instead of queueing decoded history without limit.
+    let (sender, receiver) = async_channel::bounded(STREAM_QUEUE);
     let runner = net.clone();
     // Dropping the receiver (closing the thread) ends the worker, even mid-read or mid-retry.
     let watch = sender.clone();
@@ -130,6 +131,9 @@ pub fn subscribe_session(
     });
     receiver
 }
+
+/// Updates the stream reader may get ahead of the UI by.
+const STREAM_QUEUE: usize = 64;
 
 /// Longest a catch-up read may take, request through body.
 const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(60);

@@ -23,12 +23,13 @@ use serde_json::{Value, json};
 use crate::model::format::{artifact_name, basename, split_attachments};
 use crate::model::rows::{Approval, Session};
 use crate::model::thread::SessionStream;
-use crate::model::tools::{is_edit_tool, text_field};
+use crate::model::tools::{is_edit_tool, text_field, turn_file_writes};
 use crate::model::transcript::{EventRow, ToolStep, Turn, normalize_tool_name};
 use crate::net::stream::{self, StreamUpdate};
 use crate::net::{Net, now_ms, rpc};
 use crate::store::Store;
 use crate::ui::turns::{RowContext, ThreadRow, column, diff_card, render_row};
+use crate::ui::web::WebActions;
 
 /// Denying an approval with feedback: the composer's next message is the reason.
 struct Denial {
@@ -113,6 +114,10 @@ pub enum ThreadEvent {
     /// Open the `occurrence`-th attachment (0-based, in transcript order) shown as `name`. Names
     /// repeat across uploads, so the position picks the exact one.
     OpenAttachment { name: String, occurrence: usize },
+    /// Open Review from edits card `card` (in transcript order), at `path` when given.
+    Review { card: usize, path: Option<String> },
+    /// Fork from sent user turn `turn` (in transcript order).
+    Fork { turn: usize },
 }
 
 /// Tries per saved-rows fetch, with network backoff between them.
@@ -160,6 +165,8 @@ pub struct ThreadView {
     net: Arc<Net>,
     stream: SessionStream,
     turns: Vec<Rc<Turn>>,
+    /// What the page lets the native rows forward to it.
+    web_actions: WebActions,
     /// Each turn's last build and its content version, by turn id.
     turn_versions: HashMap<String, (Rc<Turn>, u64)>,
     turns_revision: u64,
@@ -182,8 +189,10 @@ pub struct ThreadView {
     _stream: Task<()>,
     /// The session's (status, activity) when saved rows were last fetched.
     saved_mark: Option<(String, i64)>,
-    /// The mark a fetch is under way for, so store changes don't start it again.
-    fetching_mark: Option<(String, i64)>,
+    /// A saved-rows fetch is under way.
+    fetching: bool,
+    /// Another fetch was asked for during it.
+    refetch: bool,
     _saved: Task<()>,
     _request: Task<()>,
     _ticker: Task<()>,
@@ -239,6 +248,7 @@ impl ThreadView {
             net,
             stream: SessionStream::default(),
             turns: Vec::new(),
+            web_actions: WebActions::default(),
             turn_versions: HashMap::new(),
             turns_revision: u64::MAX,
             rows: Rc::new(Vec::new()),
@@ -257,7 +267,8 @@ impl ThreadView {
             sending: false,
             _stream: Task::ready(()),
             saved_mark: None,
-            fetching_mark: None,
+            fetching: false,
+            refetch: false,
             _saved: Task::ready(()),
             _request: Task::ready(()),
             _ticker: ticker,
@@ -277,7 +288,7 @@ impl ThreadView {
     fn on_store_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A follow-up moves the session to running and back, so a changed row means new saved rows.
         let mark = self.session_mark(cx);
-        if mark.is_some() && mark != self.saved_mark && mark != self.fetching_mark {
+        if mark.is_some() && mark != self.saved_mark {
             self.fetch_saved(cx);
         }
         // Take keyboard focus for a new card unless the reader is partway through a message.
@@ -353,11 +364,17 @@ impl ThreadView {
 
     /// Fetch the session's saved rows and merge in the ones the stream lacks (follow-up messages).
     fn fetch_saved(&mut self, cx: &mut Context<Self>) {
+        // One fetch at a time: asks during one become a single fetch after it, so a busy session
+        // (its activity changes with every saved event) doesn't pile up full-history downloads.
+        if self.fetching {
+            self.refetch = true;
+            return;
+        }
         let mark = self.session_mark(cx);
         let Some(session_id) = self.session_id.clone() else {
             return;
         };
-        self.fetching_mark = mark.clone();
+        self.fetching = true;
         let net = self.net.clone();
         self._saved = cx.spawn(async move |this, cx| {
             let mut output = None;
@@ -366,6 +383,8 @@ impl ThreadView {
                     let (net, session_id) = (net.clone(), session_id.clone());
                     async move { fetch_saved_rows(&net, &session_id).await }
                 });
+                // Dropping this task (the view closed) cancels the download, not just the wait.
+                let _cancel = crate::net::AbortOnDrop(request.abort_handle());
                 match request.await {
                     Ok(Ok(rows)) => {
                         output = Some(rows);
@@ -379,19 +398,21 @@ impl ThreadView {
                     .await;
             }
             let _ = this.update(cx, |this, cx| {
-                this.fetching_mark = None;
-                // Out of attempts: the next change to the session row tries again.
-                let Some(output) = output else {
-                    return;
-                };
-                let rows: Vec<EventRow> = output
-                    .iter()
-                    .filter_map(Value::as_object)
-                    .filter_map(EventRow::from_saved_row)
-                    .collect();
-                this.saved_mark = mark;
-                this.stream.merge_saved(rows);
-                this.rebuild_rows(cx);
+                this.fetching = false;
+                if let Some(output) = output {
+                    let rows: Vec<EventRow> = output
+                        .iter()
+                        .filter_map(Value::as_object)
+                        .filter_map(EventRow::from_saved_row)
+                        .collect();
+                    this.saved_mark = mark;
+                    this.stream.merge_saved(rows);
+                    this.rebuild_rows(cx);
+                }
+                // Out of attempts, nothing is retried until the session row changes again.
+                if std::mem::take(&mut this.refetch) {
+                    this.fetch_saved(cx);
+                }
             });
         });
     }
@@ -437,13 +458,37 @@ impl ThreadView {
             .turns
             .iter()
             .rposition(|turn| !matches!(turn.as_ref(), Turn::Notice { .. }));
+        // Positions among the page's own user turns and edits cards, which the native rows use to
+        // forward Fork and Review to the matching page element.
+        let (mut users, mut cards) = (0, 0);
         let mut rows: Vec<ThreadRow> = self
             .turns
             .iter()
             .enumerate()
-            .map(|(index, turn)| ThreadRow::Turn {
-                turn: Rc::clone(turn),
-                live: running && Some(index) == current,
+            .map(|(index, turn)| {
+                let live = running && Some(index) == current;
+                let ordinal = match turn.as_ref() {
+                    Turn::User { .. } => {
+                        users += 1;
+                        Some(users - 1)
+                    }
+                    // Transcript.tsx shows EditsSummary for a finished turn whose edits changed lines.
+                    Turn::Agent(agent)
+                        if !live
+                            && turn_file_writes(&agent.steps)
+                                .iter()
+                                .any(|file| file.added + file.removed > 0) =>
+                    {
+                        cards += 1;
+                        Some(cards - 1)
+                    }
+                    _ => None,
+                };
+                ThreadRow::Turn {
+                    turn: Rc::clone(turn),
+                    live,
+                    ordinal,
+                }
             })
             .collect();
         let live_text: Vec<String> = self
@@ -479,7 +524,7 @@ impl ThreadView {
             .iter()
             .map(|row| match row {
                 ThreadRow::Streaming => (row.key(), self.streamed.len() as u64),
-                ThreadRow::Turn { turn, live } => {
+                ThreadRow::Turn { turn, live, .. } => {
                     let version = self.turn_versions.get(turn.id()).map_or(0, |entry| entry.1);
                     let mut hasher = DefaultHasher::new();
                     (version, live).hash(&mut hasher);
@@ -507,6 +552,16 @@ impl ThreadView {
         self.row_marks = marks;
         self.rows = Rc::new(rows);
         cx.notify();
+    }
+
+    /// The page's transcript actions changed; rows gain or lose their buttons.
+    pub fn set_web_actions(&mut self, actions: WebActions, cx: &mut Context<Self>) {
+        if self.web_actions != actions {
+            self.web_actions = actions;
+            self.scroller
+                .update(cx, |scroller, cx| scroller.remeasure(cx));
+            cx.notify();
+        }
     }
 
     /// Open file `index` of user turn `turn_id`.
@@ -1168,6 +1223,7 @@ impl Render for ThreadView {
             streaming: self.streaming.clone(),
             now_ms: now_ms(),
             rem: rem_key,
+            actions: self.web_actions,
         };
         let rows = self.rows.clone();
         let transcript = MessageScroller::new(

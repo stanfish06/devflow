@@ -23,7 +23,8 @@ pub enum ShapeUpdate {
 
 /// Follow a shape until the receiver is dropped. `route` is a sync-proxy path such as `/v2/sessions`.
 pub fn subscribe(net: Arc<Net>, route: &'static str) -> async_channel::Receiver<Vec<ShapeUpdate>> {
-    let (sender, receiver) = async_channel::unbounded();
+    // Bounded: a busy UI makes the shape reader wait instead of queueing batches without limit.
+    let (sender, receiver) = async_channel::bounded(16);
     let runner = net.clone();
     runner.spawn(async move {
         let url = StackConfig::join(&net.config().sync, route);

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::clipboard::Clipboard;
 use gpui_kit::component::text::{TextView, TextViewState};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
@@ -14,13 +15,15 @@ use crate::model::format::{
     artifact_name, first_line, format_clock, format_duration, plural, split_attachments, truncate,
 };
 use crate::model::tools::{
-    StepIcon, TodoStatus, is_edit_tool, latest_todos, summarize_step, text_field,
+    FileEdits, StepIcon, TodoStatus, common_dir, is_edit_tool, latest_todos, summarize_step,
+    text_field, turn_file_writes,
 };
 use crate::model::transcript::{
     AgentTurn, ApprovalStatus, Step, StepGroup, ToolStep, Turn, group_steps, normalize_tool_name,
     read_denial,
 };
-use crate::ui::thread::ThreadView;
+use crate::ui::thread::{ThreadEvent, ThreadView};
+use crate::ui::web::WebActions;
 
 /// One row of the virtual list.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,6 +32,8 @@ pub enum ThreadRow {
         /// Shared with the thread's turn list: rebuilding rows doesn't copy the transcript.
         turn: Rc<Turn>,
         live: bool,
+        /// A user turn's position among user turns, or an agent turn's among edits cards.
+        ordinal: Option<usize>,
     },
     /// Text the agent is streaming, before it is saved as an event.
     Streaming,
@@ -57,6 +62,8 @@ pub struct RowContext {
     /// The window rem size, in the ids of markdown views: they cache their layout per id, so a
     /// zoom change needs new ones.
     pub rem: u32,
+    /// Fork and Review, when the page offers them.
+    pub actions: WebActions,
 }
 
 impl RowContext {
@@ -99,13 +106,7 @@ pub fn column(content: impl IntoElement) -> Div {
 }
 
 /// `.turn-actions.hover-reveal`: copy and time, shown while the pointer is over the turn.
-fn turn_actions(
-    group: SharedString,
-    id: String,
-    text: String,
-    stamp: String,
-    cx: &App,
-) -> impl IntoElement {
+fn turn_actions(group: SharedString, id: String, text: String, stamp: String, cx: &App) -> Div {
     h_flex()
         .gap(css(12.))
         .mt(css(4.))
@@ -121,7 +122,11 @@ fn turn_actions(
 pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let body: AnyElement = match row {
-        ThreadRow::Turn { turn, live } => match turn.as_ref() {
+        ThreadRow::Turn {
+            turn,
+            live,
+            ordinal,
+        } => match turn.as_ref() {
             Turn::User {
                 id,
                 text,
@@ -192,7 +197,31 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                                         .child(body.clone()),
                                 )
                             })
-                            .child(turn_actions(group, id.clone(), text.clone(), stamp, cx)),
+                            .child(
+                                turn_actions(group, id.clone(), text.clone(), stamp, cx)
+                                    // Every user turn after the first can be forked from.
+                                    .when_some(
+                                        ordinal
+                                            .filter(|turn| *turn > 0 && context.actions.forkable),
+                                        |this, turn| {
+                                            let thread = context.thread.clone();
+                                            this.child(
+                                                Button::new(SharedString::from(format!(
+                                                    "fork-{id}"
+                                                )))
+                                                .ghost()
+                                                .xsmall()
+                                                .icon(gpui_kit::assets::IconName::GitFork)
+                                                .tooltip("Fork from this message")
+                                                .on_click(move |_, _, cx| {
+                                                    let _ = thread.update(cx, |_, cx| {
+                                                        cx.emit(ThreadEvent::Fork { turn })
+                                                    });
+                                                }),
+                                            )
+                                        },
+                                    ),
+                            ),
                     )
                     .into_any_element()
             }
@@ -200,7 +229,7 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                 divider("Earlier messages summarized to save context", cx).into_any_element()
             }
             Turn::Notice { text, .. } => divider(text.clone(), cx).into_any_element(),
-            Turn::Agent(turn) => agent_turn(turn, *live, context, cx).into_any_element(),
+            Turn::Agent(turn) => agent_turn(turn, *live, *ordinal, context, cx).into_any_element(),
         },
         ThreadRow::Streaming => div()
             .py_2()
@@ -235,7 +264,13 @@ fn divider(text: impl Into<SharedString>, cx: &App) -> impl IntoElement {
         .child(div().flex_1().h(px(1.)).bg(cx.theme().border))
 }
 
-fn agent_turn(turn: &AgentTurn, live: bool, context: &RowContext, cx: &App) -> impl IntoElement {
+fn agent_turn(
+    turn: &AgentTurn,
+    live: bool,
+    card: Option<usize>,
+    context: &RowContext,
+    cx: &App,
+) -> impl IntoElement {
     let theme = cx.theme();
     let waiting = turn.steps.iter().any(|step| matches!(step, Step::Tool(tool) if tool.approval_status == Some(ApprovalStatus::Pending)));
     let open = context.is_open(&turn.id, live || waiting);
@@ -340,6 +375,14 @@ fn agent_turn(turn: &AgentTurn, live: bool, context: &RowContext, cx: &App) -> i
                 ),
             )
         })
+        .when_some(card, |this, card| {
+            this.child(edits_summary(
+                &turn_file_writes(&turn.steps),
+                card,
+                context,
+                cx,
+            ))
+        })
         .when_some(turn.answer.clone().filter(|_| !live), |this, answer| {
             this.child(turn_actions(
                 SharedString::from(format!("turn-{}", turn.id)),
@@ -349,6 +392,134 @@ fn agent_turn(turn: &AgentTurn, live: bool, context: &RowContext, cx: &App) -> i
                 cx,
             ))
         })
+}
+
+/// Transcript.tsx `EditsSummary`: what a turn changed, totals then each file. Its Review actions
+/// open the page's own edits card at the same place.
+fn edits_summary(files: &[FileEdits], card: usize, context: &RowContext, cx: &App) -> AnyElement {
+    const LISTED_FILES: usize = 4;
+    let theme = cx.theme();
+    let (added, removed) = files
+        .iter()
+        .fold((0, 0), |(a, r), file| (a + file.added, r + file.removed));
+    // Past the limit the last row counts the rest; a single leftover gets its own row.
+    let listed = if files.len() > LISTED_FILES + 1 {
+        LISTED_FILES
+    } else {
+        files.len()
+    };
+    let only = (files.len() == 1).then(|| files[0].path.clone());
+    let root = common_dir(
+        &files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+    );
+    let reviewable = context.actions.reviewable;
+    let review = move |path: Option<String>, thread: WeakEntity<ThreadView>| {
+        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+            let path = path.clone();
+            let _ = thread.update(cx, |_, cx| cx.emit(ThreadEvent::Review { card, path }));
+        }
+    };
+    let counts = |added: usize, removed: usize| {
+        h_flex()
+            .gap(css(6.))
+            .child(div().text_color(theme.green).child(format!("+{added}")))
+            .child(div().text_color(theme.red).child(format!("−{removed}")))
+    };
+    let title = match &only {
+        Some(path) => format!("Edited {}", path.rsplit('/').next().unwrap_or(path)),
+        None => format!("Edited {}", plural(files.len(), "file")),
+    };
+    v_flex()
+        .w_full()
+        .my(css(8.))
+        .rounded(css(10.))
+        .border_1()
+        .border_color(theme.border)
+        .text_size(css(12.5))
+        .child(
+            h_flex()
+                .gap(css(8.))
+                .px(css(12.))
+                .py(css(8.))
+                .child(Icon::new(IconName::File).xsmall())
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_ellipsis()
+                        .child(title),
+                )
+                .child(counts(added, removed))
+                .child(div().flex_1())
+                .when(reviewable, |this| {
+                    this.child(
+                        Button::new(SharedString::from(format!("review-{card}")))
+                            .ghost()
+                            .xsmall()
+                            .label("Review")
+                            .on_click(review(only.clone(), context.thread.clone())),
+                    )
+                }),
+        )
+        .children(
+            files
+                .iter()
+                .take(if only.is_some() { 0 } else { listed })
+                .enumerate()
+                .map(|(index, file)| {
+                    let relative = file
+                        .path
+                        .strip_prefix(&root)
+                        .unwrap_or(&file.path)
+                        .to_owned();
+                    let (dir, name) = match relative.rsplit_once('/') {
+                        Some((dir, name)) => (Some(dir.to_owned()), name.to_owned()),
+                        None => (None, relative),
+                    };
+                    h_flex()
+                        .id(SharedString::from(format!("edit-{card}-{index}")))
+                        .gap(css(8.))
+                        .px(css(12.))
+                        .py(css(5.))
+                        .border_t_1()
+                        .border_color(theme.border)
+                        .when(reviewable, |this| {
+                            this.cursor_pointer()
+                                .hover(|style| style.bg(theme.secondary))
+                                .on_click(review(Some(file.path.clone()), context.thread.clone()))
+                        })
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(css(6.))
+                                .child(name)
+                                .when_some(dir, |this, dir| {
+                                    this.child(div().text_color(theme.muted_foreground).child(dir))
+                                }),
+                        )
+                        .child(counts(file.added, file.removed))
+                }),
+        )
+        .when(listed < files.len(), |this| {
+            this.child(
+                div()
+                    .id(SharedString::from(format!("edit-{card}-more")))
+                    .px(css(12.))
+                    .py(css(5.))
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .text_color(theme.muted_foreground)
+                    .when(reviewable, |this| {
+                        this.cursor_pointer()
+                            .on_click(review(None, context.thread.clone()))
+                    })
+                    .child(plural(files.len() - listed, "more file")),
+            )
+        })
+        .into_any_element()
 }
 
 fn step_list(steps: &[Step], context: &RowContext, cx: &App) -> Vec<AnyElement> {

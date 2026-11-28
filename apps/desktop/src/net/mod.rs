@@ -142,3 +142,13 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 pub fn backoff(attempt: u32) -> Duration {
     Duration::from_millis((500u64 << attempt.min(5)).min(15_000))
 }
+
+/// Aborts a network task when dropped. Dropping a tokio `JoinHandle` only detaches the task, so a
+/// GPUI task awaiting one holds this to cancel the work along with the wait.
+pub struct AbortOnDrop(pub tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
