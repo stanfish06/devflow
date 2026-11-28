@@ -1,0 +1,6 @@
+# apps/desktop: gpui-kit 0.11 pins gpui-pre 0.3.14, which uses APIs newer than nixpkgs' rustc.
+# flake.nix reads this file through rust-overlay; rustup reads it directly.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]
+profile = "minimal"

@@ -1044,7 +1044,27 @@ function e2e(): void {
 	process.exit(result.status ?? 1)
 }
 
+/**
+ * `desktop`: the native client in apps/desktop against the running stack. Needs the Rust toolchain
+ * from `nix develop`; further arguments go to cargo, e.g. `--release`.
+ */
+function desktop(): void {
+	const result = spawnSync('cargo', ['run', '-p', 'devflow-desktop', ...process.argv.slice(3)], {
+		cwd: REPO_ROOT,
+		env: {
+			...process.env,
+			DEVFLOW_HOME,
+			DEVFLOW_APP_ORIGIN: ROUTES.ui,
+			DEVFLOW_API_ORIGIN: ROUTES.api,
+			DEVFLOW_SYNC_ORIGIN: ROUTES.sync,
+		},
+		stdio: 'inherit',
+	})
+	process.exit(result.status ?? 1)
+}
+
 const commands: Record<string, () => void | Promise<void>> = {
+	desktop,
 	e2e,
 	setup,
 	trust,
