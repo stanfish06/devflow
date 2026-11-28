@@ -68,20 +68,30 @@ static UPLOAD_MENTION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::
     regex::Regex::new(r"@\.devflow/tasks/[^/\s]+/(uploads/\S+)").unwrap()
 });
 
+static SPACE_RUNS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
+static TRAILING_SPACE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"(?m)[ \t]+$").unwrap());
+static BLANK_RUNS: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\n{3,}").unwrap());
+static UUID_PREFIX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-").unwrap()
+});
+
 /// `splitAttachments`: the message without its upload mentions, and the uploads' file names.
 pub fn split_attachments(message: &str) -> (String, Vec<String>) {
-    let files = UPLOAD_MENTION
+    let files: Vec<String> = UPLOAD_MENTION
         .captures_iter(message)
         .filter_map(|captures| captures.get(1).map(|name| name.as_str().to_owned()))
         .collect();
+    // Most messages have no uploads; leave them as typed.
+    if files.is_empty() {
+        return (message.trim().to_owned(), files);
+    }
     let text = UPLOAD_MENTION.replace_all(message, "");
-    let text = regex::Regex::new(r" {2,}").unwrap().replace_all(&text, " ");
-    let text = regex::Regex::new(r"(?m)[ \t]+$")
-        .unwrap()
-        .replace_all(&text, "");
-    let text = regex::Regex::new(r"\n{3,}")
-        .unwrap()
-        .replace_all(&text, "\n\n");
+    let text = SPACE_RUNS.replace_all(&text, " ");
+    let text = TRAILING_SPACE.replace_all(&text, "");
+    let text = BLANK_RUNS.replace_all(&text, "\n\n");
     (text.trim().to_owned(), files)
 }
 
@@ -89,10 +99,7 @@ pub fn split_attachments(message: &str) -> (String, Vec<String>) {
 /// know them by the original name.
 pub fn artifact_name(file_name: &str) -> String {
     let base = file_name.rsplit('/').next().unwrap_or(file_name);
-    regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-")
-        .unwrap()
-        .replace(base, "")
-        .into_owned()
+    UUID_PREFIX.replace(base, "").into_owned()
 }
 
 #[cfg(test)]

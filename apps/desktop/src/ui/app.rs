@@ -81,11 +81,15 @@ impl AppView {
         cx: &mut Context<Self>,
     ) -> Self {
         // A deep link is the webview's first URL; the page's own router takes it from there.
+        // Only a path on the app itself: `//host/...` would resolve to another site.
         let start = initial
             .as_deref()
+            .filter(|path| path.starts_with('/') && !path.starts_with("//"))
             .and_then(|path| config.app.join(path).ok())
+            .filter(|url| url.origin() == config.app.origin())
             .unwrap_or_else(|| config.app.clone());
-        let web = cx.new(|cx| WebPane::new(start, window, cx));
+        let origin = config.app.origin();
+        let web = cx.new(|cx| WebPane::new(start, origin, window, cx));
         // The page binds ⌘ plus a digit (⌘0 included) to recent tasks; zoom keys win, as in a browser.
         web.read(cx).reserve_action::<ZoomIn>();
         web.read(cx).reserve_action::<ZoomOut>();
@@ -167,8 +171,8 @@ impl AppView {
                     self._thread_events = Some(cx.subscribe(
                         &thread,
                         |this, _, event: &ThreadEvent, cx| match event {
-                            ThreadEvent::OpenAttachment(name) => {
-                                this.web.read(cx).open_attachment(name)
+                            ThreadEvent::OpenAttachment { name, occurrence } => {
+                                this.web.read(cx).open_attachment(name, *occurrence)
                             }
                         },
                     ));

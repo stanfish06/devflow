@@ -20,7 +20,7 @@ use crate::model::transcript::{
     AgentTurn, ApprovalStatus, Step, StepGroup, ToolStep, Turn, group_steps, normalize_tool_name,
     read_denial,
 };
-use crate::ui::thread::{ThreadEvent, ThreadView};
+use crate::ui::thread::ThreadView;
 
 /// One row of the virtual list.
 #[derive(Clone, Debug, PartialEq)]
@@ -134,7 +134,7 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                 let (body, files) = split_attachments(text);
                 let chips = files.iter().enumerate().map(|(index, file)| {
                     let name = artifact_name(file);
-                    let (thread, open) = (context.thread.clone(), name.clone());
+                    let (thread, turn_id) = (context.thread.clone(), id.clone());
                     h_flex()
                         .id(SharedString::from(format!("file-{id}-{index}")))
                         .gap(css(6.))
@@ -147,9 +147,9 @@ pub fn render_row(row: &ThreadRow, context: &RowContext, cx: &App) -> AnyElement
                         .cursor_pointer()
                         .hover(|style| style.bg(theme.secondary))
                         .on_click(move |_, _, cx| {
-                            let open = open.clone();
-                            let _ = thread
-                                .update(cx, |_, cx| cx.emit(ThreadEvent::OpenAttachment(open)));
+                            let _ = thread.update(cx, |thread, cx| {
+                                thread.open_attachment(&turn_id, index, cx)
+                            });
                         })
                         .child(Icon::new(IconName::FileText).xsmall())
                         .child(name)

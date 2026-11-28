@@ -20,11 +20,11 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use crate::model::format::basename;
+use crate::model::format::{artifact_name, basename, split_attachments};
 use crate::model::rows::{Approval, Session};
 use crate::model::thread::SessionStream;
 use crate::model::tools::{is_edit_tool, text_field};
-use crate::model::transcript::{EventRow, Step, ToolStep, Turn, normalize_tool_name};
+use crate::model::transcript::{EventRow, ToolStep, Turn, normalize_tool_name};
 use crate::net::stream::{self, StreamUpdate};
 use crate::net::{Net, now_ms, rpc};
 use crate::store::Store;
@@ -110,8 +110,9 @@ fn rule_text(suggestions: &Value) -> Option<String> {
 
 /// What the thread asks of the window around it.
 pub enum ThreadEvent {
-    /// Open an attachment of a sent message, by its display name.
-    OpenAttachment(String),
+    /// Open the `occurrence`-th attachment (0-based, in transcript order) shown as `name`. Names
+    /// repeat across uploads, so the position picks the exact one.
+    OpenAttachment { name: String, occurrence: usize },
 }
 
 /// Tries per saved-rows fetch, with network backoff between them.
@@ -159,6 +160,8 @@ pub struct ThreadView {
     net: Arc<Net>,
     stream: SessionStream,
     turns: Vec<Rc<Turn>>,
+    /// Each turn's last build and its content version, by turn id.
+    turn_versions: HashMap<String, (Rc<Turn>, u64)>,
     turns_revision: u64,
     rows: Rc<Vec<ThreadRow>>,
     row_marks: Vec<(String, u64)>,
@@ -236,6 +239,7 @@ impl ThreadView {
             net,
             stream: SessionStream::default(),
             turns: Vec::new(),
+            turn_versions: HashMap::new(),
             turns_revision: u64::MAX,
             rows: Rc::new(Vec::new()),
             row_marks: Vec::new(),
@@ -401,7 +405,27 @@ impl ThreadView {
     /// Recompute the rows and tell the virtual list which ones moved or changed.
     fn rebuild_rows(&mut self, cx: &mut Context<Self>) {
         if self.turns_revision != self.stream.events_revision() {
-            self.turns = self.stream.turns().into_iter().map(Rc::new).collect();
+            // A turn equal to its last build keeps its shared value and version; any change, even
+            // one that keeps every text the same length, bumps the version so its row remeasures.
+            let mut versions = HashMap::new();
+            self.turns = self
+                .stream
+                .turns()
+                .into_iter()
+                .map(|turn| {
+                    let key = turn.id().to_owned();
+                    let (shared, version) = match self.turn_versions.get(&key) {
+                        Some((previous, version)) if **previous == turn => {
+                            (Rc::clone(previous), *version)
+                        }
+                        Some((_, version)) => (Rc::new(turn), version + 1),
+                        None => (Rc::new(turn), 0),
+                    };
+                    versions.insert(key, (Rc::clone(&shared), version));
+                    shared
+                })
+                .collect();
+            self.turn_versions = versions;
             self.turns_revision = self.stream.events_revision();
         }
         let session = self.session(cx);
@@ -455,7 +479,13 @@ impl ThreadView {
             .iter()
             .map(|row| match row {
                 ThreadRow::Streaming => (row.key(), self.streamed.len() as u64),
-                _ => (row.key(), fingerprint(row)),
+                ThreadRow::Turn { turn, live } => {
+                    let version = self.turn_versions.get(turn.id()).map_or(0, |entry| entry.1);
+                    let mut hasher = DefaultHasher::new();
+                    (version, live).hash(&mut hasher);
+                    (row.key(), hasher.finish())
+                }
+                ThreadRow::Starting => (row.key(), 0),
             })
             .collect();
         let old = std::mem::take(&mut self.row_marks);
@@ -477,6 +507,34 @@ impl ThreadView {
         self.row_marks = marks;
         self.rows = Rc::new(rows);
         cx.notify();
+    }
+
+    /// Open file `index` of user turn `turn_id`.
+    pub fn open_attachment(&mut self, turn_id: &str, index: usize, cx: &mut Context<Self>) {
+        let mut seen: Vec<String> = Vec::new();
+        for turn in &self.turns {
+            let Turn::User { id, text, .. } = turn.as_ref() else {
+                continue;
+            };
+            let names: Vec<String> = split_attachments(text)
+                .1
+                .iter()
+                .map(|file| artifact_name(file))
+                .collect();
+            if id == turn_id {
+                let Some(name) = names.get(index).cloned() else {
+                    return;
+                };
+                let occurrence = seen
+                    .iter()
+                    .chain(&names[..index])
+                    .filter(|seen| **seen == name)
+                    .count();
+                cx.emit(ThreadEvent::OpenAttachment { name, occurrence });
+                return;
+            }
+            seen.extend(names);
+        }
     }
 
     /// Record the reader's open or closed choice for a turn or step.
@@ -1072,40 +1130,6 @@ impl ThreadView {
                 ),
         )
         .into_any_element()
-    }
-}
-
-/// Changes when a row's content changes, so only those rows are remeasured.
-fn fingerprint(row: &ThreadRow) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    match row {
-        ThreadRow::Turn { turn, live } => {
-            live.hash(&mut hasher);
-            match turn.as_ref() {
-                Turn::User { text, .. } | Turn::Notice { text, .. } => text.len().hash(&mut hasher),
-                Turn::Compaction { .. } => {}
-                Turn::Agent(agent) => {
-                    agent.answer.as_ref().map(String::len).hash(&mut hasher);
-                    agent.ended_at.hash(&mut hasher);
-                    hash_steps(&agent.steps, &mut hasher);
-                }
-            }
-        }
-        ThreadRow::Streaming | ThreadRow::Starting => {}
-    }
-    hasher.finish()
-}
-
-fn hash_steps(steps: &[Step], hasher: &mut DefaultHasher) {
-    steps.len().hash(hasher);
-    for step in steps {
-        step.id().hash(hasher);
-        if let Step::Tool(tool) = step {
-            tool.ended_at.hash(hasher);
-            format!("{:?}", tool.approval_status).hash(hasher);
-            tool.result.as_ref().map(String::len).hash(hasher);
-            hash_steps(&tool.children, hasher);
-        }
     }
 }
 

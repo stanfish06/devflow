@@ -9,6 +9,9 @@ pub struct SseEvent {
 #[derive(Default)]
 pub struct SseParser {
     buffer: Vec<u8>,
+    /// Where the next search for an event end starts: bytes before it hold no `\n\n`. Keeps
+    /// a large event that arrives in small chunks linear to scan.
+    scanned: usize,
 }
 
 impl SseParser {
@@ -18,12 +21,23 @@ impl SseParser {
         self.buffer
             .extend(chunk.iter().copied().filter(|byte| *byte != b'\r'));
         let mut events = Vec::new();
-        while let Some(end) = self.buffer.windows(2).position(|pair| pair == b"\n\n") {
-            let block: Vec<u8> = self.buffer.drain(..end + 2).collect();
-            if let Some(event) = parse_block(&String::from_utf8_lossy(&block[..end])) {
+        // Complete blocks are read through a cursor and dropped once, after the loop.
+        let mut start = 0;
+        let mut from = self.scanned.max(start);
+        while let Some(found) = self.buffer[from..]
+            .windows(2)
+            .position(|pair| pair == b"\n\n")
+        {
+            let end = from + found;
+            if let Some(event) = parse_block(&String::from_utf8_lossy(&self.buffer[start..end])) {
                 events.push(event);
             }
+            start = end + 2;
+            from = start;
         }
+        self.buffer.drain(..start);
+        // The last byte may be the first `\n` of a pair the next chunk completes.
+        self.scanned = self.buffer.len().saturating_sub(1);
         events
     }
 }

@@ -136,6 +136,8 @@ const CATCH_UP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Longest an SSE connection may stay silent. The server ends it about once a minute, so a
 /// connection quiet for twice that is stalled.
 const SSE_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+/// An SSE connection open at least this long ended normally even if it carried no event.
+const SSE_MIN_HEALTHY: Duration = Duration::from_secs(10);
 
 async fn authorized_get(
     net: &Net,
@@ -248,14 +250,20 @@ async fn read_sse(
     }
     let mut parser = SseParser::default();
     let mut body = response.bytes_stream();
+    // A connection that ends early without an event counts as a failure, so the caller backs
+    // off; the server's regular rotation (about a minute) reconnects at once.
+    let opened = std::time::Instant::now();
+    let mut progressed = false;
     loop {
         let chunk = match tokio::time::timeout(SSE_IDLE_TIMEOUT, body.next()).await {
             Ok(Some(Ok(chunk))) => chunk,
             Ok(Some(Err(error))) => return Read::Failed(error.to_string()),
-            Ok(None) => break,
+            Ok(None) if progressed || opened.elapsed() >= SSE_MIN_HEALTHY => break,
+            Ok(None) => return Read::Failed("SSE ended early without events".into()),
             Err(_) => return Read::Failed("SSE connection idle too long".into()),
         };
         for event in parser.push(&chunk) {
+            progressed = true;
             match event.event.as_str() {
                 "data" => {
                     // The offset only moves with control events, so failing here re-reads from

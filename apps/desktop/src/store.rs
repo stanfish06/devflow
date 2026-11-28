@@ -94,10 +94,11 @@ impl Store {
     }
 
     pub fn session(&self, id: &str) -> Option<Session> {
+        // Match the raw id first: only the one row gets parsed.
         self.sessions
             .rows()
-            .filter_map(Session::from_row)
-            .find(|session| session.id == id)
+            .find(|row| row.str("id") == Some(id))
+            .and_then(Session::from_row)
     }
 
     /// Approvals the agent waits on, oldest first, as AskCard takes them.

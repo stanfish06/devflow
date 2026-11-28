@@ -52,6 +52,9 @@ enum BridgeMessage {
     },
 }
 
+/// Sent by the page-load handler itself, never by a page: clears the native transcript.
+const PAGE_STARTED: &str = "{\"type\":\"thread\",\"sessionId\":null,\"covered\":false,\"x\":0,\"y\":0,\"width\":0,\"height\":0}";
+
 /// IPC payloads above this size are not ours.
 const MAX_MESSAGE_BYTES: usize = 4096;
 
@@ -154,9 +157,9 @@ fn bridge_script() -> String {
   window.__devflowReport = () => {{ last = ''; schedule(); }};
   // The native transcript's attachment chips open the web transcript's own link (Transcript.tsx
   // SentFile), which carries the signed download URL.
-  window.__devflowOpenAttachment = (name) => {{
+  window.__devflowOpenAttachment = (name, occurrence) => {{
     const links = document.querySelectorAll('.{class} a.sent-image, .{class} a.attachment');
-    [...links].find((link) => link.title === name)?.click();
+    [...links].filter((link) => link.title === name)[occurrence]?.click();
   }};
 }})();"#,
         class = NATIVE_CLASS
@@ -165,9 +168,17 @@ fn bridge_script() -> String {
 
 impl WebPane {
     /// `start` is the first page to load: the app's origin, or a deep link into it.
-    pub fn new(start: url::Url, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `start` is the first page to load, on the app's origin; `origin` is the app origin, the
+    /// only one whose pages may drive the native views.
+    pub fn new(
+        start: url::Url,
+        origin: url::Origin,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let (sender, receiver) = async_channel::unbounded::<String>();
         let ipc_sender = sender.clone();
+        let load_sender = sender.clone();
         let builder = wry::WebViewBuilder::new()
             .with_url(start.as_str())
             .with_initialization_script(bridge_script())
@@ -182,10 +193,21 @@ impl WebPane {
                 }
                 wry::NewWindowResponse::Deny
             })
+            // Only the app's own pages talk to the bridge: the sending frame's URL must be on its
+            // origin, so another site loaded here can't put authenticated transcripts over itself.
             .with_ipc_handler(move |request| {
+                let from_app = url::Url::parse(&request.uri().to_string())
+                    .is_ok_and(|url| url.origin() == origin);
                 let body = request.body();
-                if body.len() <= MAX_MESSAGE_BYTES {
+                if from_app && body.len() <= MAX_MESSAGE_BYTES {
                     let _ = ipc_sender.try_send(body.clone());
+                }
+            })
+            // A main-frame load replaces the page, and with it any transcript area it reported;
+            // the next app page reports its own. A page off the app's origin never does.
+            .with_on_page_load_handler(move |event, _| {
+                if matches!(event, wry::PageLoadEvent::Started) {
+                    let _ = load_sender.try_send(String::from(PAGE_STARTED));
                 }
             });
 
@@ -251,10 +273,11 @@ impl WebPane {
         Ok((webview, view))
     }
 
-    /// Open an attachment of the covered transcript by its display name, through the page's link.
-    pub fn open_attachment(&self, name: &str) {
+    /// Open the `occurrence`-th attachment named `name` in the covered transcript, through the
+    /// page's own link.
+    pub fn open_attachment(&self, name: &str, occurrence: usize) {
         let script = format!(
-            "window.__devflowOpenAttachment && window.__devflowOpenAttachment({})",
+            "window.__devflowOpenAttachment && window.__devflowOpenAttachment({}, {occurrence})",
             serde_json::to_string(name).expect("a string serializes")
         );
         if let Err(error) = self.webview.evaluate_script(&script) {
