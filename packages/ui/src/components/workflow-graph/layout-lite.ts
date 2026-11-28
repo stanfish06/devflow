@@ -42,7 +42,13 @@ const ROUTE_STAGGER = 12
 export interface LayoutResult {
   nodes: WorkflowGraphNode[]
   edges: Edge[]
+  /** Area to fit when showing the whole graph, routed edges and their labels included; unset means the nodes. */
+  bounds?: { x: number; y: number; width: number; height: number }
 }
+
+/** Artifact label size at the 10px mono font ArtifactEdge draws it in, for fitting. */
+const LABEL_HEIGHT = 20
+const labelWidth = (fileName: string) => fileName.length * 6.5 + 14
 
 export function computeLayout(
   sessions: WorkflowSession[],
@@ -298,10 +304,15 @@ function computeSnakeLayout(
     const y = MARGIN + row * (cellHeight + SNAKE_GAP_Y)
     const along = forward ? Position.Right : Position.Left
     const against = forward ? Position.Left : Position.Right
-    // The path enters a row's first cell from above and leaves its last cell downward.
-    const targetPosition = inRow === 0 && index > 0 ? Position.Top : against
-    const lastInRow = inRow === perRow - 1 || index === phases.length - 1
-    const sourcePosition = lastInRow && index < phases.length - 1 ? Position.Bottom : along
+    // The path enters a row's first cell from above and leaves its last cell downward. In a stack
+    // there, only the outer card (the last one leaving, the first one entering) takes the vertical
+    // side; the others use the row's outer side, so their edges do not cross the rest of the stack.
+    const turnIn = inRow === 0 && index > 0
+    const turnOut = (inRow === perRow - 1 || index === phases.length - 1) && index < phases.length - 1
+    const handles = (i: number, count: number) => ({
+      sourcePosition: turnOut && i === count - 1 ? Position.Bottom : along,
+      targetPosition: turnIn && i === 0 ? Position.Top : against,
+    })
 
     const phaseSessions = sessionsByPhase.get(phase.name) ?? []
     if (phaseSessions.length === 0) {
@@ -313,8 +324,7 @@ function computeSnakeLayout(
           x: x + (cellWidth - placeholderWidth) / 2,
           y: y + (cellHeight - placeholderHeight) / 2,
         },
-        sourcePosition,
-        targetPosition,
+        ...handles(0, 1),
         data: {
           kind: 'phase',
           labelName: phase.name,
@@ -336,8 +346,7 @@ function computeSnakeLayout(
           x: x + (cellWidth - SESSION_NODE_WIDTH) / 2,
           y: startY + i * (SESSION_NODE_HEIGHT + SESSION_STACK_GAP),
         },
-        sourcePosition,
-        targetPosition,
+        ...handles(i, phaseSessions.length),
         data: { kind: 'session', session, synthetic: phase.synthetic },
       })
       allNodeIds.add(session.id)
@@ -349,6 +358,15 @@ function computeSnakeLayout(
   // An artifact flow between cards that are not next to each other on the path goes around the
   // cards between them: above the row when both ends share it, else past the grid's right edge.
   const gridRight = MARGIN + perRow * cellWidth + (perRow - 1) * SNAKE_GAP_X
+  // The fit covers the cards and every detour with its label, which can lie outside the cards.
+  let minX = Math.min(...nodes.map((node) => node.position.x))
+  let minY = Math.min(...nodes.map((node) => node.position.y))
+  let maxX = Math.max(
+    ...nodes.map((node) => node.position.x + (node.type === 'session' ? SESSION_NODE_WIDTH : placeholderWidth)),
+  )
+  const maxY = Math.max(
+    ...nodes.map((node) => node.position.y + (node.type === 'session' ? SESSION_NODE_HEIGHT : placeholderHeight)),
+  )
   let stagger = 0
   for (const edge of edges) {
     if (edge.type !== 'artifact' || !edge.data) continue
@@ -356,13 +374,20 @@ function computeSnakeLayout(
     const to = sessionSlots.get(edge.target)
     if (!from || !to || Math.abs(from.index - to.index) <= 1) continue
     const offset = ROUTE_MARGIN + stagger * ROUTE_STAGGER
-    edge.data =
-      from.row === to.row
-        ? { ...edge.data, routeY: MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset }
-        : { ...edge.data, routeX: gridRight + offset }
+    const label = labelWidth(String(edge.data.fileName ?? ''))
+    if (from.row === to.row) {
+      const routeY = MARGIN + from.row * (cellHeight + SNAKE_GAP_Y) - offset
+      edge.data = { ...edge.data, routeY }
+      minY = Math.min(minY, routeY - LABEL_HEIGHT / 2)
+      minX = Math.min(minX, MARGIN - label / 2)
+    } else {
+      const routeX = gridRight + offset
+      edge.data = { ...edge.data, routeX }
+      maxX = Math.max(maxX, routeX + label / 2)
+    }
     stagger += 1
   }
-  return { nodes, edges }
+  return { nodes, edges, bounds: { x: minX, y: minY, width: maxX - minX, height: maxY - minY } }
 }
 
 function getPhaseStep(

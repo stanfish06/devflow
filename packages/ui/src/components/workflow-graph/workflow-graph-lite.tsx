@@ -162,7 +162,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     }))
   }, [layout.nodes, selectedNodeId, attentionNodeId, onSessionClick])
 
-  const { fitView: rfFitView, zoomIn: rfZoomIn, zoomOut: rfZoomOut } = useReactFlow()
+  const { fitView: rfFitView, fitBounds: rfFitBounds, zoomIn: rfZoomIn, zoomOut: rfZoomOut } = useReactFlow()
   const fitViewPadding = getFitViewPadding(direction, isStatic)
   // Interactive graphs should fill the canvas on fit; static previews keep their
   // deliberate (maxZoom 1) sizing. fitView never zooms past what's needed to fit
@@ -193,17 +193,29 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     setNodeState((current) => ({ ...current, nodes: applyNodeChanges(changes, current.nodes) }))
   }, [])
 
+  // The whole graph: the layout's bounds when it routes edges outside the cards, else the nodes.
+  const layoutBounds = layout.bounds
+  const fitAll = useCallback(
+    (duration: number) => {
+      if (layoutBounds) rfFitBounds(layoutBounds, { padding: fitViewPadding, duration })
+      else rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration })
+    },
+    [rfFitBounds, rfFitView, layoutBounds, fitViewPadding, fitMaxZoom],
+  )
+
   const fitToViewport = useCallback(() => {
     requestAnimationFrame(() => {
-      rfFitView({ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
+      if (initialFitNodes) {
+        rfFitView({ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
+      } else fitAll(0)
     })
-  }, [rfFitView, fitViewPadding, fitMaxZoom, initialFitNodes])
+  }, [rfFitView, fitAll, fitViewPadding, fitMaxZoom, initialFitNodes])
 
   // Manual "fit to view" toolbar action — animated to match the zoom buttons.
   const handleFitView = useCallback(() => {
     setFitAllStages(true)
-    rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 200 })
-  }, [rfFitView, fitViewPadding, fitMaxZoom])
+    fitAll(200)
+  }, [fitAll])
 
   // Keep the graph fitted as the window / container resizes. fitToViewport's
   // identity changes with padding/zoom, so the subscriptions read the latest

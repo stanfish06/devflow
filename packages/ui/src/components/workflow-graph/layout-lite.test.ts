@@ -89,5 +89,20 @@ describe('computeLayout snake', () => {
     expect(Number(data('s2')?.routeY)).toBeLessThan(top('s0'))
     // Another row: past the grid's right edge.
     expect(Number(data('s5')?.routeX)).toBeGreaterThan(right)
+    // The fit covers the detours and their labels.
+    const bounds = routed.bounds
+    expect(bounds && bounds.y < Number(data('s2')?.routeY)).toBe(true)
+    expect(bounds && bounds.x + bounds.width > Number(data('s5')?.routeX)).toBe(true)
+  })
+
+  it('gives only the outer card of a stack at a row turn the vertical side', () => {
+    const stacked = [session('d1', 'design'), session('d2', 'design'), session('o1', 'outline'), session('o2', 'outline')]
+    const turn = computeLayout(stacked, [], 'snake', undefined, phases, false, false, 3)
+    const node = (id: string) => turn.nodes.find((n) => n.id === id)
+    // design ends row one (left to right); outline starts row two (right to left).
+    expect(node('d1')?.sourcePosition).toBe(Position.Right)
+    expect(node('d2')?.sourcePosition).toBe(Position.Bottom)
+    expect(node('o1')?.targetPosition).toBe(Position.Top)
+    expect(node('o2')?.targetPosition).toBe(Position.Right)
   })
 })

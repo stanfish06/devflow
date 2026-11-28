@@ -35,9 +35,10 @@ export const ArtifactEdge: FC<EdgeProps<ArtifactGraphEdge>> = ({
   let labelY: number
 
   if (routeY !== undefined) {
-    // Two smooth bezier segments arcing above intermediate nodes
+    // Two smooth bezier segments arcing above intermediate nodes, bending toward the target's
+    // side (a snake graph's right-to-left rows run the other way).
     const midX = (sourceX + targetX) / 2
-    const cpX = Math.abs(targetX - sourceX) * 0.25
+    const cpX = Math.abs(targetX - sourceX) * 0.25 * (targetX >= sourceX ? 1 : -1)
     edgePath = [
       `M ${sourceX} ${sourceY}`,
       `C ${sourceX + cpX} ${sourceY}, ${midX - cpX} ${routeY}, ${midX} ${routeY}`,
@@ -47,7 +48,7 @@ export const ArtifactEdge: FC<EdgeProps<ArtifactGraphEdge>> = ({
     labelY = routeY
   } else if (routeX !== undefined) {
     const midY = (sourceY + targetY) / 2
-    const cpY = Math.abs(targetY - sourceY) * 0.25
+    const cpY = Math.abs(targetY - sourceY) * 0.25 * (targetY >= sourceY ? 1 : -1)
     edgePath = [
       `M ${sourceX} ${sourceY}`,
       `C ${sourceX} ${sourceY + cpY}, ${routeX} ${midY - cpY}, ${routeX} ${midY}`,
