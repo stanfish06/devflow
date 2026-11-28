@@ -125,3 +125,7 @@ REACT_DOCTOR_ISSUES.json
 .devflow-tunnel.log
 .ocr-review-*.txt
 .board-*.png
+
+# Rust (apps/desktop)
+/target
+apps/desktop/target-shots/
