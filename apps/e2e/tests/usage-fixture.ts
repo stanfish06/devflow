@@ -3,12 +3,8 @@
 // the spec pins the browser clock to them, so a developer's own history never shows in the grid. Every
 // row is inserted with its own id and deleted by id afterwards.
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 
-import pg from 'pg'
-
-import { DEVFLOW_HOME } from './helpers'
+import { connectToStack } from './stack-database'
 
 /** The day the browser thinks it is, a Wednesday. */
 export const USAGE_TODAY = '2020-06-17'
@@ -27,25 +23,7 @@ export const USAGE_RUN = {
 	costUsd: 0.12,
 }
 
-/** The launcher's own constants (apps/launcher/src/devflow.ts): ports shift with `--port`. */
-const BASE_HTTPS_PORT = 47443
-const BASE_POSTGRES_PORT = 47432
-
-type LauncherConfig = { organizationId: string; userId: string; postgresPassword: string; httpsPort?: number }
-
-function stackDatabaseUrl(config: LauncherConfig): string {
-	const port = BASE_POSTGRES_PORT + (config.httpsPort ?? BASE_HTTPS_PORT) - BASE_HTTPS_PORT
-	return `postgresql://postgres:${encodeURIComponent(config.postgresPassword)}@127.0.0.1:${port}/electric`
-}
-
 export type UsageFixture = { taskName: string; cleanup: () => Promise<void> }
-
-async function connectToStack(): Promise<{ config: LauncherConfig; client: pg.Client }> {
-	const config = JSON.parse(readFileSync(join(DEVFLOW_HOME, 'config.json'), 'utf8')) as LauncherConfig
-	const client = new pg.Client({ connectionString: stackDatabaseUrl(config) })
-	await client.connect()
-	return { config, client }
-}
 
 /**
  * One archived Claude task of the local user on {@link USAGE_DAY}: the task, one session and one prompt,

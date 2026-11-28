@@ -15,6 +15,7 @@ import {
 	findAutoAdvanceSourceLabel,
 } from '@/lib/auto-advance-policy'
 import { ITERATE_DIALOG_SILENCED_KEY } from '@/lib/preferences'
+import { getWorkflowPhases } from '@/lib/workflow-phases'
 import { useApi } from '@/orpc/client'
 
 import type { SessionDetailSession } from './useSessionDetailData'
@@ -90,6 +91,10 @@ export function useSessionAutoAdvance({
 		[tasksCollection, session?.task_id],
 	)
 	const currentTask = task.data?.[0]
+	const workflowPhases = useMemo(
+		() => getWorkflowPhases(currentTask?.workflow_type ?? null, currentTask?.worktree_timing ?? null),
+		[currentTask?.workflow_type, currentTask?.worktree_timing],
+	)
 
 	const {
 		settings: taskSettings,
@@ -169,7 +174,7 @@ export function useSessionAutoAdvance({
 		const newValue = !currentValue
 		const update: Parameters<typeof updateAutoAdvance>[0] = { taskId: currentTask.id, [settingsKey]: newValue }
 		const transaction = updateAutoAdvance(update)
-		transaction.isPersisted.promise.catch((error) => {
+		transaction.isPersisted.promise.catch(() => {
 			toast.error('Failed to update auto-advance settings')
 		})
 	}, [currentTask, updateAutoAdvance, autoAdvanceConfig.field, taskSettings, session?.id])
@@ -216,6 +221,8 @@ export function useSessionAutoAdvance({
 
 	return {
 		currentTask,
+		isTaskReady: task.isReady,
+		workflowPhases,
 		terminalWorkingDirectory,
 		autoAdvanceConfig,
 		isAutoAdvanceEnabled,

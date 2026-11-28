@@ -5,19 +5,15 @@ import { Expand, Scan, ZoomIn, ZoomOut } from 'lucide-react'
 import { type FC, useCallback, useMemo, useRef, useState } from 'react'
 import { useMountEffect } from '../../hooks/use-mount-effect'
 import { Button } from '../button'
-import { Dialog, DialogContent } from '../dialog'
-import { RPI_LABELS } from '../../constants/rpi-skills'
+import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
-import { computeLayout } from './layout-lite'
+import { computeLayout, defaultWorkflowPhases } from './layout-lite'
 import { PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
-  AutoAdvanceEdge as AutoAdvanceEdgeType,
   WorkflowGraphProps,
   WorkflowGraphNode,
-  WorkflowPhase,
-  WorkflowSession,
 } from './types-lite'
 import { snapViewportToDevicePixels } from './viewport'
 
@@ -30,44 +26,17 @@ function getFitViewPadding(direction: 'LR' | 'TB', isStatic?: boolean): number {
   return 0.02
 }
 
-/**
- * Produce a stable fingerprint for sessions + flows so we only re-layout
- * when the data structurally changes, not just when the reference changes.
- */
-function dataFingerprint(
-  sessions: WorkflowSession[],
-  flows: ArtifactFlow[],
-  autoAdvance?: AutoAdvanceEdgeType[],
-  phases?: WorkflowPhase[],
-  isStatic?: boolean,
-  compactStaticPreview?: boolean,
-): string {
-  const s = sessions
-    .map((s) => `${s.id}:${s.status}:${s.labelName}:${s.userProfile?.initials ?? ''}`)
-    .sort()
-    .join('|')
-  const f = flows
-    .map((f) => `${f.fromSessionId}->${f.toSessionId}:${f.fileName}`)
-    .sort()
-    .join('|')
-  const a = (autoAdvance ?? [])
-    .map((e) => `${e.fromLabel}->${e.toLabel}`)
-    .sort()
-    .join('|')
-  const p = (phases ?? [])
-    .map((p) => `${p.name}:${p.title}:${p.synthetic ? 'synthetic' : 'phase'}`)
-    .join('|')
-  return `${s};;${f};;${a};;${p};;${isStatic ? 'static' : 'interactive'};;${compactStaticPreview ? 'compact' : 'default'}`
-}
+const emptyFlows: ArtifactFlow[] = []
 
 const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => void }> = ({
   sessions,
-  artifactFlows = [],
+  artifactFlows = emptyFlows,
   direction = 'TB',
   selectedNodeId,
+  focusCurrentStage,
   attentionNodeId,
   autoAdvanceEdges,
-  phases,
+  phases = defaultWorkflowPhases,
   static: isStatic,
   compactStaticPreview,
   onSessionClick,
@@ -83,32 +52,21 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
   const onArtifactClickRef = useRef(onArtifactClick)
   onArtifactClickRef.current = onArtifactClick
 
-  // Only recompute layout when the data structurally changes
-  const fingerprintRef = useRef('')
-  const layoutRef = useRef(
-    computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview),
+  const layout = useMemo(
+    () => computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview),
+    [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview],
   )
-  const prevDirectionRef = useRef(direction)
-
-  const layout = useMemo(() => {
-    const fp = dataFingerprint(sessions, artifactFlows, autoAdvanceEdges, phases, isStatic, compactStaticPreview)
-    if (fp === fingerprintRef.current && direction === prevDirectionRef.current) {
-      return layoutRef.current
-    }
-    fingerprintRef.current = fp
-    prevDirectionRef.current = direction
-    const newLayout = computeLayout(
-      sessions,
-      artifactFlows,
-      direction,
-      autoAdvanceEdges,
-      phases,
-      isStatic,
-      compactStaticPreview,
+  const currentSession = sessions.find((session) => session.isCurrentStage)
+  const currentPhase = phases.find((phase) => phase.name === currentSession?.labelName)
+  const [fitAllStages, setFitAllStages] = useState(false)
+  const initialFitNodes = useMemo(() => {
+    if (fitAllStages || !focusCurrentStage || !currentPhase) return undefined
+    const index = phases.indexOf(currentPhase)
+    const nearby = phases.slice(Math.max(0, index - 1), index + 2)
+    return layout.nodes.filter(({ data }) =>
+      nearby.some((phase) => phase.name === (data.kind === 'session' ? data.session.labelName : data.labelName)),
     )
-    layoutRef.current = newLayout
-    return newLayout
-  }, [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview])
+  }, [fitAllStages, focusCurrentStage, currentPhase, phases, layout.nodes])
 
   // Structural fingerprint of everything that affects node *positions* (the node
   // and edge set + direction), deliberately excluding styling-only fields like
@@ -188,46 +146,11 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
       selected: node.id === selectedNodeId,
       data: {
         ...node.data,
+        ...(node.data.kind === 'session' && !node.data.synthetic && { onOpen: onSessionClick }),
         attention: node.id === attentionNodeId,
       },
     }))
-  }, [layout.nodes, selectedNodeId, attentionNodeId])
-
-  // Compute the node IDs to focus on: the most recent phase + its neighbors
-  const focusNodeIds = useMemo(() => {
-    if (sessions.length === 0) return null
-
-    const orderedPhases = phases ?? RPI_LABELS.filter((l) => l.name !== 'rpi:todo')
-
-    // Find the latest phase that has actual sessions
-    let latestPhaseIdx = -1
-    for (const session of sessions) {
-      const idx = orderedPhases.findIndex((p) => p.name === session.labelName)
-      if (idx > latestPhaseIdx) latestPhaseIdx = idx
-    }
-    if (latestPhaseIdx === -1) return null
-
-    // Collect nodes from [latestPhaseIdx - 1, latestPhaseIdx, latestPhaseIdx + 1]
-    const sessionsByLabel = new Map<string, WorkflowSession[]>()
-    for (const s of sessions) {
-      const arr = sessionsByLabel.get(s.labelName) ?? []
-      arr.push(s)
-      sessionsByLabel.set(s.labelName, arr)
-    }
-
-    const ids: string[] = []
-    for (let i = Math.max(0, latestPhaseIdx - 1); i <= Math.min(orderedPhases.length - 1, latestPhaseIdx + 1); i++) {
-      const phase = orderedPhases[i]
-      if (phase === undefined) continue
-      const phaseSessions = sessionsByLabel.get(phase.name)
-      if (phaseSessions && phaseSessions.length > 0) {
-        for (const s of phaseSessions) ids.push(s.id)
-      } else {
-        ids.push(`placeholder-${phase.title}`)
-      }
-    }
-    return ids
-  }, [sessions, phases])
+  }, [layout.nodes, selectedNodeId, attentionNodeId, onSessionClick])
 
   const { fitView: rfFitView, zoomIn: rfZoomIn, zoomOut: rfZoomOut } = useReactFlow()
   const fitViewPadding = getFitViewPadding(direction, isStatic)
@@ -262,12 +185,13 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
 
   const fitToViewport = useCallback(() => {
     requestAnimationFrame(() => {
-      rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
+      rfFitView({ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 0 })
     })
-  }, [rfFitView, fitViewPadding, fitMaxZoom])
+  }, [rfFitView, fitViewPadding, fitMaxZoom, initialFitNodes])
 
   // Manual "fit to view" toolbar action — animated to match the zoom buttons.
   const handleFitView = useCallback(() => {
+    setFitAllStages(true)
     rfFitView({ maxZoom: fitMaxZoom, padding: fitViewPadding, duration: 200 })
   }, [rfFitView, fitViewPadding, fitMaxZoom])
 
@@ -294,8 +218,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
 
   return (
     <div
-      ref={containerRef}
-      className={`wf-graph relative ${className ?? ''} ${hoveredEdge ? 'edge-highlight-active' : ''}`.trim()}
+      className={`wf-graph relative flex flex-col ${className ?? ''} ${hoveredEdge ? 'edge-highlight-active' : ''}`.trim()}
       style={{
         width: '100%',
         height: '100%',
@@ -305,88 +228,99 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
         '--xy-node-boxshadow-selected': 'none',
       } as React.CSSProperties}
     >
-      {hoveredEdge && (
-        <style>{`
-          .edge-highlight-active .react-flow__node { opacity: 0.3; }
-          .edge-highlight-active .react-flow__node[data-id="${hoveredEdge.source}"],
-          .edge-highlight-active .react-flow__node[data-id="${hoveredEdge.target}"] { opacity: 1; }
-          .edge-highlight-active .react-flow__edge path { opacity: 0.15; }
-          .edge-highlight-active .react-flow__edgelabel-renderer button { opacity: 0.3; }
-        `}</style>
+      {currentPhase && (
+        <div className="shrink-0 px-2 py-1 text-xs">
+          Current stage <strong>{currentPhase.title}</strong>
+        </div>
       )}
-      <ReactFlow
-        key={structureKey}
-        viewport={viewport}
-        onViewportChange={handleViewportChange}
-        onMoveEnd={handleMoveEnd}
-        nodes={nodes}
-        edges={edgesWithCallbacks}
-        onNodesChange={onNodesChange}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeClick={(_event, node) => {
-          if (node.data.synthetic) return
-          if (node.data.kind === 'phase') onPhaseClick?.(node.data.labelName)
-          if (node.data.kind === 'session') onSessionClick?.(node.data.session.id)
-        }}
-        fitView
-        fitViewOptions={{ maxZoom: fitMaxZoom, padding: fitViewPadding }}
-        minZoom={0.2}
-        maxZoom={2}
-        nodesDraggable={true}
-        nodesConnectable={false}
-        elementsSelectable={true}
-        proOptions={{ hideAttribution: true }}
-      />
-      <div
-        className={`absolute right-2 z-10 flex gap-1 ${
-          controlsPosition === 'header-right'
-            ? '-top-4'
-            : controlsPosition === 'top-right'
-              ? 'top-2'
-              : 'bottom-2'
-        } ${
-          controlsLayout === 'vertical-fullscreen-first' ? 'flex-col' : 'items-center'
-        }`}
-      >
-        {showFullscreenButton && onOpenFullscreen && (
+      <div ref={containerRef} className="relative min-h-0 flex-1">
+        {hoveredEdge && (
+          <style>{`
+            .edge-highlight-active .react-flow__node { opacity: 0.3; }
+            .edge-highlight-active .react-flow__node[data-id="${hoveredEdge.source}"],
+            .edge-highlight-active .react-flow__node[data-id="${hoveredEdge.target}"] { opacity: 1; }
+            .edge-highlight-active .react-flow__edge path { opacity: 0.15; }
+            .edge-highlight-active .react-flow__edgelabel-renderer button { opacity: 0.3; }
+          `}</style>
+        )}
+        <ReactFlow
+          key={structureKey}
+          viewport={viewport}
+          onViewportChange={handleViewportChange}
+          onMoveEnd={handleMoveEnd}
+          nodes={nodes}
+          edges={edgesWithCallbacks}
+          onNodesChange={onNodesChange}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeClick={(_event, node) => {
+            if (node.data.synthetic) return
+            if (node.data.kind === 'phase') onPhaseClick?.(node.data.labelName)
+            if (node.data.kind === 'session') onSessionClick?.(node.data.session.id)
+          }}
+          fitView
+          fitViewOptions={{ nodes: initialFitNodes, maxZoom: fitMaxZoom, padding: fitViewPadding }}
+          minZoom={0.2}
+          maxZoom={2}
+          nodesDraggable={true}
+          nodesConnectable={false}
+          elementsSelectable={true}
+          proOptions={{ hideAttribution: true }}
+        />
+        <div
+          className={`absolute right-2 z-10 flex gap-1 ${
+            controlsPosition === 'header-right'
+              ? '-top-4'
+              : controlsPosition === 'top-right'
+                ? 'top-2'
+                : 'bottom-2'
+          } ${
+            controlsLayout === 'vertical-fullscreen-first' ? 'flex-col' : 'items-center'
+          }`}
+        >
+          {showFullscreenButton && onOpenFullscreen && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-6 w-6 bg-background/80 hover:bg-background"
+              aria-label="Expand workflow graph"
+              onClick={(e) => {
+                e.stopPropagation()
+                onOpenFullscreen()
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <Expand className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
             className="h-6 w-6 bg-background/80 hover:bg-background"
-            onClick={(e) => {
-              e.stopPropagation()
-              onOpenFullscreen()
-            }}
-            onMouseDown={(e) => e.stopPropagation()}
+            aria-label="Fit workflow graph"
+            onClick={handleFitView}
           >
-            <Expand className="h-3.5 w-3.5" />
+            <Scan className="h-3.5 w-3.5" />
           </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 bg-background/80 hover:bg-background"
-          onClick={handleFitView}
-        >
-          <Scan className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 bg-background/80 hover:bg-background"
-          onClick={() => rfZoomIn({ duration: 200 })}
-        >
-          <ZoomIn className="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-6 w-6 bg-background/80 hover:bg-background"
-          onClick={() => rfZoomOut({ duration: 200 })}
-        >
-          <ZoomOut className="h-3.5 w-3.5" />
-        </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 bg-background/80 hover:bg-background"
+            aria-label="Zoom in"
+            onClick={() => rfZoomIn({ duration: 200 })}
+          >
+            <ZoomIn className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 bg-background/80 hover:bg-background"
+            aria-label="Zoom out"
+            onClick={() => rfZoomOut({ duration: 200 })}
+          >
+            <ZoomOut className="h-3.5 w-3.5" />
+          </Button>
+        </div>
       </div>
     </div>
   )
@@ -410,10 +344,16 @@ export const WorkflowGraphLite: FC<WorkflowGraphProps> = (props) => {
 				className="!max-w-[95vw] !w-[95vw] !h-[85vh] !p-4 !gap-0 overflow-hidden [&>button]:z-20"
 				onEscapeKeyDown={(e) => e.stopPropagation()}
 			>
+          <DialogTitle className="sr-only">Workflow graph</DialogTitle>
           <ReactFlowProvider>
             <WorkflowGraphInner
               {...props}
+              onSessionClick={props.onSessionClick && ((id) => {
+                setIsFullscreenOpen(false)
+                props.onSessionClick?.(id)
+              })}
               direction={fullscreenDirection ?? props.direction}
+              focusCurrentStage={false}
               controlsLayout="horizontal"
               controlsPosition="bottom-right"
               showFullscreenButton={false}

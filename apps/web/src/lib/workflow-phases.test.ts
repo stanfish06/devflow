@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest'
 
-import { getWorkflowPhases } from './workflow-phases'
+import { getWorkflowPhases, toWorkflowSessions } from './workflow-phases'
 
 describe('getWorkflowPhases', () => {
 	test('rpi returns 7 phases including PR', () => {
@@ -94,5 +94,40 @@ describe('getWorkflowPhases', () => {
 
 	test('null workflowType returns empty array', () => {
 		expect(getWorkflowPhases(null, 'later')).toEqual([])
+	})
+})
+
+describe('toWorkflowSessions', () => {
+	const phases = getWorkflowPhases('prd_tdd', 'never')
+	const session = (id: string, names: string[], last_activity_at: bigint, archived = false) => ({
+		id,
+		title: id,
+		status: 'ready_for_input' as const,
+		archived,
+		last_activity_at,
+		labels: names.map((name) => ({ name, title: name })),
+	})
+
+	test('shows archive history and marks the most recently active session in a configured phase', () => {
+		const rows = [
+			session('tdd', ['rpi:design-tdd'], 1n),
+			session('prd', ['rpi:design', 'team:alpha', 'rpi:research', 'rpi:design-prd'], 2n),
+			session('unlabeled', [], 3n),
+			session('archived', ['rpi:implementation'], 4n, true),
+		]
+		expect(toWorkflowSessions(rows, phases).map((node) => [node.id, node.labelTitle, node.isCurrentStage])).toEqual(
+			[
+				['tdd', 'TDD', false],
+				['prd', 'PRD', true],
+				['archived', 'implement', false],
+			],
+		)
+		expect(toWorkflowSessions(rows, [])).toEqual([])
+	})
+
+	test('same-timestamp iterations select the same node regardless of source order', () => {
+		const rows = [session('1', ['rpi:design-tdd'], 10n), session('2', ['rpi:design-tdd'], 10n)]
+		expect(toWorkflowSessions(rows, phases).find((node) => node.isCurrentStage)?.id).toBe('2')
+		expect(toWorkflowSessions(rows.reverse(), phases).find((node) => node.isCurrentStage)?.id).toBe('2')
 	})
 })

@@ -5,11 +5,12 @@ import { useSync, useSyncInternal } from '@/components/providers/SyncProvider'
 import type { TableSession } from '@/components/session-table/types'
 import { useTaskWorkspaceSetup } from '@/hooks/live-queries/useTaskWorkspaceSetup'
 import { useUnreadStore } from '@/hooks/stores/unreadStore'
+import { useTaskWorkflowInfo } from '@/hooks/task-detail/useTaskWorkflowInfo'
 import { useTaskPermissions } from '@/hooks/useTaskPermissions'
 import { useTaskSettings } from '@/hooks/useTaskSettings'
 import { useAuth } from '@/integrations/devflow/local-authkit'
 import { compareSessionsByActivityMinute } from '@/lib/activitySorting'
-import { getWorkflowPhases } from '@/lib/workflow-phases'
+import { toWorkflowSessions } from '@/lib/workflow-phases'
 import { useApi } from '@/orpc/client'
 import { toTableSession } from '@/utils/session-transforms'
 
@@ -19,8 +20,7 @@ import { toTableSession } from '@/utils/session-transforms'
  * need across sections. Display-only queries live in the components that
  * render them — e.g. useIsTaskSharedWithOrg in TaskSessionsArea,
  * useFirstOnlineHostId/useTaskOwnerDisplay in TaskSummaryCard, and
- * useTaskSettings/useTaskWorkflowInfo in
- * TaskSidebarPanel.
+ * useTaskSettings in TaskSidebarPanel.
  */
 export function useTaskDetailData(taskId: string) {
 	const {
@@ -97,11 +97,11 @@ export function useTaskDetailData(taskId: string) {
 			}))
 	}, [sessionData, task?.name, sessionsReady, unreadSessionIds])
 
-	// Sidebar-tab availability flag for the artifact panel; the sidebar itself
-	// re-derives the full data with useTaskWorkflowInfo.
-	const hasWorkflowGraph = useMemo(
-		() => getWorkflowPhases(task?.workflow_type ?? null, task?.worktree_timing ?? null).length > 0,
-		[task?.workflow_type, task?.worktree_timing],
+	const workflowInfo = useTaskWorkflowInfo(task)
+	const { workflowPhases } = workflowInfo
+	const workflowSessions = useMemo(
+		() => toWorkflowSessions(sessionData ?? [], workflowPhases),
+		[sessionData, workflowPhases],
 	)
 	// Resolve the working directory based on ownership:
 	// - Owner: use task.default_working_directory
@@ -133,7 +133,9 @@ export function useTaskDetailData(taskId: string) {
 		hasUserSettings,
 		resolvedWorkingDirectory,
 		sessions,
-		hasWorkflowGraph,
+		workflowSessions,
+		workflowInfo,
+		hasWorkflowGraph: workflowPhases.length > 0,
 		workspaceSetup,
 	}
 }

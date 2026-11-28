@@ -1,6 +1,5 @@
 import { ResizablePanel } from '@devflow/ui/components/resizable'
 import { TabsContent } from '@devflow/ui/components/tabs'
-import type { WorkflowSession } from '@devflow/ui/components/workflow-graph'
 import { useNavigate } from '@tanstack/react-router'
 import { useCallback, useMemo, useState } from 'react'
 
@@ -33,7 +32,6 @@ import { useSettingsStore } from '@/hooks/stores/settingsStore'
 import type { useTaskArtifactPanel } from '@/hooks/task-detail/useTaskArtifactPanel'
 import { useTaskAutoAdvanceToggles } from '@/hooks/task-detail/useTaskAutoAdvanceToggles'
 import type { LoadedTaskDetailPageState } from '@/hooks/task-detail/useTaskDetailPageState'
-import { useTaskWorkflowInfo } from '@/hooks/task-detail/useTaskWorkflowInfo'
 import { useGitHubStatus } from '@/hooks/useGitHubStatus'
 import { useMountEffect } from '@/hooks/useMountEffect'
 import { useSidebarCycleHotkeys } from '@/hooks/useSidebarCycleHotkeys'
@@ -129,28 +127,8 @@ function TaskSidebarPanelForTask({
 		api: { tasks: client.tasks },
 	})
 
-	const { workflowPhases, visibleAutoAdvanceToggles, planAutoAdvanceLabel, planAutoAdvanceTitle } =
-		useTaskWorkflowInfo(task)
-
-	// Map session table rows to WorkflowSession format for the graph
-	const workflowSessions: WorkflowSession[] = useMemo(
-		() =>
-			data.sessions.flatMap((s): WorkflowSession[] => {
-				const status = s.status
-				if (status === undefined) return []
-				return [
-					{
-						id: s.id,
-						title: s.title ?? undefined,
-						status,
-						labelName: s.labels?.[0]?.name ?? 'rpi:todo',
-						labelTitle: s.labels?.[0]?.title ?? 'todo',
-						artifacts: [],
-					},
-				]
-			}),
-		[data.sessions],
-	)
+	const { workflowSessions, workflowInfo } = data
+	const { workflowPhases, visibleAutoAdvanceToggles, planAutoAdvanceLabel, planAutoAdvanceTitle } = workflowInfo
 
 	const autoAdvanceToggles = useTaskAutoAdvanceToggles({ task, updateAutoAdvance })
 	const isArtifactOpen = Boolean(artifactPanel.selectedArtifactId && artifactPanel.sidebarTab === 'artifacts')
