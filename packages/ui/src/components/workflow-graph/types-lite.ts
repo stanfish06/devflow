@@ -48,9 +48,21 @@ export type WorkflowPhaseNodeData = {
   attention?: boolean
 }
 
-export type WorkflowGraphNodeData = WorkflowSessionNodeData | WorkflowPhaseNodeData
+/**
+ * An invisible box a layout adds where something it draws lies outside the cards (a routed edge's
+ * label), so every fit of the view includes it. `synthetic`: it is never opened.
+ */
+export type WorkflowExtentNodeData = {
+  kind: 'extent'
+  width: number
+  height: number
+  synthetic: true
+}
+
+export type WorkflowGraphNodeData = WorkflowSessionNodeData | WorkflowPhaseNodeData | WorkflowExtentNodeData
 export type WorkflowSessionNode = Node<WorkflowSessionNodeData, 'session'>
 export type WorkflowPhaseNode = Node<WorkflowPhaseNodeData, 'phasePlaceholder'>
+export type WorkflowExtentNode = Node<WorkflowExtentNodeData, 'extent'>
 export type WorkflowGraphNode = Node<WorkflowGraphNodeData>
 
 /** An artifact associated with a session */
@@ -73,8 +85,8 @@ export interface ArtifactFlow {
   category: 'source' | 'edited' | 'new'
 }
 
-/** Layout direction */
-export type LayoutDirection = 'LR' | 'TB'
+/** Layout direction; `snake` fills a grid row by row, alternating left-right and right-left. */
+export type LayoutDirection = 'LR' | 'TB' | 'snake'
 
 /** Controls layout */
 export type ControlsLayout = 'horizontal' | 'vertical-fullscreen-first'

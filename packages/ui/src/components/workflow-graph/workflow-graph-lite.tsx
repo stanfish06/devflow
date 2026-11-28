@@ -8,19 +8,28 @@ import { Button } from '../button'
 import { Dialog, DialogContent, DialogTitle } from '../dialog'
 import { ArtifactEdge } from './artifact-edge'
 import { AutoAdvanceEdge } from './auto-advance-edge'
-import { computeLayout, defaultWorkflowPhases } from './layout-lite'
-import { PhasePlaceholderNode, SessionNode } from './phase-node-lite'
+import { computeLayout, defaultWorkflowPhases, detourExtentNodes, snakeCellSize, snakeColumnCount } from './layout-lite'
+import { ExtentNode, PhasePlaceholderNode, SessionNode } from './phase-node-lite'
 import type {
   ArtifactFlow,
+  LayoutDirection,
+  WorkflowGraphNodeData,
   WorkflowGraphProps,
   WorkflowGraphNode,
 } from './types-lite'
 import { snapViewportToDevicePixels } from './viewport'
 
-const nodeTypes = { session: SessionNode, phasePlaceholder: PhasePlaceholderNode }
+const nodeTypes = { session: SessionNode, phasePlaceholder: PhasePlaceholderNode, extent: ExtentNode }
+
+/** The phase a node belongs to; none for layout extents. */
+function phaseNameOf(data: WorkflowGraphNodeData): string | null {
+  if (data.kind === 'session') return data.session.labelName
+  if (data.kind === 'phase') return data.labelName
+  return null
+}
 const edgeTypes = { artifact: ArtifactEdge, autoAdvance: AutoAdvanceEdge }
 
-function getFitViewPadding(direction: 'LR' | 'TB', isStatic?: boolean): number {
+function getFitViewPadding(direction: LayoutDirection, isStatic?: boolean): number {
   if (isStatic && direction === 'TB') return 0.14
   if (isStatic) return 0.06
   return 0.02
@@ -31,7 +40,7 @@ const emptyFlows: ArtifactFlow[] = []
 const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => void }> = ({
   sessions,
   artifactFlows = emptyFlows,
-  direction = 'TB',
+  direction = 'snake',
   selectedNodeId,
   focusCurrentStage,
   attentionNodeId,
@@ -52,9 +61,18 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
   const onArtifactClickRef = useRef(onArtifactClick)
   onArtifactClickRef.current = onArtifactClick
 
+  // The pane's size, measured below; the snake layout picks its column count from it.
+  const [paneSize, setPaneSize] = useState({ width: 0, height: 0 })
+  const snakeCell = useMemo(
+    () => snakeCellSize(sessions, phases, isStatic, compactStaticPreview),
+    [sessions, phases, isStatic, compactStaticPreview],
+  )
+  const snakeColumns =
+    direction === 'snake' ? snakeColumnCount(phases.length, paneSize.width, paneSize.height, snakeCell) : undefined
   const layout = useMemo(
-    () => computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview),
-    [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview],
+    () =>
+      computeLayout(sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview, snakeColumns),
+    [sessions, artifactFlows, direction, autoAdvanceEdges, phases, isStatic, compactStaticPreview, snakeColumns],
   )
   const currentSession = sessions.find((session) => session.isCurrentStage)
   const currentPhase = phases.find((phase) => phase.name === currentSession?.labelName)
@@ -63,9 +81,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     if (fitAllStages || !focusCurrentStage || !currentPhase) return undefined
     const index = phases.indexOf(currentPhase)
     const nearby = phases.slice(Math.max(0, index - 1), index + 2)
-    return layout.nodes.filter(({ data }) =>
-      nearby.some((phase) => phase.name === (data.kind === 'session' ? data.session.labelName : data.labelName)),
-    )
+    return layout.nodes.filter(({ data }) => nearby.some((phase) => phase.name === phaseNameOf(data)))
   }, [fitAllStages, focusCurrentStage, currentPhase, phases, layout.nodes])
 
   // Structural fingerprint of everything that affects node *positions* (the node
@@ -86,8 +102,8 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
       .sort()
       .join('|')
     const p = (phases ?? []).map((phase) => `${phase.name}:${phase.synthetic ? 'synthetic' : 'phase'}`).join('|')
-    return `${s};;${f};;${a};;${p};;${direction};;${isStatic ? 'static' : 'interactive'};;${compactStaticPreview ? 'compact' : 'default'}`
-  }, [sessions, artifactFlows, autoAdvanceEdges, phases, direction, isStatic, compactStaticPreview])
+    return `${s};;${f};;${a};;${p};;${direction}${snakeColumns ?? ''};;${isStatic ? 'static' : 'interactive'};;${compactStaticPreview ? 'compact' : 'default'}`
+  }, [sessions, artifactFlows, autoAdvanceEdges, phases, direction, snakeColumns, isStatic, compactStaticPreview])
 
   const [viewportState, setViewportState] = useState<{
     structureKey: string
@@ -179,6 +195,10 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
     setNodeState({ structureKey, baseNodes: nodesWithSelection, nodes })
   }
 
+  // Invisible boxes over routed edge labels, from the current card positions, so fits include them.
+  const extents = useMemo(() => detourExtentNodes(nodes, edgesWithCallbacks), [nodes, edgesWithCallbacks])
+  const shownNodes = useMemo(() => (extents.length > 0 ? [...nodes, ...extents] : nodes), [nodes, extents])
+
   const onNodesChange = useCallback<OnNodesChange<WorkflowGraphNode>>((changes) => {
     setNodeState((current) => ({ ...current, nodes: applyNodeChanges(changes, current.nodes) }))
   }, [])
@@ -211,7 +231,14 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
   useMountEffect(() => {
     const el = containerRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
-    const resizeObserver = new ResizeObserver(() => fitToViewportRef.current())
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (entry) {
+        const width = Math.round(entry.contentRect.width)
+        const height = Math.round(entry.contentRect.height)
+        setPaneSize((size) => (size.width === width && size.height === height ? size : { width, height }))
+      }
+      fitToViewportRef.current()
+    })
     resizeObserver.observe(el)
     return () => resizeObserver.disconnect()
   })
@@ -248,7 +275,7 @@ const WorkflowGraphInner: FC<WorkflowGraphProps & { onOpenFullscreen?: () => voi
           viewport={viewport}
           onViewportChange={handleViewportChange}
           onMoveEnd={handleMoveEnd}
-          nodes={nodes}
+          nodes={shownNodes}
           edges={edgesWithCallbacks}
           onNodesChange={onNodesChange}
           nodeTypes={nodeTypes}

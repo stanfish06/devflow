@@ -259,6 +259,12 @@ describe('task navigation list layout', () => {
 		expect(cssRule('.task-nav-views')).not.toContain('min-height')
 	})
 
+	// With the workflow graph the panel scrolls; the lists must not split what is left under it.
+	it('lets the lists take their full height when the workflow graph makes the panel scroll', () => {
+		expect(cssRule('.task-nav:has(.task-nav-graph) .task-nav-groups')).toContain('flex: none;')
+		expect(cssRule('.task-nav:has(.task-nav-graph) .task-nav-groups')).toContain('container-type: inline-size;')
+	})
+
 	// A long artifact list could squeeze the sessions down to one row with no way to get them back.
 	it('lets the sessions list be resized against the artifacts', () => {
 		data.sessions = []

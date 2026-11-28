@@ -14,6 +14,9 @@ export interface ArtifactEdgeData extends Record<string, unknown> {
 
 type ArtifactGraphEdge = Edge<ArtifactEdgeData, 'artifact'>
 
+/** How far a routeY detour steps out from a card before rising; under half the narrowest gap (32px). */
+const ROUTE_STEP = 12
+
 export const ArtifactEdge: FC<EdgeProps<ArtifactGraphEdge>> = ({
   id,
   sourceX,
@@ -35,19 +38,23 @@ export const ArtifactEdge: FC<EdgeProps<ArtifactGraphEdge>> = ({
   let labelY: number
 
   if (routeY !== undefined) {
-    // Two smooth bezier segments arcing above intermediate nodes
+    // Step out into the gap beside the source card, rise to routeY, run along it over the cards in
+    // between, then drop into the target, so the curve never crosses an intermediate card. `step`
+    // stays inside the gap between cards and points toward the target (a snake graph's
+    // right-to-left rows run the other way).
     const midX = (sourceX + targetX) / 2
-    const cpX = Math.abs(targetX - sourceX) * 0.25
+    const step = Math.min(ROUTE_STEP, Math.abs(targetX - sourceX) / 4) * (targetX >= sourceX ? 1 : -1)
     edgePath = [
       `M ${sourceX} ${sourceY}`,
-      `C ${sourceX + cpX} ${sourceY}, ${midX - cpX} ${routeY}, ${midX} ${routeY}`,
-      `C ${midX + cpX} ${routeY}, ${targetX - cpX} ${targetY}, ${targetX} ${targetY}`,
+      `C ${sourceX + step} ${sourceY}, ${sourceX + step} ${routeY}, ${sourceX + 2 * step} ${routeY}`,
+      `L ${targetX - 2 * step} ${routeY}`,
+      `C ${targetX - step} ${routeY}, ${targetX - step} ${targetY}, ${targetX} ${targetY}`,
     ].join(' ')
     labelX = midX
     labelY = routeY
   } else if (routeX !== undefined) {
     const midY = (sourceY + targetY) / 2
-    const cpY = Math.abs(targetY - sourceY) * 0.25
+    const cpY = Math.abs(targetY - sourceY) * 0.25 * (targetY >= sourceY ? 1 : -1)
     edgePath = [
       `M ${sourceX} ${sourceY}`,
       `C ${sourceX} ${sourceY + cpY}, ${routeX} ${midY - cpY}, ${routeX} ${midY}`,
